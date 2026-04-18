@@ -1,0 +1,15 @@
+# frozen_string_literal: true
+
+require "rake"
+
+task default: :list
+
+desc "List available experiments"
+task :list do
+  Dir.glob("[0-9]*").sort.each do |dir|
+    next unless File.directory?(dir)
+    readme = File.join(dir, "README.md")
+    summary = File.exist?(readme) ? File.readlines(readme).first.strip.sub(/^#+\s*/, "") : ""
+    puts "  #{dir.ljust(24)} #{summary}"
+  end
+end
