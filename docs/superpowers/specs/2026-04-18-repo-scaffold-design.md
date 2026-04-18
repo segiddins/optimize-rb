@@ -177,3 +177,7 @@ After scaffolding, this must work end-to-end:
   scaffold: stock image; revisit if cold-starts hurt.
 - Exact invocation shape for the `mcp` gem's stdio server — confirm
   during plan by reading its README.
+- Whether project-local `.claude/skills/` is auto-loaded by the Claude
+  Code harness, or whether the skills need to be wrapped in a small
+  in-repo plugin. Confirm at plan time; fall back to a plugin wrapper
+  if bare `.claude/skills/` is not picked up.
