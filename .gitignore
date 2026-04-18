@@ -1,0 +1,15 @@
+# Ruby
+*.gem
+*.rbc
+.bundle/
+vendor/bundle/
+/tmp/
+/log/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
