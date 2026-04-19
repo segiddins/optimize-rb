@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 require "test_helper"
 require "ruby_opt/codec"
+require "ruby_opt/codec/header"
 
 class RoundTripTest < Minitest::Test
   # The core contract: encode(decode(bin)) == bin, for unmodified iseqs.
@@ -32,5 +33,21 @@ class RoundTripTest < Minitest::Test
       assert_kind_of RubyVM::InstructionSequence, loaded
       loaded.eval
     end
+  end
+
+  def test_header_round_trip
+    original = RubyVM::InstructionSequence.compile("1 + 2").to_binary
+    reader = RubyOpt::Codec::BinaryReader.new(original)
+    header = RubyOpt::Codec::Header.decode(reader)
+
+    assert_equal "YARB", header.magic
+    refute_nil header.major_version
+    refute_nil header.platform
+
+    writer = RubyOpt::Codec::BinaryWriter.new
+    header.encode(writer)
+    # Header section must reproduce its original bytes
+    header_len = reader.pos
+    assert_equal original.byteslice(0, header_len), writer.buffer
   end
 end
