@@ -13,3 +13,8 @@ vendor/bundle/
 
 # OS
 .DS_Store
+
+# Claude Code project config (overrides global ~/.gitignore .claude exclusion)
+!.claude/
+!.claude/**
+.claude/settings.local.json

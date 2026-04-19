@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ruby-bytecode__run_ruby",
+      "mcp__ruby-bytecode__disasm",
+      "mcp__ruby-bytecode__parse_ast",
+      "mcp__ruby-bytecode__benchmark_ips",
+      "mcp__ruby-bytecode__iseq_to_binary",
+      "mcp__ruby-bytecode__load_iseq_binary"
+    ]
+  }
+}
