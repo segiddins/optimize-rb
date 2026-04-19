@@ -1,9 +1,7 @@
 {
   "mcpServers": {
     "ruby-bytecode": {
-      "command": "bundle",
-      "args": ["exec", "ruby", "bin/ruby-bytecode-mcp"],
-      "cwd": "mcp-server"
+      "command": "bin/ruby-bytecode-mcp"
     }
   }
 }

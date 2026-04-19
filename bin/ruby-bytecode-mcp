@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$script_dir/../mcp-server"
+
+exec bundle exec ruby bin/ruby-bytecode-mcp \
+  2> >(grep -v -E '^Source locally installed gems is ignoring' >&2)
