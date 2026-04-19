@@ -3,6 +3,8 @@ require "test_helper"
 require "ruby_opt/codec"
 require "ruby_opt/codec/header"
 require "ruby_opt/codec/object_table"
+require "ruby_opt/codec/iseq_envelope"
+require "ruby_opt/ir/function"
 
 class RoundTripTest < Minitest::Test
   # The core contract: encode(decode(bin)) == bin, for unmodified iseqs.
@@ -36,6 +38,21 @@ class RoundTripTest < Minitest::Test
     end
   end
 
+  def test_iseq_envelope_round_trip
+    src = "def hi(name, times: 1); times.times { puts name }; end"
+    original = RubyVM::InstructionSequence.compile(src).to_binary
+    ir = RubyOpt::Codec.decode(original)
+
+    # Outer Function has a child for `hi`, which has a child for the block.
+    hi = ir.children.find { |f| f.name == "hi" }
+    refute_nil hi
+    block = hi.children.find { |f| f.type == :block }
+    refute_nil block
+
+    re_encoded = RubyOpt::Codec.encode(ir)
+    assert_equal original, re_encoded
+  end
+
   def test_object_table_round_trip
     # Use 256 instead of 1: the integer 1 is encoded via the specialized opcode
     # putobject_INT2FIX_1_ and does not appear as an object-table entry. 256 goes
@@ -43,9 +60,11 @@ class RoundTripTest < Minitest::Test
     original = RubyVM::InstructionSequence.compile(
       '[256, "two", :three, 4.5, /six/]'
     ).to_binary
-    reader = RubyOpt::Codec::BinaryReader.new(original)
-    header = RubyOpt::Codec::Header.decode(reader)
-    table = RubyOpt::Codec::ObjectTable.decode(reader, header)
+
+    # Decode via full Codec (ObjectTable now only covers its own region; iseq region
+    # is handled by IseqList).
+    ir = RubyOpt::Codec.decode(original)
+    table = ir.misc[:object_table]
 
     # Table should contain literals seen in the snippet
     assert_includes table.objects, 256
@@ -53,11 +72,9 @@ class RoundTripTest < Minitest::Test
     assert_includes table.objects, :three
     assert_includes table.objects, 4.5
 
-    writer = RubyOpt::Codec::BinaryWriter.new
-    header.encode(writer)
-    table.encode(writer, header)
-    table_end = reader.pos
-    assert_equal original.byteslice(0, table_end), writer.buffer
+    # Full round-trip must be byte-identical
+    re_encoded = RubyOpt::Codec.encode(ir)
+    assert_equal original, re_encoded
   end
 
   def test_header_round_trip

@@ -50,27 +50,52 @@ module RubyOpt
       # @return [Array<Object>] decoded Ruby objects in on-disk index order
       attr_reader :objects
 
-      def initialize(objects, raw_tail)
+      def initialize(objects, raw_object_region)
         @objects = objects
-        @raw_tail = raw_tail  # raw bytes from after-header to end of binary (for identity encode)
+        # Raw bytes covering the object data region + object offset array only.
+        # Starts at (iseq_list_offset + iseq_list_size * 4) and runs to end of binary.
+        @raw_object_region = raw_object_region
       end
 
-      # Decode the object table from +reader+ using metadata from +header+.
-      # +reader+ must be positioned just after the header (pos = 40).
-      # After returning, reader.pos == end of the object offset array (== end of binary for
-      # simple single-iseq cases).
+      # Decode the object table.
       #
-      # @param reader [BinaryReader]
+      # Accepts either:
+      #   decode(binary_string, header)  — preferred; full YARB binary as String
+      #   decode(reader, header)         — legacy; BinaryReader positioned after header
+      #
+      # @param binary_or_reader [String | BinaryReader]
+      # @param header           [Header]
+      # @return [ObjectTable]
+      def self.decode(binary_or_reader, header)
+        if binary_or_reader.is_a?(BinaryReader)
+          # Legacy path: reconstruct binary from reader, then delegate.
+          reader = binary_or_reader
+          binary = reader.peek_bytes(0, reader.bytesize)
+          result = decode_from_binary(binary, header)
+          # Advance reader to end of object offset array (legacy contract).
+          reader.seek(header.global_object_list_offset + header.global_object_list_size * 4)
+          result
+        else
+          decode_from_binary(binary_or_reader, header)
+        end
+      end
+
+      # Decode from a full YARB binary string.
+      #
+      # @param binary [String]  full YARB binary (ASCII-8BIT)
       # @param header [Header]
       # @return [ObjectTable]
-      def self.decode(reader, header)
-        # Save the raw bytes from current position (after header) to end of binary.
-        # We use this for identity encoding until full re-encoding is implemented.
-        tail_start = reader.pos
-        raw_tail = reader.peek_bytes(tail_start, reader.bytesize - tail_start)
-
+      def self.decode_from_binary(binary, header)
         obj_list_size   = header.global_object_list_size
         obj_list_offset = header.global_object_list_offset
+
+        # The object data region starts immediately after the iseq offset array.
+        obj_region_start = header.iseq_list_offset + header.iseq_list_size * 4
+        obj_region_len   = binary.bytesize - obj_region_start
+        raw_object_region = binary.byteslice(obj_region_start, obj_region_len)
+
+        # Build a temporary reader to decode object bodies.
+        reader = BinaryReader.new(binary)
 
         # Read the object offset array
         reader.seek(obj_list_offset)
@@ -82,20 +107,16 @@ module RubyOpt
           decode_one_object(reader, obj_offsets)
         end
 
-        # Leave reader positioned at the end of the offset array
-        reader.seek(obj_list_offset + obj_list_size * 4)
-
-        new(objects, raw_tail)
+        new(objects, raw_object_region)
       end
 
       # Write the object table bytes to +writer+.
-      # This writes everything from after the header to the end of the binary.
-      # Currently uses identity (byte-exact) encoding from the decoded raw bytes.
+      # Emits the object data region + offset array verbatim (byte-identical round-trip).
       #
       # @param writer [BinaryWriter]
-      # @param header [Header]
-      def encode(writer, header)
-        writer.write_bytes(@raw_tail)
+      # @param header [Header]  (unused; kept for API compatibility)
+      def encode(writer, header = nil)
+        writer.write_bytes(@raw_object_region)
       end
 
       private
