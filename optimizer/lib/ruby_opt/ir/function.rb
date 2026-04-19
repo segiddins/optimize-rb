@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+require "ruby_opt/ir/cfg"
 
 module RubyOpt
   module IR
@@ -31,5 +32,15 @@ module RubyOpt
       :misc,            # Hash with all raw body-record field values and raw data section bytes
       keyword_init: true
     )
+
+    Function.class_eval do
+      def cfg
+        @cfg ||= CFG.build(instructions || [])
+      end
+
+      def invalidate_cfg
+        @cfg = nil
+      end
+    end
   end
 end

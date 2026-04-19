@@ -185,7 +185,29 @@ module RubyOpt
                                       .tap { |h| OPCODE_TO_INFO.each { |num, (name, _)| h[name] = num } }
                                       .freeze
 
+      # Returns the number of YARV slots an instruction of the given op_types occupies
+      # (1 for the opcode itself + N for each operand slot). CALLDATA counts as 1
+      # YARV slot even though it is not stored in the IBF binary. BUILTIN = 2 slots
+      # (idx + name_len; the name bytes are embedded and don't count as YARV slots).
+      # Convention: branch OFFSET operands are stored as instruction indices in IR;
+      # they are YARV absolute slot indices in the binary.
+      def self.slots_for(op_types)
+        1 + op_types.sum do |op_type|
+          case op_type
+          when :BUILTIN then 2
+          else               1  # :CALLDATA, :OFFSET, :VALUE, :NUM, etc. all = 1 slot
+          end
+        end
+      end
+
       # Decode +bytes+ (a binary String) into an Array<IR::Instruction>.
+      #
+      # Branch OFFSET operands in the binary are relative slot offsets: the number
+      # of YARV slots to skip from the NEXT instruction's slot to reach the target.
+      # In IR, they are stored as absolute instruction indices.
+      # Convention: branch OFFSET operands are instruction indices in IR;
+      # they are relative YARV slot offsets (from next-insn) in the binary.
+      # See #encode for the reverse conversion.
       #
       # @param bytes        [String]        raw bytecode bytes (ASCII-8BIT)
       # @param object_table [ObjectTable]   decoded global object table (for index resolution)
@@ -194,6 +216,14 @@ module RubyOpt
       def self.decode(bytes, object_table, iseqs)
         reader = BinaryReader.new(bytes)
         instructions = []
+        # slot_to_insn_idx[slot] = instruction index; built as we decode.
+        # slot is the YARV absolute slot number for the first slot of each instruction.
+        slot_to_insn_idx = {}
+        # Track each instruction's starting slot and op_types for OFFSET conversion.
+        insn_slots = []  # [starting_slot, op_types] per instruction
+        # Also track which instruction indices have OFFSET operands and which operand position.
+        offset_operand_positions = [] # [[insn_idx, operand_idx], ...]
+        current_slot = 0
 
         while reader.pos < bytes.bytesize
           opcode_offset = reader.pos
@@ -205,10 +235,21 @@ module RubyOpt
           _name, op_types = info
           opcode_sym = info[0]
 
+          insn_idx = instructions.size
+          slot_to_insn_idx[current_slot] = insn_idx
+          insn_slot_start = current_slot
+          insn_slots << [insn_slot_start, op_types]
+
+          operand_idx = 0
           operands = op_types.filter_map do |op_type|
             case op_type
-            when :VALUE, :CDHASH, :ID, :ISEQ, :LINDEX, :NUM, :OFFSET, :ISE, :IVC, :ICVARC, :IC
+            when :VALUE, :CDHASH, :ID, :ISEQ, :LINDEX, :NUM, :ISE, :IVC, :ICVARC, :IC
+              operand_idx += 1
               reader.read_small_value
+            when :OFFSET
+              offset_operand_positions << [insn_idx, operand_idx]
+              operand_idx += 1
+              reader.read_small_value  # raw relative offset; converted below
             when :CALLDATA
               # TS_CALLDATA: nothing written in the bytecode stream.
               # We store nil to mark where a calldata slot would be,
@@ -219,11 +260,14 @@ module RubyOpt
               idx = reader.read_small_value
               name_len = reader.read_small_value
               name_bytes = reader.read_bytes(name_len)
+              operand_idx += 1
               [idx, name_len, name_bytes]
             else
               raise "Unknown operand type #{op_type.inspect} for opcode #{opcode_sym}"
             end
           end
+
+          current_slot += slots_for(op_types)
 
           instructions << IR::Instruction.new(
             opcode:   opcode_sym,
@@ -232,10 +276,29 @@ module RubyOpt
           )
         end
 
+        # Convert OFFSET operands from YARV relative slot offsets to instruction indices.
+        # The binary stores: OFFSET_raw = target_slot - next_insn_slot
+        # where next_insn_slot = start_slot + slots_for(op_types) of the branching instruction.
+        offset_operand_positions.each do |insn_idx, op_idx|
+          raw_offset = instructions[insn_idx].operands[op_idx]
+          start_slot, op_types = insn_slots[insn_idx]
+          next_insn_slot = start_slot + slots_for(op_types)
+          target_slot = next_insn_slot + raw_offset
+          insn_target = slot_to_insn_idx[target_slot]
+          raise "OFFSET raw=#{raw_offset} in #{instructions[insn_idx].opcode} targets slot #{target_slot} with no corresponding instruction" unless insn_target
+          instructions[insn_idx].operands[op_idx] = insn_target
+        end
+
         instructions
       end
 
       # Encode +instructions+ (Array<IR::Instruction>) back into a bytecode binary String.
+      #
+      # Branch OFFSET operands in IR are absolute instruction indices; they are
+      # converted to relative YARV slot offsets (from next-insn) in the binary.
+      # Convention: branch OFFSET operands are instruction indices in IR;
+      # they are relative YARV slot offsets (from next-insn) in the binary.
+      # See #decode for the reverse conversion.
       #
       # @param instructions [Array<IR::Instruction>]
       # @param object_table [ObjectTable]  (unused in current identity encoding, reserved)
@@ -244,7 +307,18 @@ module RubyOpt
       def self.encode(instructions, object_table, iseqs)
         writer = BinaryWriter.new
 
-        instructions.each do |insn|
+        # Build instruction-index -> YARV starting slot map for OFFSET conversion.
+        insn_to_slot = {}
+        current_slot = 0
+        instructions.each_with_index do |insn, idx|
+          insn_to_slot[idx] = current_slot
+          opcode_num = NAME_TO_OPCODE[insn.opcode]
+          raise "Unknown opcode name: #{insn.opcode.inspect}" unless opcode_num
+          _name, op_types = OPCODE_TO_INFO[opcode_num]
+          current_slot += slots_for(op_types)
+        end
+
+        instructions.each_with_index do |insn, insn_idx|
           opcode_num = NAME_TO_OPCODE[insn.opcode]
           raise "Unknown opcode name: #{insn.opcode.inspect}" unless opcode_num
 
@@ -252,11 +326,20 @@ module RubyOpt
 
           _name, op_types = OPCODE_TO_INFO[opcode_num]
           operand_idx = 0
+          next_insn_slot = insn_to_slot[insn_idx] + slots_for(op_types)
 
           op_types.each do |op_type|
             case op_type
-            when :VALUE, :CDHASH, :ID, :ISEQ, :LINDEX, :NUM, :OFFSET, :ISE, :IVC, :ICVARC, :IC
+            when :VALUE, :CDHASH, :ID, :ISEQ, :LINDEX, :NUM, :ISE, :IVC, :ICVARC, :IC
               writer.write_small_value(insn.operands[operand_idx])
+              operand_idx += 1
+            when :OFFSET
+              # Convert instruction index to YARV relative slot offset.
+              # OFFSET_raw = target_slot - next_insn_slot
+              target_insn_idx = insn.operands[operand_idx]
+              target_slot = insn_to_slot[target_insn_idx]
+              raise "OFFSET operand #{target_insn_idx} has no corresponding slot (out of range?)" unless target_slot
+              writer.write_small_value(target_slot - next_insn_slot)
               operand_idx += 1
             when :CALLDATA
               # TS_CALLDATA: write nothing in the bytecode stream.
