@@ -109,16 +109,39 @@ of the demo.
 
 ## Round-tripping
 
-IR → iseq must produce something the VM will accept. That means:
+IR → iseq must produce something the VM will accept. Ruby 4.0.2
+(confirmed empirically, 2026-04-19) does not expose an assembler:
+`to_a` is a read-only view, `.load` is a disabled stub, and there is
+no public entry that ingests a modified array. The only path in is
+`RubyVM::InstructionSequence.load_from_binary`, which accepts the
+`YARB`-magic packed binary format produced by `to_binary`.
 
-- Preserving iseq metadata (arg shape, local table layout,
-  catch-table entries)
-- Adjusting stack-depth annotations if we changed instruction counts
-- Preserving line numbers where we can, synthesizing where we can't
+Consequence: the round-trip goes **iseq → `.to_binary` → our binary
+decoder → IR → passes → IR → our binary encoder → `load_from_binary`
+→ iseq**. The binary format is private and version-specific. Our
+codec lives in a single isolated module (`ruby_opt/codec/`) and is
+not shown in the talk — the audience sees the IR and the passes; the
+codec is acknowledged as "we did the brittle part for you."
 
-The optimizer punts on any construct it can't round-trip (catch
-tables with complex handlers, for instance). Those iseqs are returned
-unchanged and logged.
+The codec must:
+
+- Preserve iseq metadata (arg shape, local table layout,
+  catch-table entries) that isn't being transformed
+- Adjust stack-depth annotations (`stack_max`) when instruction
+  counts change
+- Preserve line numbers where we can, synthesize where we can't
+- Be version-gated: the binary format changes with Ruby minor
+  releases. We target exactly the Ruby version the talk runs on
+  (4.0.2) and fail loudly on mismatch.
+
+The codec is validated by an identity round-trip test: for a corpus
+of iseqs produced by `compile`, `decode(encode(decode(to_binary)))`
+must produce a binary byte-identical to the original. Transformations
+layer on top of this identity foundation.
+
+The optimizer punts on any construct the codec can't round-trip
+(catch tables with complex handlers, for instance). Those iseqs are
+returned unchanged and logged.
 
 ## Not in scope
 
