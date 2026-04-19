@@ -58,6 +58,9 @@ Hardcoded. Using the optimizer means accepting all of:
    Integer) -> Integer`, that's what shows up at runtime
 4. **ENV is read-only after load** — enables `ENV["X"]` folding (see
    const-fold pass)
+5. **Top-level constants are not reassigned and `const_set` is not
+   used after load** — enables treating assigned-once constants as
+   literals (see const-fold tier 2)
 
 Breaking any of these is a miscompile, not a slowdown. We say so on
 the contract slide and we mean it.

@@ -36,10 +36,10 @@ def scale(x) = x * MULTIPLIER
 After inlining a caller `scale(5)`, the body becomes `5 * 10` → `50`.
 
 Preconditions:
-- Constant is assigned exactly once, from a literal or a tier-1-foldable
-  expression
-- No `const_set` or dynamic reassignment anywhere in the loaded
-  program (contract clause TBD; logged if violated)
+- Constant is assigned exactly once in the loaded program, from a
+  literal or a tier-1-foldable expression
+- The contract's "no constant reassignment / no `const_set`" clause
+  applies (always true in this optimizer)
 
 ### Tier 3 — Type-guided identities
 

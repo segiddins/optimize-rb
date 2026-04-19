@@ -60,7 +60,9 @@ follows:
 - Core class basic operations (`Integer#+`, etc.) are not redefined
 - No `prepend` into classes the optimizer has inlined from, after load
 - RBS inline signatures are truthful
-- (Likely one more — to be finalized during implementation)
+- `ENV` is read-only after load
+- Top-level constants are not reassigned and `const_set` is not used
+  after load
 
 Each rule is paired with what it unlocks. The framing question we keep
 returning to is *"why doesn't Ruby itself do this?"* — and the answer is
