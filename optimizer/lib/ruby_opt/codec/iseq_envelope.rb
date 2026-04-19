@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 require "ruby_opt/ir/function"
+require "ruby_opt/ir/instruction"
 require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
+require "ruby_opt/codec/instruction_stream"
 
 module RubyOpt
   module Codec
@@ -226,6 +228,15 @@ module RubyOpt
           outer_vars_abs:                 outer_vars_abs,
         }
 
+        # Decode the instruction stream from raw bytecode bytes into IR::Instruction array.
+        # We keep raw operand indices (not resolved Ruby objects) so that re-encoding
+        # produces byte-identical output.
+        raw_bytecode = bytecode_abs && bytecode_size > 0 ?
+                         binary.byteslice(bytecode_abs, bytecode_size) : "".b
+        instructions = InstructionStream.decode(raw_bytecode, object_table, all_functions)
+        # Store the raw bytecode in misc so IseqList can re-emit the region verbatim.
+        misc[:raw_bytecode] = raw_bytecode
+
         # Build the IR::Function. children will be populated by the caller.
         IR::Function.new(
           name:          label.to_s,
@@ -237,8 +248,7 @@ module RubyOpt
           local_table:   nil,   # raw bytes stored in misc if needed
           catch_table:   nil,   # raw bytes stored in misc if needed
           line_info:     nil,   # raw bytes stored in misc if needed
-          instructions:  bytecode_abs && bytecode_size > 0 ?
-                           binary.byteslice(bytecode_abs, bytecode_size) : "".b,
+          instructions:  instructions,
           children:      [],
           misc:          misc,
         )

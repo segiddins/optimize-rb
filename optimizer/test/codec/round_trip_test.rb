@@ -5,6 +5,7 @@ require "ruby_opt/codec/header"
 require "ruby_opt/codec/object_table"
 require "ruby_opt/codec/iseq_envelope"
 require "ruby_opt/ir/function"
+require "ruby_opt/ir/instruction"
 
 class RoundTripTest < Minitest::Test
   # The core contract: encode(decode(bin)) == bin, for unmodified iseqs.
@@ -75,6 +76,20 @@ class RoundTripTest < Minitest::Test
     # Full round-trip must be byte-identical
     re_encoded = RubyOpt::Codec.encode(ir)
     assert_equal original, re_encoded
+  end
+
+  def test_instruction_stream_decode_shape
+    src = "def add(a, b); a + b; end"
+    ir = RubyOpt::Codec.decode(
+      RubyVM::InstructionSequence.compile(src).to_binary
+    )
+    add = ir.children.find { |f| f.name == "add" }
+    refute_nil add
+    opcodes = add.instructions.map(&:opcode)
+    assert_includes opcodes, :opt_plus
+    assert_includes opcodes, :leave
+    # At least one getlocal-family op (exact opcode varies by arg position)
+    assert opcodes.any? { |op| op.to_s.start_with?("getlocal") }, "expected getlocal-family opcode, got #{opcodes.inspect}"
   end
 
   def test_header_round_trip
