@@ -2,6 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export RUBY_BYTECODE_REPO_ROOT="$(cd "$script_dir/.." && pwd)"
 cd "$script_dir/../mcp-server"
 
 exec bundle exec ruby bin/ruby-bytecode-mcp \

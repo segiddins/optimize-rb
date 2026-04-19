@@ -45,5 +45,51 @@ module RubyBytecodeMcp
         duration_ms: 0,
       }
     end
+
+    # Build a `docker run` command for running a command inside a mounted
+    # host directory. Used for running rake/tests in the optimizer/ project.
+    # Defaults to the full `ruby:<version>` image (not -slim) so native
+    # extensions like prism can build.
+    def command_for_dir(host_dir:, command:, ruby_version: DEFAULT_RUBY_VERSION, timeout_s: DEFAULT_TIMEOUT_S, network: false, image_suffix: "")
+      image = "#{DEFAULT_IMAGE_PREFIX}:#{ruby_version}#{image_suffix}"
+      net_flag = network ? "--network=bridge" : "--network=none"
+      [
+        "docker", "run", "--rm", "-i",
+        net_flag,
+        "--memory=1g",
+        "--cpus=2",
+        "-v", "#{host_dir}:/w",
+        "-w", "/w",
+        image,
+        "timeout", timeout_s.to_s,
+        *command,
+      ]
+    end
+
+    # Execute a command inside a mounted host directory.
+    # Returns {stdout:, stderr:, exit_code:, duration_ms:}.
+    def run_in_dir(host_dir:, command:, ruby_version: DEFAULT_RUBY_VERSION, timeout_s: DEFAULT_TIMEOUT_S, network: false, image_suffix: "")
+      cmd = command_for_dir(
+        host_dir: host_dir, command: command,
+        ruby_version: ruby_version, timeout_s: timeout_s, network: network,
+        image_suffix: image_suffix,
+      )
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      stdout, stderr, status = Open3.capture3(*cmd)
+      duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).to_i
+      {
+        stdout: stdout,
+        stderr: stderr,
+        exit_code: status.exitstatus || -1,
+        duration_ms: duration_ms,
+      }
+    rescue Errno::ENOENT => e
+      {
+        stdout: "",
+        stderr: "docker not found on PATH: #{e.message}",
+        exit_code: 127,
+        duration_ms: 0,
+      }
+    end
   end
 end

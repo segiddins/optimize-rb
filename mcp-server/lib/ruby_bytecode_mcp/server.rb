@@ -6,6 +6,7 @@ require_relative "tools/parse_ast"
 require_relative "tools/benchmark_ips"
 require_relative "tools/iseq_to_binary"
 require_relative "tools/load_iseq_binary"
+require_relative "tools/run_optimizer_tests"
 
 module RubyBytecodeMcp
   TOOLS = [
@@ -15,6 +16,7 @@ module RubyBytecodeMcp
     Tools::BenchmarkIps,
     Tools::IseqToBinary,
     Tools::LoadIseqBinary,
+    Tools::RunOptimizerTests,
   ].freeze
 
   def self.build_server
