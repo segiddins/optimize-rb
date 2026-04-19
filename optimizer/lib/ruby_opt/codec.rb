@@ -49,6 +49,12 @@ module RubyOpt
     # Raised when an object kind in the IBF object table is not yet implemented.
     class UnsupportedObjectKind < StandardError; end
 
+    # Raised when a pass produces instructions whose total encoded byte
+    # length differs from the original. Full re-serialization of catch
+    # tables, line info, and other offset-dependent sections is a later
+    # plan; until then, passes must preserve the instruction byte count.
+    class EncoderSizeChange < StandardError; end
+
     # Decodes a YARB binary blob (from RubyVM::InstructionSequence#to_binary)
     # into an IR::Function tree.
     #

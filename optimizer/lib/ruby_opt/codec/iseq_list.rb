@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "ruby_opt/codec/iseq_envelope"
+require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/ir/function"
 
 module RubyOpt
@@ -35,11 +36,15 @@ module RubyOpt
       # @return [IR::Function] the root (top-level) iseq — typically functions[0]
       attr_reader :root
 
-      def initialize(functions, root, raw_iseq_region, raw_offset_array)
+      # Absolute byte offset where the iseq data region begins in the binary.
+      ISEQ_REGION_START = 40
+
+      def initialize(functions, root, raw_iseq_region, raw_offset_array, object_table)
         @functions         = functions
         @root              = root
         @raw_iseq_region   = raw_iseq_region   # bytes from pos 40 to iseq_list_offset (exclusive)
         @raw_offset_array  = raw_offset_array  # iseq_list_size × 4 bytes
+        @object_table      = object_table
       end
 
       # Decode the iseq list from +binary+ using +header+ and +object_table+.
@@ -94,15 +99,45 @@ module RubyOpt
         # Convention: iseq-list index 0 is always the outermost iseq.
         root = all_functions[0]
 
-        new(all_functions, root, raw_iseq_region, raw_offset_array)
+        new(all_functions, root, raw_iseq_region, raw_offset_array, object_table)
       end
 
       # Encode the iseq list into +writer+.
-      # Uses raw bytes for byte-identical round-trip.
+      #
+      # For each function, re-encodes its instruction stream via InstructionStream.encode
+      # and splices the result over the original bytes in the iseq data region.
+      # If the re-encoded instruction bytes differ in length from the original,
+      # raises RubyOpt::Codec::EncoderSizeChange.
       #
       # @param writer [BinaryWriter]
       def encode(writer)
-        writer.write_bytes(@raw_iseq_region)
+        # Make a mutable copy of the raw iseq region so we can splice in re-encoded bytes.
+        region = @raw_iseq_region.dup
+
+        @functions.each do |fn|
+          bytecode_abs  = fn.misc[:bytecode_abs]
+          bytecode_size = fn.misc[:bytecode_size]
+
+          # Skip iseqs with no bytecode (e.g. iseq_size == 0).
+          next unless bytecode_abs && bytecode_size && bytecode_size > 0
+          next unless fn.instructions
+
+          # Re-encode the instruction stream.
+          new_bytes = InstructionStream.encode(fn.instructions, @object_table, @functions)
+          original_len = bytecode_size
+          new_len = new_bytes.bytesize
+
+          if new_len != original_len
+            raise Codec::EncoderSizeChange,
+              "instruction re-encode changed size: iseq=#{fn.name} was=#{original_len} got=#{new_len}"
+          end
+
+          # Splice new_bytes into the region at the correct offset.
+          region_offset = bytecode_abs - ISEQ_REGION_START
+          region[region_offset, new_len] = new_bytes
+        end
+
+        writer.write_bytes(region)
         writer.write_bytes(@raw_offset_array)
       end
     end
