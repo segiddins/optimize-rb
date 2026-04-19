@@ -10,6 +10,8 @@
 
 **Scope bounds:** This plan delivers the codec and a minimal IR shape (Function, BasicBlock stub, Instruction) sufficient for round-tripping. The CFG construction, type env, contract, and pipeline live in the next plan. The passes come later.
 
+**Commit discipline:** Every commit step below is written as `jj commit -m "<msg>"` for readability. Executors MUST translate this to `jj split -m "<msg>" -- <files>` using the exact file list from the task's Files section. This keeps commits surgical and prevents parallel/subagent work from stomping unrelated changes in the working copy.
+
 ---
 
 ## File structure
