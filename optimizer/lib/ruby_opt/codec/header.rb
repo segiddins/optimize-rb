@@ -2,6 +2,7 @@
 
 require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
+require "ruby_opt/codec"
 
 module RubyOpt
   module Codec
@@ -35,7 +36,9 @@ module RubyOpt
       # Raises RubyOpt::Codec::MalformedBinary if the magic bytes are wrong.
       def self.decode(reader)
         magic                    = reader.read_bytes(4)
-        raise MalformedBinary, "unknown binary format" unless magic == "YARB".b
+        unless magic == "YARB".b
+          raise Codec::MalformedBinary, "invalid magic bytes: expected 'YARB', got #{magic.inspect}"
+        end
         major_version            = reader.read_u32
         minor_version            = reader.read_u32
         size                     = reader.read_u32

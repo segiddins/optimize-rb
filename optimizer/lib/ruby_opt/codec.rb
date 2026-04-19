@@ -11,6 +11,20 @@ module RubyOpt
     # Raised when a binary blob does not conform to the YARB format.
     class MalformedBinary < StandardError; end
 
+    # Raised when an unknown opcode is encountered in the bytecode stream.
+    class UnsupportedOpcode < StandardError
+      attr_reader :opcode_num, :offset
+
+      def initialize(opcode_num, offset)
+        @opcode_num = opcode_num
+        @offset     = offset
+        super("Unsupported opcode #{opcode_num} at byte offset #{offset}")
+      end
+    end
+
+    # Raised when an object kind in the IBF object table is not yet implemented.
+    class UnsupportedObjectKind < StandardError; end
+
     # Decodes a YARB binary blob (from RubyVM::InstructionSequence#to_binary)
     # into an IR::Function tree.
     #

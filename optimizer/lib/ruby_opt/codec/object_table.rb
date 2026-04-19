@@ -2,11 +2,10 @@
 
 require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
+require "ruby_opt/codec"
 
 module RubyOpt
   module Codec
-    # Raised when an object kind in the IBF object table is not yet implemented.
-    class UnsupportedObjectKind < StandardError; end
 
     # The global object table holds every literal Ruby object referenced by iseq instructions.
     # Instructions carry integer indices into this table; index 0 is always nil.
@@ -150,7 +149,7 @@ module RubyOpt
           when T_COMPLEX then decode_complex_rational(reader, obj_offsets, :complex)
           when T_RATIONAL then decode_complex_rational(reader, obj_offsets, :rational)
           else
-            raise UnsupportedObjectKind,
+            raise Codec::UnsupportedObjectKind,
               "unsupported IBF object type #{type} (header byte 0x#{hdr.to_s(16)})"
           end
         end
@@ -176,7 +175,7 @@ module RubyOpt
         else
           # Could be a flonum or other special const — we surface the raw VALUE
           # (future tasks can interpret flonum bits if needed)
-          raise UnsupportedObjectKind,
+          raise Codec::UnsupportedObjectKind,
             "unknown special_const VALUE #{value} (0x#{value.to_s(16)})"
         end
       end
@@ -219,7 +218,7 @@ module RubyOpt
         # For now: return a best-effort Regexp using stored info.
         Regexp.new("__ibf_srcidx_#{srcstr_idx}__", option)
       rescue
-        raise UnsupportedObjectKind, "failed to decode T_REGEXP option=#{option}"
+        raise Codec::UnsupportedObjectKind, "failed to decode T_REGEXP option=#{option}"
       end
 
       # T_ARRAY: len (small_value), then len object-table indices (small_values)
@@ -251,7 +250,7 @@ module RubyOpt
 
       def self.decode_class(reader)
         cindex = reader.read_small_value
-        CLASS_NAMES[cindex] or raise UnsupportedObjectKind, "unknown class index #{cindex}"
+        CLASS_NAMES[cindex] or raise Codec::UnsupportedObjectKind, "unknown class index #{cindex}"
       end
 
       # T_DATA: only encoding objects are supported in IBF.
@@ -262,7 +261,7 @@ module RubyOpt
         reader.seek(aligned)
         kind = reader.read_bytes(wordsize).unpack1("q<")
         len  = reader.read_bytes(wordsize).unpack1("q<")
-        raise UnsupportedObjectKind, "T_DATA kind #{kind} (expected 0)" unless kind == 0
+        raise Codec::UnsupportedObjectKind, "T_DATA kind #{kind} (expected 0)" unless kind == 0
         name = reader.read_bytes(len).delete("\x00")
         Encoding.find(name)
       end

@@ -3,20 +3,11 @@
 require "ruby_opt/ir/instruction"
 require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
+require "ruby_opt/codec"
 
 module RubyOpt
   module Codec
     module InstructionStream
-      # Raised when an unknown opcode is encountered in the bytecode stream.
-      class UnsupportedOpcode < StandardError
-        attr_reader :opcode_num, :offset
-
-        def initialize(opcode_num, offset)
-          @opcode_num = opcode_num
-          @offset     = offset
-          super("Unsupported opcode #{opcode_num} at byte offset #{offset}")
-        end
-      end
 
       # Operand type sentinels used in INSN_TABLE below.
       # Each symbol maps to how many small_values are read/written in the bytecode stream:
@@ -209,7 +200,7 @@ module RubyOpt
           opcode_num = reader.read_small_value
 
           info = OPCODE_TO_INFO[opcode_num]
-          raise UnsupportedOpcode.new(opcode_num, opcode_offset) unless info
+          raise Codec::UnsupportedOpcode.new(opcode_num, opcode_offset) unless info
 
           _name, op_types = info
           opcode_sym = info[0]
