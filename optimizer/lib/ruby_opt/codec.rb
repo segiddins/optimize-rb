@@ -1,4 +1,28 @@
 # frozen_string_literal: true
+
+# RubyOpt::Codec — decode and encode the YARB ("YARV Binary Format")
+# produced by RubyVM::InstructionSequence#to_binary.
+#
+# Public API:
+#
+#   RubyOpt::Codec.decode(binary) -> IR::Function
+#     Parses a YARB blob into an IR::Function whose #children lists
+#     the outer iseqs.
+#
+#   RubyOpt::Codec.encode(ir) -> String
+#     Serializes back to YARB bytes suitable for
+#     RubyVM::InstructionSequence.load_from_binary.
+#
+# Raises:
+#   - MalformedBinary — magic bytes don't match "YARB" or input is
+#     structurally invalid
+#   - UnsupportedOpcode — instruction stream contains an opcode number
+#     not in INSN_TABLE
+#   - UnsupportedObjectKind — object table contains a Ruby type not
+#     modeled by the codec
+#
+# The round-trip is identity: encode(decode(bin)) == bin, verified
+# across a corpus of realistic snippets.
 require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
 require "ruby_opt/codec/header"
