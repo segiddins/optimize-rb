@@ -2,6 +2,7 @@
 require "test_helper"
 require "ruby_opt/codec"
 require "ruby_opt/codec/header"
+require "ruby_opt/codec/object_table"
 
 class RoundTripTest < Minitest::Test
   # The core contract: encode(decode(bin)) == bin, for unmodified iseqs.
@@ -33,6 +34,30 @@ class RoundTripTest < Minitest::Test
       assert_kind_of RubyVM::InstructionSequence, loaded
       loaded.eval
     end
+  end
+
+  def test_object_table_round_trip
+    # Use 256 instead of 1: the integer 1 is encoded via the specialized opcode
+    # putobject_INT2FIX_1_ and does not appear as an object-table entry. 256 goes
+    # through the normal putobject path and IS stored in the object table.
+    original = RubyVM::InstructionSequence.compile(
+      '[256, "two", :three, 4.5, /six/]'
+    ).to_binary
+    reader = RubyOpt::Codec::BinaryReader.new(original)
+    header = RubyOpt::Codec::Header.decode(reader)
+    table = RubyOpt::Codec::ObjectTable.decode(reader, header)
+
+    # Table should contain literals seen in the snippet
+    assert_includes table.objects, 256
+    assert_includes table.objects, "two"
+    assert_includes table.objects, :three
+    assert_includes table.objects, 4.5
+
+    writer = RubyOpt::Codec::BinaryWriter.new
+    header.encode(writer)
+    table.encode(writer, header)
+    table_end = reader.pos
+    assert_equal original.byteslice(0, table_end), writer.buffer
   end
 
   def test_header_round_trip

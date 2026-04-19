@@ -2,6 +2,7 @@
 require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
 require "ruby_opt/codec/header"
+require "ruby_opt/codec/object_table"
 
 module RubyOpt
   module Codec
