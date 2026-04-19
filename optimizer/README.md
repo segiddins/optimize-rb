@@ -5,15 +5,21 @@ Talk-artifact Ruby optimizer. Companion to
 
 ## Status
 
-- **Binary codec**: round-trippable decoder/encoder for YARB (YARV Binary
-  Format) produced by `RubyVM::InstructionSequence#to_binary`. Identity
-  round-trip (`encode(decode(bin)) == bin`) verified across a corpus of
-  realistic snippets plus a semantic smoke test.
-- **IR**: minimal — `IR::Function` per iseq, `IR::Instruction` per opcode.
-  Sufficient for decoding and re-encoding; passes will consume this in
-  the next plan.
-- **Harness, optimizer core, passes**: to come (see
-  `docs/superpowers/plans/` and companion specs).
+- **Binary codec**: round-trippable decoder/encoder for YARB binaries.
+  Modifications to `IR::Function#instructions` are re-encoded (same-byte-count
+  substitutions). Length-changing edits (required for inlining) are a future
+  plan.
+- **IR**: `IR::Function` (one per iseq), `IR::Instruction` (one per YARV op),
+  `IR::BasicBlock` and `IR::CFG` for control-flow analysis.
+- **Passes**: base class (`RubyOpt::Pass`), orchestrator (`RubyOpt::Pipeline`),
+  hardcoded contract (`RubyOpt::Contract`), structured log (`RubyOpt::Log`).
+  A `NoopPass` ships as proof-of-life. Real passes come in subsequent plans.
+- **Type env**: `RubyOpt::RbsParser` extracts inline `@rbs` signatures;
+  `RubyOpt::TypeEnv` exposes `#signature_for`.
+- **Harness**: `RubyOpt::Harness::LoadIseqHook` installs a `load_iseq`
+  override that runs the pipeline on every loaded file. Opt out with
+  `# rbs-optimize: false` at the top of the file. Any failure falls back
+  to MRI's built-in compilation.
 
 ## Running tests
 
@@ -29,11 +35,16 @@ Or, on a host with Ruby 4.0.2 and Docker:
 
 ## Layout
 
-- `lib/ruby_opt/codec/` — YARB binary surgery (reader, writer, header,
-  object table, iseq list, iseq envelope, instruction stream)
-- `lib/ruby_opt/ir/` — decoded IR (`Function`, `Instruction`)
-- `test/codec/` — round-trip, corpus, and smoke tests
-- `test/codec/corpus/` — Ruby snippet fixtures
+- `lib/ruby_opt/codec/` — YARB binary surgery
+- `lib/ruby_opt/ir/` — `Function`, `Instruction`, `BasicBlock`, `CFG`
+- `lib/ruby_opt/pass.rb` — Pass base class + NoopPass
+- `lib/ruby_opt/pipeline.rb` — pass orchestration
+- `lib/ruby_opt/contract.rb` — the hardcoded ground rules
+- `lib/ruby_opt/log.rb` — structured optimizer log
+- `lib/ruby_opt/rbs_parser.rb` — inline `@rbs` extraction
+- `lib/ruby_opt/type_env.rb` — typed-environment queries
+- `lib/ruby_opt/harness.rb` — `load_iseq` override
+- `test/` — minitest suites, fixtures under `test/harness_fixtures/`
 
 ## The round-trip contract
 
