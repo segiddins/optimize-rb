@@ -21,7 +21,6 @@ module RubyBytecodeMcp
             description: "Container timeout in seconds. Default 300; bundle install on a cold cache can take minutes.",
           },
         },
-        required: [],
       )
 
       DEFAULT_TIMEOUT_S = 300
