@@ -1,8 +1,8 @@
 # Ruby
 *.gem
 *.rbc
-.bundle/
-vendor/bundle/
+**/.bundle/
+**/vendor/bundle/
 /tmp/
 /log/
 
