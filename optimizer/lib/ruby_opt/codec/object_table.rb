@@ -26,6 +26,7 @@ module RubyOpt
     #   RUBY_Qfalse = 0
     #   RUBY_Qtrue  = 20
     #   RUBY_Qnil   = 4
+    #   RUBY_Qundef = 36  (= QNIL | 0x20; used as sentinel for unset keyword defaults)
     #   Fixnum n: VALUE = (n << 1) | 1
     class ObjectTable
       # T_ type constants from ruby.h
@@ -46,6 +47,9 @@ module RubyOpt
       QFALSE = 0
       QTRUE  = 20
       QNIL   = 4
+      # RUBY_Qundef = QNIL | 0x20; stored in the object table as a sentinel for
+      # keyword parameters whose default must be computed at runtime.
+      QUNDEF = 36
 
       # @return [Array<Object>] decoded Ruby objects in on-disk index order
       attr_reader :objects
@@ -164,6 +168,11 @@ module RubyOpt
           true
         elsif value == QFALSE
           false
+        elsif value == QUNDEF
+          # RUBY_Qundef: internal sentinel stored for keyword parameters whose default
+          # is computed at runtime (e.g. `def f(k: expr)`). Return a frozen sentinel
+          # string; the value is never used for re-encoding (raw bytes are preserved).
+          :__qundef__
         else
           # Could be a flonum or other special const — we surface the raw VALUE
           # (future tasks can interpret flonum bits if needed)

@@ -67,7 +67,7 @@ module RubyOpt
         21  => [:putstring,                    [:VALUE]],
         22  => [:putchilledstring,             [:VALUE]],
         23  => [:concatstrings,                [:NUM]],
-        24  => [:anytostring,                  [:NUM]],
+        24  => [:anytostring,                  []],
         25  => [:toregexp,                     [:NUM, :NUM]],
         26  => [:intern,                       []],
         27  => [:newarray,                     [:NUM]],
