@@ -121,13 +121,10 @@ class ConstFoldPassTest < Minitest::Test
     assert_operator skipped.size, :>=, 1, "expected a :would_raise skip entry"
   end
 
-  def test_logs_non_integer_literal_when_float_operand_reaches_an_arith_op
-    # NOTE: this test originally targeted `"a" + "b"`, but YARV emits
-    # string literals as `putchilledstring`, which `LiteralValue.read`
-    # treats as non-literal (returns nil). Floats use `putobject`, so
-    # both operands read as literals but neither is an Integer — exactly
-    # the case the :non_integer_literal log entry is meant to cover.
-    src = "def f; 1.0 + 2.0; end"
+  def test_logs_non_integer_literal_when_string_operand_reaches_an_arith_op
+    # LiteralValue now recognizes putchilledstring, so both operands resolve
+    # as literals but neither is an Integer — triggers :non_integer_literal.
+    src = 'def f; "a" + "b"; end'
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")

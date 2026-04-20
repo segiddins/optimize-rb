@@ -72,7 +72,7 @@ module RubyOpt
         # A triple where one side isn't a literal at all (read -> nil) is silent —
         # it's the common "variable + literal" case.
         unless av.is_a?(Integer) && bv.is_a?(Integer)
-          both_literals = !av.nil? && !bv.nil?
+          both_literals = LiteralValue.literal?(a) && LiteralValue.literal?(b)
           if both_literals
             log.skip(pass: :const_fold, reason: :non_integer_literal,
                      file: function.path, line: (op.line || a.line || function.first_lineno))
