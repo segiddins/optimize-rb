@@ -26,6 +26,14 @@ Talk-artifact Ruby optimizer. Companion to
 
 ## Passes
 
+- `RubyOpt::Passes::ArithReassocPass` — v1 arithmetic reassociation.
+  Collapses `opt_plus` chains within a basic block where ≥2 operands are
+  Integer literals, keeping non-literal operands in original order and
+  emitting a single combined-literal tail. Reaches the shape const-fold
+  cannot: `x + 1 + 2 + 3` → `x + 6`. Non-Integer literal operands and
+  chains with fewer than two integer literals are left alone (`:mixed_literal_types`,
+  `:chain_too_short`). `opt_mult`, `opt_minus`, multi-instruction operand
+  producers, and RBS-driven typing of non-literal operands are future plans.
 - `RubyOpt::Passes::ConstFoldPass` — tier 1 constant folding. Folds
   Integer literal arithmetic (`+ - * / %`) and Integer literal
   comparison (`< <= > >= == !=`) triples within a basic block,
