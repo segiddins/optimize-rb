@@ -156,6 +156,40 @@ class ArithReassocPassTest < Minitest::Test
     assert_operator entries.size, :>=, 1
   end
 
+  def test_independent_chains_both_get_rewritten
+    src = <<~RUBY
+      def f(cond, x, y)
+        if cond
+          x + 1 + 2 + 3
+        else
+          y + 4 + 5 + 6
+        end
+      end
+      f(true, 10, 20)
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    reassoc_entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :reassociated }
+    assert_operator reassoc_entries.size, :>=, 2,
+      "expected both then/else chains to reassociate"
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 })
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 15 })
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 16, loaded.eval  # f(true, 10, 20) == 10 + 6
+  end
+
+  def test_end_to_end_deep_chain_evaluates_correctly
+    src = "def f(x); x + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10; end; f(100)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    RubyOpt::Passes::ArithReassocPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 155, loaded.eval  # 100 + (1+2+...+10) = 100 + 55
+  end
+
   private
 
   def find_iseq(ir, name)

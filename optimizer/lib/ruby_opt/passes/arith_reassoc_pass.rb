@@ -31,7 +31,12 @@ module RubyOpt
         insts = function.instructions
         return unless insts
 
-        rewrite_once(insts, function, log, object_table)
+        # Outer fixpoint loop: defense-in-depth around the inner scan.
+        # Termination: each rewrite strictly decreases insts.size by at least 2
+        # (see spec "Fixpoint" section); no rewrite => break.
+        loop do
+          break unless rewrite_once(insts, function, log, object_table)
+        end
       end
 
       private
@@ -105,6 +110,19 @@ module RubyOpt
         }
       end
 
+      BRANCH_TARGET_OPCODES = %i[branchif branchunless branchnil jump].freeze
+
+      # Adjust absolute branch-target indices after splicing out `delta` instructions
+      # strictly before position `after + 1`. Only targets > after are shifted.
+      def patch_branch_targets(insts, after:, delta:)
+        insts.each do |inst|
+          next unless BRANCH_TARGET_OPCODES.include?(inst.opcode)
+          target = inst.operands[0]
+          next unless target.is_a?(Integer)
+          inst.operands[0] = target - delta if target > after
+        end
+      end
+
       def single_push?(inst)
         SINGLE_PUSH_OPERAND_OPCODES.include?(inst.opcode)
       end
@@ -149,7 +167,9 @@ module RubyOpt
 
         start = chain[:first_idx]
         length = chain[:end_idx] - chain[:first_idx] + 1
+        delta = length - replacement.size
         insts[start, length] = replacement
+        patch_branch_targets(insts, after: start + replacement.size - 1, delta: delta) if delta != 0
         function.invalidate_cfg
         log.skip(pass: :arith_reassoc, reason: :reassociated,
                  file: function.path, line: chain_line)
