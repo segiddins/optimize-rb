@@ -24,6 +24,17 @@ Talk-artifact Ruby optimizer. Companion to
   `# rbs-optimize: false` at the top of the file. Any failure falls back
   to MRI's built-in compilation.
 
+## Passes
+
+- `RubyOpt::Passes::ConstFoldPass` — tier 1 constant folding. Folds
+  Integer literal arithmetic (`+ - * / %`) and Integer literal
+  comparison (`< <= > >= == !=`) triples within a basic block,
+  iterating until no more folds fire. Division/modulo by zero and
+  non-Integer literal operands are left alone and logged
+  (`:would_raise`, `:non_integer_literal`). The default pipeline runs
+  `ConstFoldPass` only; inlining, arithmetic specialization, and
+  higher tiers of const-fold are future plans.
+
 ## Running tests
 
 Tests run inside a Ruby 4.0.2 Docker container via the repo's MCP server
