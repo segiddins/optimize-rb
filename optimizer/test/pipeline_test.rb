@@ -13,7 +13,7 @@ class PipelineTest < Minitest::Test
       @visited = []
     end
 
-    def apply(function, type_env:, log:)
+    def apply(function, type_env:, log:, object_table: nil)
       @visited << function.name
     end
 
@@ -23,7 +23,7 @@ class PipelineTest < Minitest::Test
   end
 
   class RaisingPass < RubyOpt::Pass
-    def apply(function, type_env:, log:)
+    def apply(function, type_env:, log:, object_table: nil)
       raise "boom"
     end
 

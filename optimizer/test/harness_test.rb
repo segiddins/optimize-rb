@@ -39,7 +39,7 @@ class HarnessLoadIseqTest < Minitest::Test
       @tracker = tracker
     end
 
-    def apply(function, type_env:, log:)
+    def apply(function, type_env:, log:, object_table: nil)
       @tracker << function.name
     end
 

@@ -12,7 +12,7 @@ class PassTest < Minitest::Test
     f = ir.children.first # outer iseq
     before = f.instructions.map(&:opcode)
     log = RubyOpt::Log.new
-    RubyOpt::NoopPass.new.apply(f, type_env: nil, log: log)
+    RubyOpt::NoopPass.new.apply(f, type_env: nil, log: log, object_table: nil)
     after = f.instructions.map(&:opcode)
     assert_equal before, after
     assert_empty log.entries
@@ -20,7 +20,7 @@ class PassTest < Minitest::Test
 
   def test_base_pass_apply_raises_not_implemented
     assert_raises(NotImplementedError) do
-      RubyOpt::Pass.new.apply(nil, type_env: nil, log: nil)
+      RubyOpt::Pass.new.apply(nil, type_env: nil, log: nil, object_table: nil)
     end
   end
 

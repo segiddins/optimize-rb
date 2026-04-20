@@ -11,10 +11,11 @@ module RubyOpt
     # Returns the RubyOpt::Log accumulated during the run.
     def run(ir, type_env:)
       log = Log.new
+      object_table = ir.misc && ir.misc[:object_table]
       each_function(ir) do |function|
         @passes.each do |pass|
           begin
-            pass.apply(function, type_env: type_env, log: log)
+            pass.apply(function, type_env: type_env, log: log, object_table: object_table)
           rescue => e
             log.skip(
               pass: pass.name,
