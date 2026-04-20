@@ -292,9 +292,9 @@ module RubyOpt
           end
 
           # 1. Bytecode (IR-encoded; raw is exact bytecode_size bytes, no trailing pad).
-          # NOTE: bytecode is intentionally modifiable; we only check SIZE, not content.
-          # The byte-identity assertion in emit_section would reject modified bytecode, so
-          # we bypass emit_section for bytecode and write it directly.
+          # NOTE: bytecode is intentionally modifiable; length changes are supported.
+          # We bypass emit_section for bytecode and write it directly, recording the
+          # fresh bytecode_size in dro so the body record reflects the new size.
           bytecode_abs_orig = misc[:bytecode_abs]
           if bytecode_abs_orig && bytecode_abs_orig > 0
             pad_raw = misc[:bytecode_pad_raw] || "".b
@@ -304,11 +304,8 @@ module RubyOpt
             bytecode_size = misc[:bytecode_size]
             if bytecode_size && bytecode_size > 0 && fn.instructions
               new_bytes = InstructionStream.encode(fn.instructions, @object_table, @functions)
-              if new_bytes.bytesize != bytecode_size
-                raise Codec::EncoderSizeChange,
-                  "instruction re-encode changed size: iseq=#{fn.name} was=#{bytecode_size} got=#{new_bytes.bytesize}"
-              end
               writer.write_bytes(new_bytes)
+              dro[:bytecode_size] = new_bytes.bytesize
             end
           end
 
@@ -461,42 +458,49 @@ module RubyOpt
           emitted_body = body_writer.buffer
           original_body = misc[:raw_body]
 
-          if emitted_body.bytesize != original_body.bytesize
-            raise RuntimeError,
-              "body record size mismatch: iseq=#{fn.name} was=#{original_body.bytesize} got=#{emitted_body.bytesize}"
-          end
-
-          if emitted_body != original_body
-            # Field-by-field diff to identify the first wrong field.
-            field_names = [
-              :type_val, :iseq_size, :bytecode_offset_rel, :bytecode_size,
-              :param_flags, :param_size, :param_lead_num, :param_opt_num,
-              :param_rest_start, :param_post_start, :param_post_num, :param_block_start,
-              :param_opt_table_offset_rel, :param_keyword_offset,
-              :location_pathobj_index, :location_base_label_index, :location_label_index,
-              :location_first_lineno, :location_node_id, :location_beg_lineno,
-              :location_beg_column, :location_end_lineno, :location_end_column,
-              :insns_info_body_offset_rel, :insns_info_positions_offset_rel,
-              :insns_info_size, :local_table_offset_rel, :lvar_states_offset_rel,
-              :catch_table_size, :catch_table_offset_rel,
-              :parent_iseq_index, :local_iseq_index, :mandatory_only_iseq_index,
-              :ci_entries_offset_rel, :outer_variables_offset_rel,
-              :variable_flip_count, :local_table_size, :ivc_size, :icvarc_size,
-              :ise_size, :ic_size, :ci_size, :stack_max, :builtin_attrs, :prism,
-            ]
-            orig_reader = BinaryReader.new(original_body)
-            emit_reader = BinaryReader.new(emitted_body)
-            field_names.each do |field|
-              orig_val = orig_reader.read_small_value
-              emit_val = emit_reader.read_small_value
-              if orig_val != emit_val
-                raise RuntimeError,
-                  "body record field mismatch: iseq=#{fn.name} field=#{field} " \
-                  "expected=#{orig_val} got=#{emit_val}"
-              end
+          # When bytecode size is unchanged (unmodified IR), byte-identity holds and we
+          # assert it to catch regressions. When bytecode size changed (length-changing edit),
+          # the body record legitimately differs (new bytecode_size, new relative offsets, new
+          # iseq_size), so we skip the identity assertion and trust the fresh dro values.
+          bytecode_size_changed = dro.key?(:bytecode_size) && dro[:bytecode_size] != misc[:bytecode_size]
+          unless bytecode_size_changed
+            if emitted_body.bytesize != original_body.bytesize
+              raise RuntimeError,
+                "body record size mismatch: iseq=#{fn.name} was=#{original_body.bytesize} got=#{emitted_body.bytesize}"
             end
-            raise RuntimeError,
-              "body record bytes differ but all fields match: iseq=#{fn.name} (encoding bug)"
+
+            if emitted_body != original_body
+              # Field-by-field diff to identify the first wrong field.
+              field_names = [
+                :type_val, :iseq_size, :bytecode_offset_rel, :bytecode_size,
+                :param_flags, :param_size, :param_lead_num, :param_opt_num,
+                :param_rest_start, :param_post_start, :param_post_num, :param_block_start,
+                :param_opt_table_offset_rel, :param_keyword_offset,
+                :location_pathobj_index, :location_base_label_index, :location_label_index,
+                :location_first_lineno, :location_node_id, :location_beg_lineno,
+                :location_beg_column, :location_end_lineno, :location_end_column,
+                :insns_info_body_offset_rel, :insns_info_positions_offset_rel,
+                :insns_info_size, :local_table_offset_rel, :lvar_states_offset_rel,
+                :catch_table_size, :catch_table_offset_rel,
+                :parent_iseq_index, :local_iseq_index, :mandatory_only_iseq_index,
+                :ci_entries_offset_rel, :outer_variables_offset_rel,
+                :variable_flip_count, :local_table_size, :ivc_size, :icvarc_size,
+                :ise_size, :ic_size, :ci_size, :stack_max, :builtin_attrs, :prism,
+              ]
+              orig_reader = BinaryReader.new(original_body)
+              emit_reader = BinaryReader.new(emitted_body)
+              field_names.each do |field|
+                orig_val = orig_reader.read_small_value
+                emit_val = emit_reader.read_small_value
+                if orig_val != emit_val
+                  raise RuntimeError,
+                    "body record field mismatch: iseq=#{fn.name} field=#{field} " \
+                    "expected=#{orig_val} got=#{emit_val}"
+                end
+              end
+              raise RuntimeError,
+                "body record bytes differ but all fields match: iseq=#{fn.name} (encoding bug)"
+            end
           end
 
           writer.write_bytes(emitted_body)
@@ -509,20 +513,14 @@ module RubyOpt
         # (ibf_dump_align uses sizeof(ibf_offset_t) = 4).
         writer.align_to(4)
 
-        # Verify fresh offsets match original for unmodified IR.
-        fresh_body_offsets.each_with_index do |fresh, idx|
-          original = original_body_offsets[idx]
-          if fresh != original
-            fn = @functions[idx]
-            raise RuntimeError,
-              "iseq offset array mismatch: iseq=#{fn.name} idx=#{idx} " \
-              "original=#{original} fresh=#{fresh} " \
-              "(layout divergence; IR may have changed section sizes)"
-          end
-        end
+        # Record the fresh iseq_list_offset (start of the offset array in the output).
+        fresh_iseq_list_offset = writer.pos
 
         # Write the fresh iseq offset array.
         writer.write_bytes(fresh_body_offsets.pack("V*"))
+
+        # Return the fresh iseq_list_offset so Codec.encode can patch the header.
+        fresh_iseq_list_offset
       end
     end
   end

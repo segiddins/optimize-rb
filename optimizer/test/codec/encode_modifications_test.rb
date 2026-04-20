@@ -42,16 +42,4 @@ class EncodeModificationsTest < Minitest::Test
     assert_equal original, re_encoded
   end
 
-  def test_length_change_raises_encoder_size_change
-    src = "def f; 1 + 2; end"
-    ir = RubyOpt::Codec.decode(
-      RubyVM::InstructionSequence.compile(src).to_binary
-    )
-    f = ir.children.find { |c| c.name == "f" }
-    # Drop an instruction — this will change the byte count.
-    f.instructions.pop
-    assert_raises(RubyOpt::Codec::EncoderSizeChange) do
-      RubyOpt::Codec.encode(ir)
-    end
-  end
 end

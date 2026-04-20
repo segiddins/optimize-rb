@@ -339,7 +339,9 @@ module RubyOpt
                     end
         writer.write_small_value(iseq_size)
         writer.write_small_value(rel.call(:bytecode_abs))
-        writer.write_small_value(misc[:bytecode_size])
+        # Use fresh bytecode_size from data_region_offsets when available (length-changing edits).
+        bytecode_size_val = data_region_offsets.key?(:bytecode_size) ? data_region_offsets[:bytecode_size] : misc[:bytecode_size]
+        writer.write_small_value(bytecode_size_val)
         writer.write_small_value(misc[:param_flags])
         writer.write_small_value(misc[:param_size])
         writer.write_small_value(misc[:param_lead_num])

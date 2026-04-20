@@ -49,10 +49,10 @@ module RubyOpt
     # Raised when an object kind in the IBF object table is not yet implemented.
     class UnsupportedObjectKind < StandardError; end
 
-    # Raised when a pass produces instructions whose total encoded byte
-    # length differs from the original. Full re-serialization of catch
-    # tables, line info, and other offset-dependent sections is a later
-    # plan; until then, passes must preserve the instruction byte count.
+    # Deprecated. The encoder now supports length-changing edits via IR-driven
+    # re-serialization (see Task 5 of the codec length-changes plan). Kept for
+    # backwards compatibility with callers that rescue it; no code in this repo
+    # raises it anymore.
     class EncoderSizeChange < StandardError; end
 
     # Decodes a YARB binary blob (from RubyVM::InstructionSequence#to_binary)
@@ -101,8 +101,11 @@ module RubyOpt
 
     # Encodes an IR::Function (as returned by decode) back into YARB binary form.
     #
-    # Uses byte-identical (identity) encoding: all regions are re-emitted verbatim
-    # from the raw bytes captured during decode.
+    # Uses byte-identical (identity) encoding for unmodified IR. When IR has been
+    # mutated in ways that change bytecode size, the iseq data region grows or
+    # shrinks; in that case the header fields iseq_list_offset,
+    # global_object_list_offset, and size are patched in the output buffer to
+    # reflect the fresh layout. All other header fields are unchanged.
     #
     # @param ir [IR::Function] root container as returned by Codec.decode
     # @return [String] YARB binary (ASCII-8BIT)
@@ -112,10 +115,31 @@ module RubyOpt
       iseq_list    = ir.misc[:iseq_list]
 
       writer = BinaryWriter.new
+      # Write header first (its offset fields may be stale if iseq region changed size).
       header.encode(writer)
-      iseq_list.encode(writer)
-      object_table.encode(writer)
-      writer.buffer
+
+      # Encode the iseq list; it returns the fresh absolute offset of the iseq offset
+      # array (the value that belongs in header.iseq_list_offset).
+      fresh_iseq_list_offset = iseq_list.encode(writer)
+
+      # Compute how much the iseq region grew or shrank. The object offset array stores
+      # absolute positions that all shift by the same delta.
+      iseq_list_delta = fresh_iseq_list_offset - header.iseq_list_offset
+
+      object_table.encode(writer, iseq_list_delta: iseq_list_delta)
+
+      fresh_total_size = writer.pos
+      fresh_object_list_offset = header.global_object_list_offset + iseq_list_delta
+
+      # Patch the three header fields that depend on layout.
+      # Header layout: size@12(4 bytes), iseq_list_offset@28(4 bytes),
+      # global_object_list_offset@32(4 bytes).
+      buf = writer.buffer
+      buf[12, 4] = [fresh_total_size].pack("V")
+      buf[28, 4] = [fresh_iseq_list_offset].pack("V")
+      buf[32, 4] = [fresh_object_list_offset].pack("V")
+
+      buf
     end
   end
 end

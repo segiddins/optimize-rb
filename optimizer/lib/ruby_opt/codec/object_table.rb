@@ -53,11 +53,16 @@ module RubyOpt
       # @return [Array<Object>] decoded Ruby objects in on-disk index order
       attr_reader :objects
 
-      def initialize(objects, raw_object_region)
+      def initialize(objects, raw_object_region, obj_list_size: 0, obj_list_offset_in_region: 0)
         @objects = objects
         # Raw bytes covering the object data region + object offset array only.
         # Starts at (iseq_list_offset + iseq_list_size * 4) and runs to end of binary.
         @raw_object_region = raw_object_region
+        # Number of objects (= size of the offset array in u32 entries).
+        @obj_list_size = obj_list_size
+        # Byte offset of the object offset array WITHIN @raw_object_region.
+        # Used to patch absolute offsets when the iseq region has grown/shrunk.
+        @obj_list_offset_in_region = obj_list_offset_in_region
       end
 
       # Decode the object table.
@@ -97,6 +102,9 @@ module RubyOpt
         obj_region_len   = binary.bytesize - obj_region_start
         raw_object_region = binary.byteslice(obj_region_start, obj_region_len)
 
+        # Byte offset of the object offset array within the raw_object_region.
+        obj_list_offset_in_region = obj_list_offset - obj_region_start
+
         # Build a temporary reader to decode object bodies.
         reader = BinaryReader.new(binary)
 
@@ -110,16 +118,37 @@ module RubyOpt
           decode_one_object(reader, obj_offsets)
         end
 
-        new(objects, raw_object_region)
+        new(objects, raw_object_region,
+            obj_list_size: obj_list_size,
+            obj_list_offset_in_region: obj_list_offset_in_region)
       end
 
       # Write the object table bytes to +writer+.
-      # Emits the object data region + offset array verbatim (byte-identical round-trip).
+      # Emits the object data region + offset array. When +iseq_list_delta+ is non-zero
+      # (the iseq region has grown or shrunk), the object offset array (which stores
+      # absolute positions in the binary) is patched so each entry shifts by that delta.
+      # The object payload bytes before the offset array are always verbatim.
       #
-      # @param writer [BinaryWriter]
-      # @param header [Header]  (unused; kept for API compatibility)
-      def encode(writer, header = nil)
-        writer.write_bytes(@raw_object_region)
+      # @param writer          [BinaryWriter]
+      # @param iseq_list_delta [Integer] byte delta applied to all absolute offsets in the
+      #   object offset array. 0 for unmodified IR (byte-identical round-trip).
+      def encode(writer, iseq_list_delta: 0)
+        if iseq_list_delta == 0 || @obj_list_size == 0
+          # Fast path: byte-identical.
+          writer.write_bytes(@raw_object_region)
+        else
+          # Write object payload bytes verbatim (everything before the offset array).
+          writer.write_bytes(@raw_object_region.byteslice(0, @obj_list_offset_in_region))
+          # Patch each u32 in the offset array by adding iseq_list_delta.
+          @obj_list_size.times do |i|
+            orig = @raw_object_region.byteslice(@obj_list_offset_in_region + i * 4, 4).unpack1("V")
+            writer.write_bytes([orig + iseq_list_delta].pack("V"))
+          end
+          # Any trailing bytes after the offset array (if any).
+          trail_start = @obj_list_offset_in_region + @obj_list_size * 4
+          trail = @raw_object_region.byteslice(trail_start, @raw_object_region.bytesize - trail_start)
+          writer.write_bytes(trail) if trail && !trail.empty?
+        end
       end
 
       private
