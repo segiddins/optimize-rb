@@ -66,6 +66,36 @@ class ConstFoldPassTest < Minitest::Test
     assert(g.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == false })
   end
 
+  def test_folds_deep_integer_chain_to_single_literal
+    src = "def f; 1 + 2 + 3 + 4 + 5; end; f"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    folded = f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 15 }
+    refute_nil folded, "expected the whole chain to fold to 15"
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 15, loaded.eval
+  end
+
+  def test_partial_chain_fold_when_a_non_literal_breaks_it
+    src = "def f(x); 1 + 2 + x + 3 + 4; end; f(10)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    values = f.instructions.filter_map { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) }
+    # The leading `1 + 2` folds to 3. The trailing `+ 3 + 4` cannot fold further
+    # because YARV emits each `+ N` interleaved with its own opt_plus, so no
+    # `putobject N; putobject M; opt_plus` triple ever forms after the break.
+    assert_includes values, 3
+    refute_includes values, 1
+    refute_includes values, 2
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 20, loaded.eval  # 3 + 10 + 3 + 4 == 20
+  end
+
   private
 
   def find_iseq(ir, name)

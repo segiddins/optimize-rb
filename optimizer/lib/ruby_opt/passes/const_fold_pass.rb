@@ -25,23 +25,35 @@ module RubyOpt
         insts = function.instructions
         return unless insts
 
-        i = 0
-        while i <= insts.size - 3
-          a  = insts[i]
-          b  = insts[i + 1]
-          op = insts[i + 2]
-          new_inst = try_fold_triple(a, b, op, function, log, object_table)
-          if new_inst
-            # Safe: the two removed instructions are `putobject`-family literal
-            # producers — neither is ever a branch target, so absolute-index
-            # offsets in the (unshifted) earlier instructions remain valid.
-            insts[i, 3] = [new_inst]
-            # Step back so we recheck at `i-1` in case the previous
-            # instruction is now the first of a new foldable triple.
-            i = i - 1 if i.positive?
-          else
-            i += 1
+        # Outer fixpoint loop: defense-in-depth around the inner step-back
+        # scan. The step-back already catches the common left-associative
+        # chain shape (`putobject N; putobject N; opt_plus` after one fold),
+        # but the outer loop makes the "fold to a fixed point" invariant
+        # explicit and covers any triple-shape the step-back misses.
+        # Termination: each iteration either folds (strictly decreasing
+        # `insts.size` by 2) or sets `folded_any = false` and breaks.
+        loop do
+          folded_any = false
+          i = 0
+          while i <= insts.size - 3
+            a  = insts[i]
+            b  = insts[i + 1]
+            op = insts[i + 2]
+            new_inst = try_fold_triple(a, b, op, function, log, object_table)
+            if new_inst
+              # Safe: the two removed instructions are `putobject`-family literal
+              # producers — neither is ever a branch target, so absolute-index
+              # offsets in the (unshifted) earlier instructions remain valid.
+              insts[i, 3] = [new_inst]
+              folded_any = true
+              # Step back so we recheck at `i-1` in case the previous
+              # instruction is now the first of a new foldable triple.
+              i = i - 1 if i.positive?
+            else
+              i += 1
+            end
           end
+          break unless folded_any
         end
       end
 
