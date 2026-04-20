@@ -132,6 +132,10 @@ module RubyOpt
       # @param writer          [BinaryWriter]
       # @param iseq_list_delta [Integer] byte delta applied to all absolute offsets in the
       #   object offset array. 0 for unmodified IR (byte-identical round-trip).
+      # @return [Integer, nil] the fresh absolute offset of the object offset array
+      #   on the general path (when `iseq_list_delta` is non-zero OR objects have
+      #   been appended via #intern). Returns nil on the fast path (unmodified
+      #   table with no delta), in which case the caller keeps the original offset.
       def encode(writer, iseq_list_delta: 0)
         no_appends = @appended.nil? || @appended.empty?
         if (iseq_list_delta == 0 || @obj_list_size == 0) && no_appends
@@ -209,39 +213,6 @@ module RubyOpt
       def appended_count
         (@appended || []).size
       end
-
-      private
-
-      def special_const?(value)
-        case value
-        when Integer
-          # Conservatively only fixnum-shaped integers; CRuby fixnum range on 64-bit
-          # is roughly [-(1<<62), (1<<62)-1]. We're far inside that for tier-1 folds.
-          value.bit_length < 62
-        when true, false, nil
-          true
-        else
-          false
-        end
-      end
-
-      # Write one special-const object payload (1-byte header + 1 small_value VALUE).
-      def write_special_const(writer, value)
-        # header: type=0, special_const=1 (bit 5), frozen=1 (bit 6) → 0x60
-        writer.write_u8(0x60)
-        encoded =
-          case value
-          when true  then QTRUE
-          when false then QFALSE
-          when nil   then QNIL
-          when Integer then (value << 1) | 1
-          else
-            raise ArgumentError, "cannot encode #{value.inspect} as special_const"
-          end
-        writer.write_small_value(encoded)
-      end
-
-      public
 
       private
 
@@ -435,6 +406,35 @@ module RubyOpt
         when 2 then Encoding::US_ASCII
         else        Encoding::UTF_8  # best-effort fallback for unknown encoding indices
         end
+      end
+
+      def special_const?(value)
+        case value
+        when Integer
+          # Conservatively only fixnum-shaped integers; CRuby fixnum range on 64-bit
+          # is roughly [-(1<<62), (1<<62)-1]. We're far inside that for tier-1 folds.
+          value.bit_length < 62
+        when true, false, nil
+          true
+        else
+          false
+        end
+      end
+
+      # Write one special-const object payload (1-byte header + 1 small_value VALUE).
+      def write_special_const(writer, value)
+        # header: type=0, special_const=1 (bit 5), frozen=1 (bit 6) → 0x60
+        writer.write_u8(0x60)
+        encoded =
+          case value
+          when true  then QTRUE
+          when false then QFALSE
+          when nil   then QNIL
+          when Integer then (value << 1) | 1
+          else
+            raise ArgumentError, "cannot encode #{value.inspect} as special_const"
+          end
+        writer.write_small_value(encoded)
       end
     end
   end
