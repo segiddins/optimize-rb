@@ -6,9 +6,12 @@ Talk-artifact Ruby optimizer. Companion to
 ## Status
 
 - **Binary codec**: round-trippable decoder/encoder for YARB binaries.
-  Modifications to `IR::Function#instructions` are re-encoded (same-byte-count
-  substitutions). Length-changing edits (required for inlining) are a future
-  plan.
+  Modifications to `IR::Function#instructions` are re-encoded including
+  length changes — passes can freely insert, delete, or replace instructions.
+  `IR::Function` also carries decoded `#catch_entries`, `#line_entries`, and
+  `#arg_positions` whose references to instructions are by identity, so they
+  survive instruction-list mutation; the encoder resolves identity to
+  current positions at emit time.
 - **IR**: `IR::Function` (one per iseq), `IR::Instruction` (one per YARV op),
   `IR::BasicBlock` and `IR::CFG` for control-flow analysis.
 - **Passes**: base class (`RubyOpt::Pass`), orchestrator (`RubyOpt::Pipeline`),
@@ -53,6 +56,6 @@ For any iseq produced by `RubyVM::InstructionSequence#to_binary`:
     encode(decode(bin)) == bin  (byte-identical)
 
 Any input that doesn't round-trip is a codec bug. Modifications to the
-decoded IR are not yet applied on re-encode (today: raw bytes are
-re-emitted from `Function#misc`); wiring the IR-to-bytes path through
-the encoder is a next-plan concern.
+decoded IR are applied on re-encode via IR-driven serialization of the
+body record and data regions; length-changing edits cascade through the
+header and object-table offsets automatically.
