@@ -302,14 +302,141 @@ module RubyOpt
       # raw_iseq_data region (written verbatim before the body records). The body
       # record bytes are stored in misc[:raw_body] and written verbatim here.
       #
-      # @param writer   [BinaryWriter]
-      # @param function [IR::Function]
+      # NOTE (Task 5a): IseqList#encode does NOT call this method directly — it still
+      # writes the combined raw_iseq_region (which contains both data sections and body
+      # records) verbatim. This 3-arg signature is wired up for future tasks (5b+) that
+      # will separate data sections from body records. IseqList#encode uses
+      # verify_offsets instead for assertion-only validation.
+      #
+      # @param writer              [BinaryWriter]
+      # @param function            [IR::Function]
+      # @param data_region_offsets [Hash] absolute byte offsets keyed by symbol
+      #   (:bytecode_abs, :opt_table_abs, :kw_abs, :insns_body_abs, :insns_pos_abs,
+      #    :local_table_abs, :lvar_states_abs, :catch_table_abs, :ci_entries_abs,
+      #    :outer_vars_abs)
       # @return [Integer] absolute offset of the body record in the writer buffer
-      def self.encode(writer, function)
+      def self.encode(writer, function, data_region_offsets)
+        verify_offsets(function, data_region_offsets)
         # The body record is written verbatim.
         body_offset = writer.pos
         writer.write_bytes(function.misc[:raw_body])
         body_offset
+      end
+
+      # Verify that the body-record relative offsets agree with +data_region_offsets+.
+      #
+      # Re-reads the stored small_value fields from misc[:raw_body] and resolves each
+      # relative offset back to an absolute byte position using the same formula the
+      # decoder uses (abs = body_offset - stored_rel). The original body_offset is
+      # derived from bytecode_offset_rel + data_region_offsets[:bytecode_abs].
+      #
+      # Raises RuntimeError if any resolved absolute offset does not match the
+      # corresponding entry in data_region_offsets.
+      #
+      # @param function            [IR::Function]
+      # @param data_region_offsets [Hash] absolute byte offsets keyed by symbol
+      def self.verify_offsets(function, data_region_offsets)
+        misc = function.misc
+        raw_body = misc[:raw_body]
+        return unless raw_body && !raw_body.empty?
+
+        # Re-read the 45 small_value fields from the raw body record.
+        reader = BinaryReader.new(raw_body)
+
+        _type_val                          = reader.read_small_value
+        _iseq_size                         = reader.read_small_value
+        bytecode_offset_rel                = reader.read_small_value
+        _bytecode_size                     = reader.read_small_value
+        _param_flags                       = reader.read_small_value
+        _param_size                        = reader.read_small_value
+        _param_lead_num                    = reader.read_small_value
+        _param_opt_num                     = reader.read_small_value
+        _param_rest_start                  = reader.read_small_value
+        _param_post_start                  = reader.read_small_value
+        _param_post_num                    = reader.read_small_value
+        _param_block_start                 = reader.read_small_value
+        param_opt_table_offset_rel         = reader.read_small_value
+        param_keyword_offset               = reader.read_small_value
+        _location_pathobj_index            = reader.read_small_value
+        _location_base_label_index         = reader.read_small_value
+        _location_label_index              = reader.read_small_value
+        _location_first_lineno             = reader.read_small_value
+        _location_node_id                  = reader.read_small_value
+        _location_beg_lineno               = reader.read_small_value
+        _location_beg_column               = reader.read_small_value
+        _location_end_lineno               = reader.read_small_value
+        _location_end_column               = reader.read_small_value
+        insns_info_body_offset_rel         = reader.read_small_value
+        insns_info_positions_offset_rel    = reader.read_small_value
+        _insns_info_size                   = reader.read_small_value
+        local_table_offset_rel             = reader.read_small_value
+        lvar_states_offset_rel             = reader.read_small_value
+        _catch_table_size                  = reader.read_small_value
+        catch_table_offset_rel             = reader.read_small_value
+        _parent_iseq_index                 = reader.read_small_value
+        _local_iseq_index                  = reader.read_small_value
+        _mandatory_only_iseq_index         = reader.read_small_value
+        ci_entries_offset_rel              = reader.read_small_value
+        outer_variables_offset_rel         = reader.read_small_value
+        _variable_flip_count               = reader.read_small_value
+        _local_table_size                  = reader.read_small_value
+        _ivc_size                          = reader.read_small_value
+        _icvarc_size                       = reader.read_small_value
+        _ise_size                          = reader.read_small_value
+        _ic_size                           = reader.read_small_value
+        _ci_size                           = reader.read_small_value
+        _stack_max                         = reader.read_small_value
+        _builtin_attrs                     = reader.read_small_value
+        _prism                             = reader.read_small_value
+
+        # Derive original_body_offset from bytecode field (most reliably present).
+        # Formula: body_offset - bytecode_offset_rel = bytecode_abs
+        #       => body_offset = bytecode_abs + bytecode_offset_rel
+        bytecode_abs_expected = data_region_offsets[:bytecode_abs]
+        original_body_offset = nil
+        if bytecode_offset_rel > 0 && bytecode_abs_expected && bytecode_abs_expected > 0
+          original_body_offset = bytecode_abs_expected + bytecode_offset_rel
+        end
+
+        # If we cannot derive original_body_offset (no bytecode section), skip assertions.
+        return unless original_body_offset
+
+        # Fields with relative offsets (stored as body_offset - actual_offset).
+        relative_fields = [
+          [:bytecode_offset_rel,               bytecode_offset_rel,            :bytecode_abs],
+          [:param_opt_table_offset_rel,         param_opt_table_offset_rel,     :opt_table_abs],
+          [:insns_info_body_offset_rel,         insns_info_body_offset_rel,     :insns_body_abs],
+          [:insns_info_positions_offset_rel,    insns_info_positions_offset_rel, :insns_pos_abs],
+          [:local_table_offset_rel,             local_table_offset_rel,         :local_table_abs],
+          [:lvar_states_offset_rel,             lvar_states_offset_rel,         :lvar_states_abs],
+          [:catch_table_offset_rel,             catch_table_offset_rel,         :catch_table_abs],
+          [:ci_entries_offset_rel,              ci_entries_offset_rel,          :ci_entries_abs],
+          [:outer_variables_offset_rel,         outer_variables_offset_rel,     :outer_vars_abs],
+        ]
+
+        relative_fields.each do |name, stored_rel, key|
+          next if stored_rel == 0
+          expected_abs = data_region_offsets[key]
+          next if expected_abs.nil? || expected_abs == 0
+
+          resolved_abs = original_body_offset - stored_rel
+          if resolved_abs != expected_abs
+            raise RuntimeError,
+              "body-record offset drift: field=#{name} stored_rel=#{stored_rel} " \
+              "resolved_abs=#{resolved_abs} data_region_abs=#{expected_abs} " \
+              "(iseq=#{function.name})"
+          end
+        end
+
+        # param_keyword_offset is stored as an ABSOLUTE offset (not relative).
+        kw_abs_expected = data_region_offsets[:kw_abs]
+        if param_keyword_offset > 0 && kw_abs_expected && kw_abs_expected > 0
+          if param_keyword_offset != kw_abs_expected
+            raise RuntimeError,
+              "body-record offset drift: field=param_keyword_offset stored_abs=#{param_keyword_offset} " \
+              "data_region_abs=#{kw_abs_expected} (iseq=#{function.name})"
+          end
+        end
       end
     end
   end

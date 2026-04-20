@@ -186,6 +186,27 @@ module RubyOpt
           end
         end
 
+        # Task 5a: Verification pass — assert that the decoded absolute offsets stored in
+        # each function's misc hash still agree with the body-record relative offsets.
+        # This catches offset drift early. We do NOT call IseqEnvelope.encode here (the
+        # body records are already inside the verbatim region); verification is done via
+        # IseqEnvelope.verify_offsets which is assertion-only (no writes).
+        @functions.each do |fn|
+          data_region_offsets = {
+            bytecode_abs:     fn.misc[:bytecode_abs],
+            opt_table_abs:    fn.misc[:opt_table_abs],
+            kw_abs:           fn.misc[:kw_abs],
+            insns_body_abs:   fn.misc[:insns_body_abs],
+            insns_pos_abs:    fn.misc[:insns_pos_abs],
+            local_table_abs:  fn.misc[:local_table_abs],
+            lvar_states_abs:  fn.misc[:lvar_states_abs],
+            catch_table_abs:  fn.misc[:catch_table_abs],
+            ci_entries_abs:   fn.misc[:ci_entries_abs],
+            outer_vars_abs:   fn.misc[:outer_vars_abs],
+          }
+          IseqEnvelope.verify_offsets(fn, data_region_offsets)
+        end
+
         writer.write_bytes(region)
         writer.write_bytes(@raw_offset_array)
       end
