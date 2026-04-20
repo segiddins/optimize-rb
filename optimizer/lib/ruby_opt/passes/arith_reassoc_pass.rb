@@ -6,11 +6,20 @@ require "ruby_opt/ir/cfg"
 
 module RubyOpt
   module Passes
-    # v1: literal-only opt_plus chain reassociation within a basic block.
-    # See docs/superpowers/specs/2026-04-20-pass-arith-reassoc-v1-design.md.
+    # Arithmetic reassociation within a basic block, driven by REASSOC_OPS.
+    # See docs/superpowers/specs/2026-04-20-pass-arith-reassoc-v2-design.md.
     class ArithReassocPass < RubyOpt::Pass
+      # Each entry describes one commutative-associative operator:
+      #   opcode:   the YARV opcode whose chains we fold
+      #   identity: the neutral element for `reducer` (0 for +, 1 for *)
+      #   reducer:  the Symbol method used to combine Integer literals
+      REASSOC_OPS = [
+        { opcode: :opt_plus, identity: 0, reducer: :+ },
+      ].freeze
+
       # Opcodes that each push exactly one value, pop zero, and have no
-      # side effects relevant to reordering literals past them.
+      # side effects relevant to reordering literals past them. Shared across
+      # all REASSOC_OPS entries.
       SINGLE_PUSH_OPERAND_OPCODES = (
         LiteralValue::LITERAL_OPCODES + %i[
           getlocal
@@ -31,24 +40,23 @@ module RubyOpt
         insts = function.instructions
         return unless insts
 
-        # Outer fixpoint loop: defense-in-depth around the inner scan.
-        # Termination: each rewrite strictly decreases insts.size by at least 2
-        # (see spec "Fixpoint" section); no rewrite => break.
-        loop do
-          break unless rewrite_once(insts, function, log, object_table)
+        REASSOC_OPS.each do |op_spec|
+          loop do
+            break unless rewrite_once(insts, function, log, object_table, op_spec: op_spec)
+          end
         end
       end
 
       private
 
-      def rewrite_once(insts, function, log, object_table)
+      def rewrite_once(insts, function, log, object_table, op_spec:)
         any = false
         leader_set = Set.new(IR::CFG.compute_leaders(insts))
         i = 0
         while i < insts.size
-          if insts[i].opcode == :opt_plus
-            chain = detect_chain(insts, i, leader_set)
-            if chain && try_rewrite_chain(insts, chain, function, log, object_table)
+          if insts[i].opcode == op_spec[:opcode]
+            chain = detect_chain(insts, i, leader_set, op_spec: op_spec)
+            if chain && try_rewrite_chain(insts, chain, function, log, object_table, op_spec: op_spec)
               any = true
               i = chain[:first_idx]
               leader_set = Set.new(IR::CFG.compute_leaders(insts))
@@ -62,7 +70,7 @@ module RubyOpt
         any
       end
 
-      def detect_chain(insts, end_idx, leader_set)
+      def detect_chain(insts, end_idx, leader_set, op_spec:)
         prod_indices = []
         op_indices = [end_idx]
         j = end_idx - 1
@@ -73,7 +81,7 @@ module RubyOpt
           op_j = j - 1
           prod_j = j - 2
           break if op_j < 0 || prod_j < 0
-          break unless insts[op_j].opcode == :opt_plus
+          break unless insts[op_j].opcode == op_spec[:opcode]
           break unless single_push?(insts[prod_j])
           op_indices.unshift(op_j)
           prod_indices.unshift(prod_j)
@@ -105,7 +113,7 @@ module RubyOpt
         {
           first_idx: prod_indices.first,
           producer_indices: prod_indices,
-          opt_plus_indices: op_indices,
+          op_indices: op_indices,
           end_idx: end_idx,
         }
       end
@@ -114,7 +122,7 @@ module RubyOpt
         SINGLE_PUSH_OPERAND_OPCODES.include?(inst.opcode)
       end
 
-      def try_rewrite_chain(insts, chain, function, log, object_table)
+      def try_rewrite_chain(insts, chain, function, log, object_table, op_spec:)
         producer_insts = chain[:producer_indices].map { |k| insts[k] }
         classified = producer_insts.map do |p|
           v = LiteralValue.read(p, object_table: object_table)
@@ -127,7 +135,7 @@ module RubyOpt
         non_integer_literals = literal_values.reject { |v| v.is_a?(Integer) }
         non_literals = classified.reject { |_, _, is_lit| is_lit }.map(&:first)
 
-        chain_line = insts[chain[:opt_plus_indices].first].line || function.first_lineno
+        chain_line = insts[chain[:op_indices].first].line || function.first_lineno
 
         unless non_integer_literals.empty?
           log.skip(pass: :arith_reassoc, reason: :mixed_literal_types,
@@ -140,16 +148,16 @@ module RubyOpt
           return false
         end
 
-        sum = integer_literals.inject(0, :+)
-        first_opt_plus = insts[chain[:opt_plus_indices].first]
-        literal_inst = LiteralValue.emit(sum, line: first_opt_plus.line, object_table: object_table)
+        reduced = integer_literals.inject(op_spec[:identity], op_spec[:reducer])
+        first_op_inst = insts[chain[:op_indices].first]
+        literal_inst = LiteralValue.emit(reduced, line: first_op_inst.line, object_table: object_table)
 
         replacement = non_literals.dup
         replacement << literal_inst
-        opt_plus_count_out = replacement.size - 1
-        original_opt_pluses = chain[:opt_plus_indices].map { |k| insts[k] }
-        opt_plus_count_out.times do |k|
-          replacement << original_opt_pluses[k]
+        op_count_out = replacement.size - 1
+        original_ops = chain[:op_indices].map { |k| insts[k] }
+        op_count_out.times do |k|
+          replacement << original_ops[k]
         end
 
         range = chain[:first_idx]..chain[:end_idx]
