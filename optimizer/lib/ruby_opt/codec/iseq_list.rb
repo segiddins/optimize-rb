@@ -44,12 +44,13 @@ module RubyOpt
       # Absolute byte offset where the iseq data region begins in the binary.
       ISEQ_REGION_START = 40
 
-      def initialize(functions, root, raw_iseq_region, raw_offset_array, object_table)
+      def initialize(functions, root, raw_iseq_region, raw_offset_array, object_table, raw_trailing = "".b)
         @functions         = functions
         @root              = root
         @raw_iseq_region   = raw_iseq_region   # bytes from pos 40 to iseq_list_offset (exclusive)
         @raw_offset_array  = raw_offset_array  # iseq_list_size × 4 bytes
         @object_table      = object_table
+        @raw_trailing      = raw_trailing      # trailing bytes after last body record (before list_offset)
       end
 
       # Decode the iseq list from +binary+ using +header+ and +object_table+.
@@ -82,6 +83,45 @@ module RubyOpt
           )
         end
 
+        # Capture per-function raw slices that bracket the bytecode section.
+        # After this, IseqList#encode can emit bytecode from IR without touching
+        # @raw_iseq_region for bytecode bytes.
+        prev_end = iseq_region_start   # byte offset where previous function's body ended
+        body_offsets.each_with_index do |body_offset, idx|
+          fn   = all_functions[idx]
+          misc = fn.misc
+          raw_body      = misc[:raw_body]
+          bytecode_abs  = misc[:bytecode_abs]
+          bytecode_size = misc[:bytecode_size]
+
+          if bytecode_abs && bytecode_size && bytecode_size > 0
+            # Bytes before bytecode (from prev function's end to bytecode start).
+            pre_len    = bytecode_abs - prev_end
+            pre_bytes  = pre_len > 0 ? binary.byteslice(prev_end, pre_len) : "".b
+
+            # Bytes after bytecode up to (but not including) the body record.
+            post_start = bytecode_abs + bytecode_size
+            post_len   = body_offset - post_start
+            post_bytes = post_len > 0 ? binary.byteslice(post_start, post_len) : "".b
+
+            misc[:pre_bytecode_raw]  = pre_bytes
+            misc[:post_bytecode_raw] = post_bytes
+          else
+            # No bytecode: entire data section (prev_end..body_offset) is "pre".
+            pre_len   = body_offset - prev_end
+            pre_bytes = pre_len > 0 ? binary.byteslice(prev_end, pre_len) : "".b
+            misc[:pre_bytecode_raw]  = pre_bytes
+            misc[:post_bytecode_raw] = "".b
+          end
+
+          prev_end = body_offset + raw_body.bytesize
+        end
+
+        # Capture any trailing bytes in the iseq data region after the last body record.
+        # These bytes (if any) exist between the last body record's end and list_offset.
+        trailing_len  = list_offset - prev_end
+        raw_trailing  = trailing_len > 0 ? binary.byteslice(prev_end, trailing_len) : "".b
+
         # Second pass: wire up parent/child relationships.
         # Each function's misc[:parent_iseq_index] tells us who its parent is.
         # The sentinel for "no parent" is -1 stored as a huge unsigned int in small_value
@@ -104,13 +144,14 @@ module RubyOpt
         # Convention: iseq-list index 0 is always the outermost iseq.
         root = all_functions[0]
 
-        new(all_functions, root, raw_iseq_region, raw_offset_array, object_table)
+        new(all_functions, root, raw_iseq_region, raw_offset_array, object_table, raw_trailing)
       end
 
       # Encode the iseq list into +writer+.
       #
       # For each function, re-encodes its instruction stream via InstructionStream.encode
-      # and splices the result over the original bytes in the iseq data region.
+      # and emits it from IR (not from @raw_iseq_region). Other data sections and body
+      # records are reconstructed from per-function raw captures stored at decode time.
       # If the re-encoded instruction bytes differ in length from the original,
       # raises RubyOpt::Codec::EncoderSizeChange.
       #
@@ -118,9 +159,42 @@ module RubyOpt
       #
       # @param writer [BinaryWriter]
       def encode(writer)
-        # Make a mutable copy of the raw iseq region so we can splice in re-encoded bytes.
-        region = @raw_iseq_region.dup
+        # Reconstruct the iseq data region from per-function raw captures.
+        # Bytecode is sourced from IR (not from @raw_iseq_region); all other bytes
+        # come from the pre/post captures stored at decode time.
+        region = "".b
+        @functions.each do |fn|
+          misc          = fn.misc
+          bytecode_abs  = misc[:bytecode_abs]
+          bytecode_size = misc[:bytecode_size]
 
+          # Emit the bytes that precede the bytecode section for this function.
+          region << misc[:pre_bytecode_raw]
+
+          if bytecode_abs && bytecode_size && bytecode_size > 0 && fn.instructions
+            # Re-encode the instruction stream from IR (not from @raw_iseq_region).
+            new_bytes = InstructionStream.encode(fn.instructions, @object_table, @functions)
+            new_len   = new_bytes.bytesize
+
+            if new_len != bytecode_size
+              raise Codec::EncoderSizeChange,
+                "instruction re-encode changed size: iseq=#{fn.name} was=#{bytecode_size} got=#{new_len}"
+            end
+
+            region << new_bytes
+          end
+
+          # Emit the bytes that follow the bytecode section (up to the body record).
+          region << misc[:post_bytecode_raw]
+
+          # Emit the raw body record bytes (will be overwritten by body-record re-encode below).
+          region << misc[:raw_body]
+        end
+
+        # Append trailing bytes after the last body record (alignment padding, if any).
+        region << @raw_trailing
+
+        # Apply re-encoded catch table, line info, opt_table into region (same splice logic).
         @functions.each do |fn|
           bytecode_abs  = fn.misc[:bytecode_abs]
           bytecode_size = fn.misc[:bytecode_size]
@@ -128,20 +202,6 @@ module RubyOpt
           # Skip iseqs with no bytecode (e.g. iseq_size == 0).
           next unless bytecode_abs && bytecode_size && bytecode_size > 0
           next unless fn.instructions
-
-          # Re-encode the instruction stream.
-          new_bytes = InstructionStream.encode(fn.instructions, @object_table, @functions)
-          original_len = bytecode_size
-          new_len = new_bytes.bytesize
-
-          if new_len != original_len
-            raise Codec::EncoderSizeChange,
-              "instruction re-encode changed size: iseq=#{fn.name} was=#{original_len} got=#{new_len}"
-          end
-
-          # Splice new_bytes into the region at the correct offset.
-          region_offset = bytecode_abs - ISEQ_REGION_START
-          region[region_offset, new_len] = new_bytes
 
           # Re-encode the catch table from IR::CatchEntry objects (if present).
           catch_entries = fn.catch_entries
