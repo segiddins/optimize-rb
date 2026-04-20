@@ -62,4 +62,18 @@ class PipelineTest < Minitest::Test
     # The subsequent pass still ran on every Function.
     assert_equal 4, tracker.visited.size
   end
+
+  def test_default_pipeline_folds_integer_literals_in_every_function
+    require "ruby_opt/pipeline"
+    require "ruby_opt/passes/literal_value"
+    ir = RubyOpt::Codec.decode(
+      RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
+    )
+    ot = ir.misc[:object_table]
+    pipeline = RubyOpt::Pipeline.default
+    pipeline.run(ir, type_env: nil)
+    f = ir.children.flat_map { |c| [c, *(c.children || [])] }.find { |x| x.name == "f" }
+    refute_nil f
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 5 })
+  end
 end
