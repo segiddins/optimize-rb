@@ -88,11 +88,20 @@ module RubyOpt
 
       # Encode catch table entries into +writer+.
       #
-      # @param writer      [BinaryWriter]
-      # @param entries     [Array<IR::CatchEntry>]
+      # Entries where any non-nil instruction reference (start_inst, end_inst, cont_inst)
+      # is missing from +inst_to_slot+ (dangling ref — the instruction was deleted) are
+      # silently dropped from the output.
+      #
+      # @param writer       [BinaryWriter]
+      # @param entries      [Array<IR::CatchEntry>]
       # @param inst_to_slot [Hash{IR::Instruction=>Integer}] instruction → YARV slot
       def encode(writer, entries, inst_to_slot)
-        entries.each do |e|
+        live_entries = entries.select do |e|
+          inst_to_slot.key?(e.start_inst) &&
+            inst_to_slot.key?(e.end_inst) &&
+            (e.cont_inst.nil? || inst_to_slot.key?(e.cont_inst))
+        end
+        live_entries.each do |e|
           writer.write_small_value(e.iseq_index.nil? ? NO_ISEQ : e.iseq_index)
           writer.write_small_value(SYM_TO_TYPE.fetch(e.type))
           writer.write_small_value(inst_to_slot.fetch(e.start_inst))

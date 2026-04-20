@@ -373,6 +373,7 @@ module RubyOpt
           end
 
           # 8. catch_table (IR-encoded; raw may include trailing pad)
+          encoded_catch_table_size = nil
           emit_section.call(:catch_table, :catch_table_abs) do
             catch_entries    = fn.catch_entries
             catch_table_size = misc[:catch_table_size]
@@ -380,6 +381,12 @@ module RubyOpt
               ct_writer = BinaryWriter.new
               CatchTable.encode(ct_writer, catch_entries, inst_to_slot)
               writer.write_bytes(ct_writer.buffer)
+              # Count live entries (those whose insts are all still present).
+              encoded_catch_table_size = catch_entries.count do |e|
+                inst_to_slot.key?(e.start_inst) &&
+                  inst_to_slot.key?(e.end_inst) &&
+                  (e.cont_inst.nil? || inst_to_slot.key?(e.cont_inst))
+              end
               ct_writer.buffer
             else
               "".b
@@ -418,6 +425,9 @@ module RubyOpt
           # Pass filtered insns_info_size when it differs from the original
           # (e.g. instructions with line entries were deleted).
           dro[:insns_info_size] = encoded_insns_info_size if encoded_insns_info_size
+
+          # Pass filtered catch_table_size when entries were dropped due to dangling refs.
+          dro[:catch_table_size] = encoded_catch_table_size if encoded_catch_table_size
 
           fresh_body_offsets << writer.pos
 
