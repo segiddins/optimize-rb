@@ -42,7 +42,7 @@ module RubyOpt
         IR::ArgPositions.new(opt_table: opt_table)
       end
 
-      # Encode opt_table into the iseq data region.
+      # Encode opt_table into the iseq data region (splice-into-region form).
       #
       # Writes (opt_num + 1) native uint64 values (little-endian) at the current
       # position of +region+ (which already has space reserved from the original binary).
@@ -64,6 +64,28 @@ module RubyOpt
           # Write as native uint64 little-endian (VALUE on 64-bit).
           region[region_offset + i * 8, 8] = [slot].pack("Q<")
         end
+      end
+
+      # Encode opt_table into +writer+ (sequential write form).
+      #
+      # Writes (opt_num + 1) native uint64 values (little-endian) to the writer at its
+      # current position. Returns the encoded bytes for assertion purposes.
+      #
+      # @param writer         [BinaryWriter]
+      # @param arg_positions  [IR::ArgPositions]
+      # @param inst_to_slot   [Hash{IR::Instruction=>Integer}]  instruction → YARV slot
+      # @return [String]  the encoded bytes (ASCII-8BIT)
+      def encode_to_writer(writer, arg_positions, inst_to_slot)
+        opt_table = arg_positions.opt_table
+        bytes = "".b
+        opt_table.each_with_index do |inst, i|
+          slot = inst_to_slot.fetch(inst) do
+            raise "opt_table[#{i}] instruction #{inst.opcode.inspect} not found in inst_to_slot map"
+          end
+          bytes << [slot].pack("Q<")
+        end
+        writer.write_bytes(bytes)
+        bytes
       end
     end
   end
