@@ -332,7 +332,12 @@ module RubyOpt
 
         # Emit all 45 small_values in the exact order the decoder reads them.
         writer.write_small_value(type_val)
-        writer.write_small_value(misc[:iseq_size])
+        iseq_size = if function.instructions
+                      InstructionStream.total_slots(function.instructions)
+                    else
+                      misc[:iseq_size]
+                    end
+        writer.write_small_value(iseq_size)
         writer.write_small_value(rel.call(:bytecode_abs))
         writer.write_small_value(misc[:bytecode_size])
         writer.write_small_value(misc[:param_flags])

@@ -200,6 +200,20 @@ module RubyOpt
         end
       end
 
+      # Compute the total number of YARV slots occupied by +instructions+.
+      # This is the value stored in the body record's iseq_size field.
+      #
+      # @param instructions [Array<IR::Instruction>]
+      # @return [Integer] total YARV slot count
+      def self.total_slots(instructions)
+        instructions.sum do |insn|
+          opcode_num = NAME_TO_OPCODE[insn.opcode]
+          raise "Unknown opcode name: #{insn.opcode.inspect}" unless opcode_num
+          _name, op_types = OPCODE_TO_INFO[opcode_num]
+          slots_for(op_types)
+        end
+      end
+
       # Build a slot → IR::Instruction map from a decoded instruction list.
       # This reconstructs the mapping by walking instructions and computing slot sizes.
       #
