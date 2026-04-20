@@ -190,6 +190,15 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal 155, loaded.eval  # 100 + (1+2+...+10) = 100 + 55
   end
 
+  def test_reassoc_inside_then_branch_does_not_break_else_branch_targets
+    src = "def f(c, x); if c; x + 1 + 2 + 3; else; 99; end; end; [f(true, 10), f(false, 0)]"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    RubyOpt::Passes::ArithReassocPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal [16, 99], loaded.eval
+  end
+
   private
 
   def find_iseq(ir, name)

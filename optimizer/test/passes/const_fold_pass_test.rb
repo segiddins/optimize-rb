@@ -134,6 +134,17 @@ class ConstFoldPassTest < Minitest::Test
     assert_operator skipped.size, :>=, 1
   end
 
+  def test_folds_triple_inside_a_then_branch_without_breaking_else_branch_targets
+    src = "def f(c); if c; 1 + 2; else; 99; end; end; [f(true), f(false)]"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    RubyOpt::Passes::ConstFoldPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    # The encoder used to raise "OFFSET operand X has no corresponding slot" here
+    # because the splice shrank `insts` without adjusting the branchunless target.
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal [3, 99], loaded.eval
+  end
+
   private
 
   def find_iseq(ir, name)

@@ -60,6 +60,73 @@ module RubyOpt
       def invalidate_cfg
         @cfg = nil
       end
+
+      # Splice-replace a contiguous range of instructions. Handles:
+      #   - Patching absolute branch-target operand indices for:
+      #       :branchif, :branchunless, :branchnil, :jump (operand 0)
+      #       :opt_case_dispatch (operand 1: default offset)
+      #   - Raising if any branch targets an instruction inside the spliced range
+      #     (callers must only splice over non-target instructions).
+      #   - Invalidating the memoized CFG.
+      #
+      # @param range [Range<Integer>] inclusive range of instruction indices to replace
+      # @param replacement [Array<IR::Instruction>] the new instructions
+      def splice_instructions!(range, replacement)
+        insts = instructions
+        return unless insts
+        start = range.begin
+        last  = range.end
+        old_len = last - start + 1
+        new_len = replacement.size
+        delta = old_len - new_len # positive when shrinking, negative when growing
+
+        # Patch branch targets. A branch to `start` still points at the first
+        # replacement instruction (valid). A branch to an index in (start, last]
+        # points INTO the spliced-away region — invariant violation.
+        insts.each_with_index do |inst, idx|
+          next if idx >= start && idx <= last # instruction is being replaced
+          case inst.opcode
+          when :branchif, :branchunless, :branchnil, :jump
+            t = inst.operands[0]
+            next unless t.is_a?(Integer)
+            if t > start && t <= last
+              raise "splice_instructions!: branch at index #{idx} targets instruction at #{t}, which is inside the spliced range #{range}"
+            elsif t > last
+              inst.operands[0] = t - delta
+            end
+          when :opt_case_dispatch
+            # Default OFFSET is operand[1]; CDHASH of case offsets is operand[0].
+            # For v1 correctness we only need to patch the default; the CDHASH is a
+            # frozen Hash{VALUE => Integer_index} — patch its values too.
+            t = inst.operands[1]
+            if t.is_a?(Integer)
+              if t > start && t <= last
+                raise "splice_instructions!: opt_case_dispatch at index #{idx} default-targets #{t} inside spliced range"
+              elsif t > last
+                inst.operands[1] = t - delta
+              end
+            end
+            cdhash = inst.operands[0]
+            if cdhash.is_a?(Hash)
+              new_hash = {}
+              cdhash.each do |k, v|
+                if v.is_a?(Integer)
+                  if v > start && v <= last
+                    raise "splice_instructions!: opt_case_dispatch at index #{idx} CDHASH entry targets #{v} inside spliced range"
+                  end
+                  new_hash[k] = v > last ? v - delta : v
+                else
+                  new_hash[k] = v
+                end
+              end
+              inst.operands[0] = new_hash
+            end
+          end
+        end
+
+        insts[start..last] = replacement
+        invalidate_cfg
+      end
     end
   end
 end

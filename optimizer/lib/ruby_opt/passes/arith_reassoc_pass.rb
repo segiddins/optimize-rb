@@ -110,19 +110,6 @@ module RubyOpt
         }
       end
 
-      BRANCH_TARGET_OPCODES = %i[branchif branchunless branchnil jump].freeze
-
-      # Adjust absolute branch-target indices after splicing out `delta` instructions
-      # strictly before position `after + 1`. Only targets > after are shifted.
-      def patch_branch_targets(insts, after:, delta:)
-        insts.each do |inst|
-          next unless BRANCH_TARGET_OPCODES.include?(inst.opcode)
-          target = inst.operands[0]
-          next unless target.is_a?(Integer)
-          inst.operands[0] = target - delta if target > after
-        end
-      end
-
       def single_push?(inst)
         SINGLE_PUSH_OPERAND_OPCODES.include?(inst.opcode)
       end
@@ -165,12 +152,8 @@ module RubyOpt
           replacement << original_opt_pluses[k]
         end
 
-        start = chain[:first_idx]
-        length = chain[:end_idx] - chain[:first_idx] + 1
-        delta = length - replacement.size
-        insts[start, length] = replacement
-        patch_branch_targets(insts, after: start + replacement.size - 1, delta: delta) if delta != 0
-        function.invalidate_cfg
+        range = chain[:first_idx]..chain[:end_idx]
+        function.splice_instructions!(range, replacement)
         log.skip(pass: :arith_reassoc, reason: :reassociated,
                  file: function.path, line: chain_line)
         true
