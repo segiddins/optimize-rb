@@ -3,6 +3,16 @@ require "ruby_opt/ir/cfg"
 
 module RubyOpt
   module IR
+    # Holds instruction references for an iseq's optional-argument position table.
+    # References are to IR::Instruction objects by identity so they survive
+    # instruction-list mutation.
+    #
+    #   opt_table — Array<IR::Instruction>, one per optional arg plus one terminating entry.
+    #               Each entry points at the instruction where execution begins when
+    #               exactly (lead_num + i) positional args were supplied.
+    #               Format on disk: VALUE[] (8-byte native uint64 YARV slot indices).
+    ArgPositions = Struct.new(:opt_table, keyword_init: true)
+
     # One decoded iseq. Fields mirror the envelope described in
     # research/cruby/ibf-format.md §4.
     Function = Struct.new(
@@ -27,6 +37,9 @@ module RubyOpt
 
       # Decoded line info entries (Array<IR::LineEntry> or nil)
       :line_entries,    # Array<IR::LineEntry> — decoded insns_info table
+
+      # Decoded arg positions (IR::ArgPositions or nil if no opt_table)
+      :arg_positions,   # IR::ArgPositions — opt_table as IR::Instruction references
 
       # Instructions (raw bytecode bytes — Task 8 will decode the stream)
       :instructions,    # raw bytes of the encoded bytecode stream

@@ -7,6 +7,7 @@ require "ruby_opt/codec/binary_writer"
 require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/catch_table"
 require "ruby_opt/codec/line_info"
+require "ruby_opt/codec/arg_positions"
 
 module RubyOpt
   module Codec
@@ -265,6 +266,16 @@ module RubyOpt
           line_entries = LineInfo.decode(body_reader, pos_reader, insns_info_size, slot_to_inst, slot_to_containing, inst_to_slot)
         end
 
+        # Decode the opt_table into IR::ArgPositions (instruction references).
+        # Only present when param_opt_num > 0.
+        arg_positions = nil
+        if param_opt_num > 0 && opt_table_abs
+          slot_to_inst = InstructionStream.slot_map(instructions)
+          arg_positions = ArgPositions.decode(
+            binary, opt_table_abs, param_opt_num, slot_to_inst
+          )
+        end
+
         # Build the IR::Function. children will be populated by the caller.
         IR::Function.new(
           name:          label.to_s,
@@ -278,6 +289,7 @@ module RubyOpt
           line_info:     nil,   # raw bytes stored in misc if needed
           catch_entries: catch_entries,
           line_entries:  line_entries,
+          arg_positions: arg_positions,
           instructions:  instructions,
           children:      [],
           misc:          misc,

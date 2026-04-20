@@ -4,6 +4,7 @@ require "ruby_opt/codec/iseq_envelope"
 require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/catch_table"
 require "ruby_opt/codec/line_info"
+require "ruby_opt/codec/arg_positions"
 require "ruby_opt/ir/function"
 
 module RubyOpt
@@ -173,6 +174,15 @@ module RubyOpt
             pos_region_offset  = insns_pos_abs  - ISEQ_REGION_START
             region[body_region_offset, body_writer.buffer.bytesize] = body_writer.buffer
             region[pos_region_offset,  pos_writer.buffer.bytesize]  = pos_writer.buffer
+          end
+
+          # Re-encode the opt_table from IR::ArgPositions (if present).
+          # opt_table is VALUE[] (8-byte native uint64 YARV slot indices), VALUE-aligned.
+          arg_positions = fn.arg_positions
+          opt_table_abs = fn.misc[:opt_table_abs]
+          if arg_positions && opt_table_abs
+            inst_to_slot = InstructionStream.inst_to_slot_map(fn.instructions)
+            ArgPositions.encode(region, ISEQ_REGION_START, opt_table_abs, arg_positions, inst_to_slot)
           end
         end
 
