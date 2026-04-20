@@ -296,31 +296,88 @@ module RubyOpt
         )
       end
 
-      # Encode one iseq's data sections and body record into +writer+.
+      # Encode one iseq's body record into +writer+ by re-emitting all 45 small_values
+      # from IR fields and data_region_offsets.
       #
-      # For byte-identical round-trip: the data sections are stored in the IseqList
-      # raw_iseq_data region (written verbatim before the body records). The body
-      # record bytes are stored in misc[:raw_body] and written verbatim here.
-      #
-      # NOTE (Task 5a): IseqList#encode does NOT call this method directly — it still
-      # writes the combined raw_iseq_region (which contains both data sections and body
-      # records) verbatim. This 3-arg signature is wired up for future tasks (5b+) that
-      # will separate data sections from body records. IseqList#encode uses
-      # verify_offsets instead for assertion-only validation.
+      # Relative offset fields are computed as: body_offset - abs_offset
+      # where body_offset = data_region_offsets[:body_offset_abs].
+      # A stored value of 0 means the section is absent.
+      # param_keyword_offset is stored absolute (not relative).
       #
       # @param writer              [BinaryWriter]
       # @param function            [IR::Function]
       # @param data_region_offsets [Hash] absolute byte offsets keyed by symbol
-      #   (:bytecode_abs, :opt_table_abs, :kw_abs, :insns_body_abs, :insns_pos_abs,
-      #    :local_table_abs, :lvar_states_abs, :catch_table_abs, :ci_entries_abs,
-      #    :outer_vars_abs)
-      # @return [Integer] absolute offset of the body record in the writer buffer
+      #   (:body_offset_abs, :bytecode_abs, :opt_table_abs, :kw_abs, :insns_body_abs,
+      #    :insns_pos_abs, :local_table_abs, :lvar_states_abs, :catch_table_abs,
+      #    :ci_entries_abs, :outer_vars_abs)
+      # @return [Integer] byte offset within the writer buffer where the body record starts
       def self.encode(writer, function, data_region_offsets)
-        verify_offsets(function, data_region_offsets)
-        # The body record is written verbatim.
-        body_offset = writer.pos
-        writer.write_bytes(function.misc[:raw_body])
-        body_offset
+        misc = function.misc
+        body_offset = data_region_offsets[:body_offset_abs]
+
+        # Helper: compute rel offset (body_offset - abs), or 0 if absent.
+        rel = ->(key) {
+          abs = data_region_offsets[key]
+          (abs && abs > 0) ? body_offset - abs : 0
+        }
+
+        # Derive type_val from IR type symbol if possible, else fall back to misc.
+        type_val = ISEQ_TYPE_NAMES[function.type] || misc[:type_val]
+
+        # location_first_lineno from IR (should equal misc value for unmodified IR).
+        location_first_lineno = function.first_lineno
+
+        buf_start = writer.pos
+
+        # Emit all 45 small_values in the exact order the decoder reads them.
+        writer.write_small_value(type_val)
+        writer.write_small_value(misc[:iseq_size])
+        writer.write_small_value(rel.call(:bytecode_abs))
+        writer.write_small_value(misc[:bytecode_size])
+        writer.write_small_value(misc[:param_flags])
+        writer.write_small_value(misc[:param_size])
+        writer.write_small_value(misc[:param_lead_num])
+        writer.write_small_value(misc[:param_opt_num])
+        writer.write_small_value(misc[:param_rest_start])
+        writer.write_small_value(misc[:param_post_start])
+        writer.write_small_value(misc[:param_post_num])
+        writer.write_small_value(misc[:param_block_start])
+        writer.write_small_value(rel.call(:opt_table_abs))
+        # param_keyword_offset is absolute (not relative).
+        writer.write_small_value(misc[:param_keyword_offset])
+        writer.write_small_value(misc[:location_pathobj_index])
+        writer.write_small_value(misc[:location_base_label_index])
+        writer.write_small_value(misc[:location_label_index])
+        writer.write_small_value(location_first_lineno)
+        writer.write_small_value(misc[:location_node_id])
+        writer.write_small_value(misc[:location_beg_lineno])
+        writer.write_small_value(misc[:location_beg_column])
+        writer.write_small_value(misc[:location_end_lineno])
+        writer.write_small_value(misc[:location_end_column])
+        writer.write_small_value(rel.call(:insns_body_abs))
+        writer.write_small_value(rel.call(:insns_pos_abs))
+        writer.write_small_value(misc[:insns_info_size])
+        writer.write_small_value(rel.call(:local_table_abs))
+        writer.write_small_value(rel.call(:lvar_states_abs))
+        writer.write_small_value(misc[:catch_table_size])
+        writer.write_small_value(rel.call(:catch_table_abs))
+        writer.write_small_value(misc[:parent_iseq_index])
+        writer.write_small_value(misc[:local_iseq_index])
+        writer.write_small_value(misc[:mandatory_only_iseq_index])
+        writer.write_small_value(rel.call(:ci_entries_abs))
+        writer.write_small_value(rel.call(:outer_vars_abs))
+        writer.write_small_value(misc[:variable_flip_count])
+        writer.write_small_value(misc[:local_table_size])
+        writer.write_small_value(misc[:ivc_size])
+        writer.write_small_value(misc[:icvarc_size])
+        writer.write_small_value(misc[:ise_size])
+        writer.write_small_value(misc[:ic_size])
+        writer.write_small_value(misc[:ci_size])
+        writer.write_small_value(misc[:stack_max])
+        writer.write_small_value(misc[:builtin_attrs])
+        writer.write_small_value(misc[:prism])
+
+        buf_start
       end
 
       # Verify that the body-record relative offsets agree with +data_region_offsets+.

@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "ruby_opt/codec/iseq_envelope"
+require "ruby_opt/codec/binary_reader"
+require "ruby_opt/codec/binary_writer"
 require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/catch_table"
 require "ruby_opt/codec/line_info"
@@ -186,13 +188,12 @@ module RubyOpt
           end
         end
 
-        # Task 5a: Verification pass — assert that the decoded absolute offsets stored in
-        # each function's misc hash still agree with the body-record relative offsets.
-        # This catches offset drift early. We do NOT call IseqEnvelope.encode here (the
-        # body records are already inside the verbatim region); verification is done via
-        # IseqEnvelope.verify_offsets which is assertion-only (no writes).
-        @functions.each do |fn|
+        # Task 5b: Re-emit each body record from IR fields + data_region_offsets, then
+        # splice the re-emitted bytes over the original body bytes in the region.
+        body_offsets = @raw_offset_array.unpack("V*")
+        @functions.each_with_index do |fn, idx|
           data_region_offsets = {
+            body_offset_abs:  body_offsets[idx],
             bytecode_abs:     fn.misc[:bytecode_abs],
             opt_table_abs:    fn.misc[:opt_table_abs],
             kw_abs:           fn.misc[:kw_abs],
@@ -204,7 +205,54 @@ module RubyOpt
             ci_entries_abs:   fn.misc[:ci_entries_abs],
             outer_vars_abs:   fn.misc[:outer_vars_abs],
           }
-          IseqEnvelope.verify_offsets(fn, data_region_offsets)
+
+          body_writer = BinaryWriter.new
+          IseqEnvelope.encode(body_writer, fn, data_region_offsets)
+          emitted = body_writer.buffer
+          original = fn.misc[:raw_body]
+
+          if emitted.bytesize != original.bytesize
+            raise RuntimeError,
+              "body record size mismatch: iseq=#{fn.name} was=#{original.bytesize} got=#{emitted.bytesize}"
+          end
+
+          if emitted != original
+            # Field-by-field diff to identify the first wrong field.
+            field_names = [
+              :type_val, :iseq_size, :bytecode_offset_rel, :bytecode_size,
+              :param_flags, :param_size, :param_lead_num, :param_opt_num,
+              :param_rest_start, :param_post_start, :param_post_num, :param_block_start,
+              :param_opt_table_offset_rel, :param_keyword_offset,
+              :location_pathobj_index, :location_base_label_index, :location_label_index,
+              :location_first_lineno, :location_node_id, :location_beg_lineno,
+              :location_beg_column, :location_end_lineno, :location_end_column,
+              :insns_info_body_offset_rel, :insns_info_positions_offset_rel,
+              :insns_info_size, :local_table_offset_rel, :lvar_states_offset_rel,
+              :catch_table_size, :catch_table_offset_rel,
+              :parent_iseq_index, :local_iseq_index, :mandatory_only_iseq_index,
+              :ci_entries_offset_rel, :outer_variables_offset_rel,
+              :variable_flip_count, :local_table_size, :ivc_size, :icvarc_size,
+              :ise_size, :ic_size, :ci_size, :stack_max, :builtin_attrs, :prism,
+            ]
+
+            orig_reader = BinaryReader.new(original)
+            emit_reader = BinaryReader.new(emitted)
+            field_names.each do |field|
+              orig_val = orig_reader.read_small_value
+              emit_val = emit_reader.read_small_value
+              if orig_val != emit_val
+                raise RuntimeError,
+                  "body record field mismatch: iseq=#{fn.name} field=#{field} " \
+                  "expected=#{orig_val} got=#{emit_val}"
+              end
+            end
+            raise RuntimeError,
+              "body record bytes differ but all fields match: iseq=#{fn.name} (encoding bug)"
+          end
+
+          # Splice re-emitted body bytes into region.
+          body_region_offset = body_offsets[idx] - ISEQ_REGION_START
+          region[body_region_offset, emitted.bytesize] = emitted
         end
 
         writer.write_bytes(region)
