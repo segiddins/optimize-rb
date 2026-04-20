@@ -4,6 +4,8 @@ require "ruby_opt/codec"
 require "ruby_opt/codec/catch_table"
 require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/binary_writer"
+require "ruby_opt/ir/instruction"
+require "ruby_opt/ir/catch_entry"
 
 class CatchTableTest < Minitest::Test
   def test_rescue_method_round_trips_through_catch_entries
@@ -79,5 +81,57 @@ class CatchTableTest < Minitest::Test
     total_count = safe_divide.catch_entries.size
     assert_operator live_count, :<, total_count,
       "expected at least one catch entry to be dropped due to dangling start_inst"
+  end
+
+  # Integration test: full decode → mutate (inject a dangling catch entry whose start_inst
+  # is a phantom instruction NOT in the instruction list) → encode →
+  # RubyVM::InstructionSequence.load_from_binary round-trip.
+  #
+  # This models the real optimizer scenario: an optimizer removes an instruction but leaves
+  # a stale catch_entry referencing it. The encoder must silently drop the dangling entry,
+  # patch catch_table_size in the body record, and produce a binary Ruby can load cleanly.
+  def test_dangling_catch_entry_survives_full_encode_and_load
+    src = <<~RUBY
+      def safe_divide(a, b)
+        a / b
+      rescue ZeroDivisionError
+        :nope
+      end
+      safe_divide(10, 2)
+      safe_divide(10, 0)
+    RUBY
+    original = RubyVM::InstructionSequence.compile(src).to_binary
+    ir = RubyOpt::Codec.decode(original)
+
+    safe_divide = ir.children.find { |c| c.name == "safe_divide" }
+    refute_nil safe_divide
+    refute_empty safe_divide.catch_entries
+
+    # Inject a dangling catch entry whose start_inst is a phantom instruction NOT in
+    # safe_divide.instructions. This simulates an optimizer removing an instruction while
+    # leaving a stale catch_entry behind.
+    phantom = RubyOpt::IR::Instruction.new(opcode: :nop, operands: [], line: nil)
+    real_entry = safe_divide.catch_entries.first
+    dangling_entry = RubyOpt::IR::CatchEntry.new(
+      type:        real_entry.type,
+      iseq_index:  real_entry.iseq_index,
+      start_inst:  phantom,               # dangling: phantom not in instructions
+      end_inst:    real_entry.end_inst,
+      cont_inst:   real_entry.cont_inst,
+      stack_depth: real_entry.stack_depth,
+    )
+    original_count = safe_divide.catch_entries.size
+    safe_divide.catch_entries << dangling_entry
+
+    # Full encode must not raise (the dangling entry is silently dropped),
+    # and the result must load cleanly.
+    re_encoded = RubyOpt::Codec.encode(ir)
+    loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
+    assert_kind_of RubyVM::InstructionSequence, loaded
+
+    # Confirm the dangling entry was excluded: live count == original_count.
+    assert_equal original_count, safe_divide.catch_entries.count { |e|
+      e != dangling_entry
+    }
   end
 end

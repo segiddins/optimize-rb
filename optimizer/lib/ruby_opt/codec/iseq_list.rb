@@ -231,13 +231,23 @@ module RubyOpt
           # Emits:
           #   1. Alignment pad bytes (misc[:"#{key}_pad_raw"]) before the section content.
           #   2. The section content (from block).
-          #   3. Trailing zero bytes to fill up to misc[:"#{key}_raw"].bytesize.
-          #      (For bytecode: raw == content exactly, so no trailing pad.
-          #       For other sections: raw includes trailing alignment zeros before next section.)
+          #   3. Trailing zero bytes to pad the emitted content up to the original raw size.
+          #      This preserves downstream body-record offsets (all sections stay at the same
+          #      absolute positions as in the original binary).
+          #      - For bytecode: raw == content exactly, so no trailing pad.
+          #      - For raw-only sections (kw, local_table, etc.): raw == content, no pad.
+          #      - For IR-encoded sections where size is unchanged: content bytes match raw;
+          #        any trailing alignment zeros are already embedded in raw and reproduced.
+          #      - For IR-encoded sections where count is filtered (insns_info, catch_table):
+          #        content may be SHORTER than raw. The trailing zeros are safe because the
+          #        body record's insns_info_size / catch_table_size fields are patched to the
+          #        filtered count, so Ruby's loader reads only the live entries and ignores
+          #        the trailing zero bytes. Pass allow_content_change: true to suppress the
+          #        byte-identity assertion for these sections.
           #
           # Records fresh abs offset in dro[abs_key].
-          # Raises on byte-identity mismatch.
-          emit_section = ->(key, abs_key, &block) do
+          # Raises on byte-identity mismatch (unless allow_content_change: true).
+          emit_section = ->(key, abs_key, allow_content_change: false, &block) do
             orig_abs = misc[abs_key]
             return unless orig_abs && orig_abs > 0
 
@@ -251,27 +261,33 @@ module RubyOpt
             # Emit section content (block writes to writer and returns content bytes).
             content_bytes = block.call
 
-            # ROUND-TRIP ONLY: zero-pad IR content to raw size; real length changes will fail the fresh body-offset assertion downstream.
-            # Emit trailing zero bytes to match original raw size.
-            # For bytecode the raw is exact (no trailing pad).
-            # For other sections the raw includes alignment zeros before next section.
+            # Zero-pad IR content to original raw size so that all subsequent sections
+            # land at the same absolute offsets as in the original binary. This is always
+            # safe: for raw-verbatim sections pad is 0; for IR-encoded sections with an
+            # unchanged count it is also 0 (sizes match); for filtered sections (insns_info,
+            # catch_table) the trailing zeros are ignored by the loader because the
+            # body-record size fields are patched to the filtered count.
             original_raw = misc[:"#{key}_raw"] || "".b
             trailing_pad = original_raw.bytesize - content_bytes.bytesize
             if trailing_pad > 0
               writer.write_bytes("\x00".b * trailing_pad)
             end
 
-            # Byte-identity assertion: content + trailing pad must match original raw.
-            emitted_str = content_bytes + ("\x00".b * [trailing_pad, 0].max)
-            check_len = original_raw.bytesize
-            if emitted_str.bytesize != check_len || emitted_str != original_raw
-              first_diff = (0...check_len).find { |i| emitted_str.getbyte(i) != original_raw.getbyte(i) }
-              raise RuntimeError,
-                "byte-identity assertion failed: iseq=#{fn.name} section=#{key} " \
-                "emitted=#{emitted_str.bytesize} original=#{check_len} " \
-                "first diff at offset #{first_diff} " \
-                "(emitted=0x#{emitted_str.getbyte(first_diff)&.to_s(16)&.rjust(2,'0') || 'nil'} " \
-                "original=0x#{original_raw.getbyte(first_diff)&.to_s(16)&.rjust(2,'0') || 'nil'})"
+            # Byte-identity assertion for unmodified (raw-verbatim or same-count IR) sections.
+            # Skipped for IR-encoded sections whose entry count may legitimately decrease
+            # (insns_info body/positions, catch_table) — those pass allow_content_change: true.
+            unless allow_content_change
+              emitted_str = content_bytes + ("\x00".b * [trailing_pad, 0].max)
+              check_len = original_raw.bytesize
+              if emitted_str.bytesize != check_len || emitted_str != original_raw
+                first_diff = (0...check_len).find { |i| emitted_str.getbyte(i) != original_raw.getbyte(i) }
+                raise RuntimeError,
+                  "byte-identity assertion failed: iseq=#{fn.name} section=#{key} " \
+                  "emitted=#{emitted_str.bytesize} original=#{check_len} " \
+                  "first diff at offset #{first_diff} " \
+                  "(emitted=0x#{emitted_str.getbyte(first_diff)&.to_s(16)&.rjust(2,'0') || 'nil'} " \
+                  "original=0x#{original_raw.getbyte(first_diff)&.to_s(16)&.rjust(2,'0') || 'nil'})"
+              end
             end
           end
 
@@ -339,7 +355,10 @@ module RubyOpt
           end
 
           # 4. insns_info body (IR-encoded; raw may include trailing pad)
-          emit_section.call(:insns_body, :insns_body_abs) do
+          # allow_content_change: true because filtered entries produce fewer bytes than
+          # original; the body-record insns_info_size is patched to the live count so
+          # the loader only reads the live entries; trailing zeros are ignored.
+          emit_section.call(:insns_body, :insns_body_abs, allow_content_change: true) do
             if line_body_bytes
               writer.write_bytes(line_body_bytes)
               line_body_bytes
@@ -349,7 +368,8 @@ module RubyOpt
           end
 
           # 5. insns_info positions (IR-encoded; re-encode to get pos bytes)
-          emit_section.call(:insns_pos, :insns_pos_abs) do
+          # allow_content_change: true for the same reason as insns_body above.
+          emit_section.call(:insns_pos, :insns_pos_abs, allow_content_change: true) do
             if line_pos_bytes
               writer.write_bytes(line_pos_bytes)
               line_pos_bytes
@@ -373,8 +393,10 @@ module RubyOpt
           end
 
           # 8. catch_table (IR-encoded; raw may include trailing pad)
+          # allow_content_change: true because dropped entries produce fewer bytes;
+          # the body-record catch_table_size is patched to the live count.
           encoded_catch_table_size = nil
-          emit_section.call(:catch_table, :catch_table_abs) do
+          emit_section.call(:catch_table, :catch_table_abs, allow_content_change: true) do
             catch_entries    = fn.catch_entries
             catch_table_size = misc[:catch_table_size]
             if catch_entries && catch_table_size && catch_table_size > 0 && inst_to_slot
@@ -422,12 +444,14 @@ module RubyOpt
           dro[:ci_entries_abs]  ||= misc[:ci_entries_abs]
           dro[:outer_vars_abs]  ||= misc[:outer_vars_abs]
 
-          # Pass filtered insns_info_size when it differs from the original
-          # (e.g. instructions with line entries were deleted).
-          dro[:insns_info_size] = encoded_insns_info_size if encoded_insns_info_size
+          # Pass filtered insns_info_size when it was computed from IR (including 0,
+          # which is truthy in Ruby — use nil? guard so 0 is written correctly when
+          # all entries are filtered out).
+          dro[:insns_info_size] = encoded_insns_info_size unless encoded_insns_info_size.nil?
 
           # Pass filtered catch_table_size when entries were dropped due to dangling refs.
-          dro[:catch_table_size] = encoded_catch_table_size if encoded_catch_table_size
+          # Same nil? guard: 0 must be propagated if all entries are dropped.
+          dro[:catch_table_size] = encoded_catch_table_size unless encoded_catch_table_size.nil?
 
           fresh_body_offsets << writer.pos
 

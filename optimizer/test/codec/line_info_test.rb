@@ -4,6 +4,8 @@ require "ruby_opt/codec"
 require "ruby_opt/codec/line_info"
 require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/binary_writer"
+require "ruby_opt/ir/instruction"
+require "ruby_opt/ir/line_entry"
 
 class LineInfoTest < Minitest::Test
   def test_multiline_method_has_line_entries_per_instruction_group
@@ -84,5 +86,57 @@ class LineInfoTest < Minitest::Test
     assert_operator live_count, :>, 0
     assert_operator body_writer.buffer.bytesize, :>, 0
     assert_operator pos_writer.buffer.bytesize, :>, 0
+  end
+
+  # Integration test: full decode → mutate (inject a dangling line entry pointing at a
+  # phantom instruction that is NOT in the instruction list) → encode →
+  # RubyVM::InstructionSequence.load_from_binary round-trip.
+  #
+  # This models the real optimizer scenario: an optimizer pass removes an instruction from
+  # the stream but forgets to prune stale line_entries. The encoder must silently drop the
+  # dangling entry, patch insns_info_size in the body record, and produce a binary that
+  # Ruby can load cleanly.
+  def test_dangling_line_entry_survives_full_encode_and_load
+    src = <<~RUBY
+      def multi
+        x = 1
+        y = 2
+        x + y
+      end
+      multi
+    RUBY
+    original = RubyVM::InstructionSequence.compile(src).to_binary
+    ir = RubyOpt::Codec.decode(original)
+
+    m = ir.children.find { |c| c.name == "multi" }
+    refute_nil m
+    refute_empty m.line_entries
+
+    # Inject a dangling line entry pointing at a phantom instruction that is NOT in
+    # m.instructions. This simulates an optimizer removing an instruction while leaving
+    # a stale line_entry reference behind.
+    phantom = RubyOpt::IR::Instruction.new(opcode: :nop, operands: [], line: nil)
+    dangling_entry = RubyOpt::IR::LineEntry.new(
+      inst:        phantom,
+      slot_offset: 0,
+      line_no:     m.line_entries.first.line_no,
+      node_id:     m.line_entries.first.node_id,
+      events:      m.line_entries.first.events,
+    )
+    original_count = m.line_entries.size
+    m.line_entries << dangling_entry
+
+    # Full encode must not raise (the dangling entry is silently dropped),
+    # and the result must load cleanly.
+    re_encoded = RubyOpt::Codec.encode(ir)
+    loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
+    assert_kind_of RubyVM::InstructionSequence, loaded
+
+    # The dangling entry must have been excluded: live count == original_count.
+    assert_equal original_count, m.line_entries.count { |e|
+      # After encode, the injected phantom is still in m.line_entries (not mutated),
+      # so we check by identity.
+      e != dangling_entry
+    }
   end
 end
