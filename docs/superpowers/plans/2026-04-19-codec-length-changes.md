@@ -571,18 +571,95 @@ jj commit -m "Recompute stack_max from IR via symbolic execution"
 
 ### Task 5: Full body-record re-serialization from IR
 
-**Files:**
+> **⚠️ Lessons from a failed first attempt (2026-04-20):** The original Task 5 prompt asked for one monolithic rewrite — replacing `codec.rb` orchestration, `iseq_list.rb` per-section emission, and `IseqEnvelope.encode`'s signature all at once. The result was non-debuggable:
+>
+> - Round-trip fell 12 bytes short on the simplest corpus fixture (`[1,2,3].map { |n| n*2 }`). No test localized which section drifted.
+> - `LineInfo.encode` raised `KeyError` when an instruction referenced by a line entry had been removed from `function.instructions` (encoder must filter dangling entries first — the original plan didn't say so).
+> - `load_from_binary` raised "unexpected path object" on the modification test, meaning a body-record offset field pointed at the wrong section (field-ordering bug).
+> - One fixture SIGSEGV'd Ruby itself in `ibf_load_iseq_each` — a wrong offset or size field let the loader dereference garbage.
+>
+> Abandoned as `vvpqumlr`. 73/73 tests remain green at the Task 4 baseline.
+>
+> **The fix: split Task 5 into 5a–5d, each with a tight byte-diff assertion so the single thing that broke is always visible.** Execute them in order; do not skip ahead.
+
+**Files (across 5a–5d):**
 - Modify: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
 - Modify: `optimizer/lib/ruby_opt/codec/iseq_list.rb`
+- Modify: `optimizer/lib/ruby_opt/codec/line_info.rb` (filter dangling refs in 5d)
+- Modify: `optimizer/lib/ruby_opt/codec/catch_table.rb` (filter dangling refs in 5d)
 
-**Context:** Today `IseqEnvelope.encode` writes `function.misc[:raw_body]` verbatim — a 41-field small_value record that includes all the section offsets (bytecode_abs, catch_table_abs, insns_info_abs, local_table_abs, lvar_states_abs, opt_table_abs, kw_abs, etc.). `IseqList.encode` writes the data region verbatim-plus-spliced-instructions (from Task 1 of the optimizer-core plan).
+---
 
-This task replaces both with IR-driven emission:
+#### Task 5a: `data_region_offsets` parameter, same behavior
 
-1. Encoder lays out a new iseq data region by emitting each section in order (instructions → local_table → catch_table → line_info → ...). It tracks the running byte offset to populate the new absolute-offset fields.
-2. Encoder emits the body record as a fresh sequence of small_values pulled from IR fields plus the newly-computed offsets and `stack_max`.
+Introduce a `data_region_offsets` hash parameter into `IseqEnvelope.encode`. For this task:
 
-Sections whose content doesn't contain instruction references (local_table, lvar_states, ci_entries, outer_vars) can still come from raw bytes stashed in misc — they just need to land at new offsets.
+- `IseqList.encode` populates `data_region_offsets` with the ORIGINAL absolute offsets from decode-time `misc` (bytecode_abs, catch_table_abs, etc.) — no layout changes.
+- `IseqEnvelope.encode` still writes `misc[:raw_body]` verbatim, UNCHANGED.
+- Inside `IseqEnvelope.encode`, before the raw-body write, add assertions: re-read each of the 45 small_values from the raw body, resolve each relative-offset field back to an absolute, and assert it equals the corresponding value in `data_region_offsets`. If any mismatch, raise with a clear message naming the field (`"body-record offset drift: field=insns_body_rel stored_rel=X resolved_abs=Y data_region_abs=Z"`).
+
+This is the TDD setup: if a later task accidentally passes wrong offsets, the assertion fires with a targeted message.
+
+End state: 73 tests still pass, 0 new tests.
+
+Commit: `jj commit -m "Thread data_region_offsets through IseqEnvelope.encode (assertion-only)"`.
+
+#### Task 5b: IR-driven body record emission (keeping original data region layout)
+
+Switch `IseqEnvelope.encode` from `writer.write_bytes(misc[:raw_body])` to emitting each of the 45 small_values from IR fields + `data_region_offsets`. `IseqList.encode` is unchanged — it still writes `@raw_iseq_region` verbatim. (The offsets passed in will match the raw region because nothing has moved.)
+
+Contract: byte-identical round-trip on the corpus. If any single field's re-emission differs from what was in `misc[:raw_body]`, a fixture will fail; diff the two body records field-by-field to isolate which one.
+
+Pay special attention to:
+- `iseq_size`: for unmodified IR, `InstructionStream.slots_for`-summed value must equal `misc[:iseq_size]`. Use `misc[:iseq_size]` directly for now; 5d switches to recomputed.
+- `stack_max`: use `misc[:stack_max]` unchanged; 5d switches to `Codec::StackMax.compute`.
+- Field order: the decoder's read sequence is authoritative. Mirror it literally; don't reorder.
+
+End state: 73 tests still pass.
+
+Commit: `jj commit -m "Emit iseq body record from IR fields"`.
+
+#### Task 5c: Per-section data region emission, one section per sub-commit
+
+Replace `IseqList.encode`'s `@raw_iseq_region` emission with per-section writes from IR. Do this **one section per sub-commit** with the corpus round-trip test re-run after each:
+
+- 5c.i: Bytecode — `InstructionStream.encode(fn.instructions, object_table, functions)` at `writer.pos`. Record new `bytecode_abs`/`bytecode_size` into `data_region_offsets`.
+- 5c.ii: opt_table — 8-byte (VALUE) alignment pad before; emit via `ArgPositions.encode`.
+- 5c.iii: kw raw bytes at new offset.
+- 5c.iv: insns_info body + positions via `LineInfo.encode`.
+- 5c.v: local_table raw bytes.
+- 5c.vi: lvar_states raw bytes.
+- 5c.vii: catch_table via `CatchTable.encode`.
+- 5c.viii: ci_entries raw bytes.
+- 5c.ix: outer_vars raw bytes.
+
+After each sub-step, the full corpus round-trip test must still pass byte-for-byte. A failure means only that section's emission is suspect.
+
+**Critical alignment rules (rediscovered the hard way):**
+- 4-byte alignment padding is required BEFORE the iseq offset array (per `research/cruby/ibf-format.md` §7).
+- 8-byte (VALUE) alignment is required BEFORE `opt_table`.
+- If a fixture's round-trip falls 4 or 8 bytes short after any sub-step, alignment is likely the cause — inspect the two byte streams at the boundary.
+
+**Do NOT modify `codec.rb`'s top-level encode orchestration here.** The `Header.encode` → `IseqList.encode` → `ObjectTable.encode` sequence stays as-is. Only `IseqList.encode`'s internal layout changes.
+
+Commit each sub-step separately so any regression can be bisected to a single section.
+
+#### Task 5d: Filter dangling refs + switch to recomputed fields
+
+Now that the encoder is fully IR-driven, handle length-changing edits cleanly:
+
+- `LineInfo.encode`: filter out `LineEntry`s whose `inst` is no longer in the instruction list (reference comparison via `inst_to_slot.key?`). Add a test: decode, `function.instructions.pop` an instruction with a line entry, re-encode without raising `KeyError`.
+- `CatchTable.encode`: similarly filter entries whose `start_inst`/`end_inst`/`cont_inst` are missing.
+- Switch the body record's `stack_max` from `misc[:stack_max]` to `Codec::StackMax.compute(function)` — add a corpus-wide assertion that the computed value ≥ stored value (the stack_max test from Task 4 already covers this, but run it).
+- Switch `iseq_size` to the recomputed value from `InstructionStream.slots_for` — assert this matches the stored value for unmodified IR across the corpus.
+
+After 5d: length-changing edits are supported end-to-end. Task 6's delete/insert integration tests become possible.
+
+Commit: `jj commit -m "Filter dangling IR refs and switch to recomputed stack_max/iseq_size"`.
+
+---
+
+The remaining steps below are preserved from the original monolithic plan; Task 5's sub-steps above supersede them. If you're executing this plan, follow 5a–5d and skip the steps below.
 
 - [ ] **Step 1: Add failing tests** to `optimizer/test/codec/length_change_test.rb` (this file is created here, expanded in Task 6):
 
