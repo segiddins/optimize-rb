@@ -200,6 +200,41 @@ module RubyOpt
         end
       end
 
+      # Build a slot → IR::Instruction map from a decoded instruction list.
+      # This reconstructs the mapping by walking instructions and computing slot sizes.
+      #
+      # @param instructions [Array<IR::Instruction>]
+      # @return [Hash{Integer=>IR::Instruction}] YARV slot → instruction
+      def self.slot_map(instructions)
+        map = {}
+        slot = 0
+        instructions.each do |insn|
+          opcode_num = NAME_TO_OPCODE[insn.opcode]
+          raise "Unknown opcode name: #{insn.opcode.inspect}" unless opcode_num
+          _name, op_types = OPCODE_TO_INFO[opcode_num]
+          map[slot] = insn
+          slot += slots_for(op_types)
+        end
+        map
+      end
+
+      # Build an IR::Instruction → slot map (reverse of slot_map).
+      #
+      # @param instructions [Array<IR::Instruction>]
+      # @return [Hash{IR::Instruction=>Integer}] instruction → YARV slot
+      def self.inst_to_slot_map(instructions)
+        result = {}
+        slot = 0
+        instructions.each do |insn|
+          opcode_num = NAME_TO_OPCODE[insn.opcode]
+          raise "Unknown opcode name: #{insn.opcode.inspect}" unless opcode_num
+          _name, op_types = OPCODE_TO_INFO[opcode_num]
+          result[insn] = slot
+          slot += slots_for(op_types)
+        end
+        result
+      end
+
       # Decode +bytes+ (a binary String) into an Array<IR::Instruction>.
       #
       # Branch OFFSET operands in the binary are relative slot offsets: the number

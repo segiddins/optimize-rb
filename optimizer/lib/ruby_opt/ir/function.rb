@@ -22,6 +22,9 @@ module RubyOpt
       :catch_table,     # raw bytes or decoded catch entries
       :line_info,       # raw bytes — insns_info body + positions
 
+      # Decoded catch table entries (Array<IR::CatchEntry> or nil if no catch table)
+      :catch_entries,   # Array<IR::CatchEntry> — decoded exception handler table
+
       # Instructions (raw bytecode bytes — Task 8 will decode the stream)
       :instructions,    # raw bytes of the encoded bytecode stream
 

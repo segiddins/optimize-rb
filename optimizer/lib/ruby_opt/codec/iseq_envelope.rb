@@ -5,6 +5,7 @@ require "ruby_opt/ir/instruction"
 require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
 require "ruby_opt/codec/instruction_stream"
+require "ruby_opt/codec/catch_table"
 
 module RubyOpt
   module Codec
@@ -237,6 +238,16 @@ module RubyOpt
         # Store the raw bytecode in misc so IseqList can re-emit the region verbatim.
         misc[:raw_bytecode] = raw_bytecode
 
+        # Decode the catch table into IR::CatchEntry objects.
+        # The slot_map maps YARV slot index → IR::Instruction (by identity).
+        catch_entries = nil
+        if catch_table_size > 0 && catch_table_abs
+          slot_to_inst = InstructionStream.slot_map(instructions)
+          ct_reader = BinaryReader.new(binary)
+          ct_reader.seek(catch_table_abs)
+          catch_entries = CatchTable.decode(ct_reader, catch_table_size, slot_to_inst)
+        end
+
         # Build the IR::Function. children will be populated by the caller.
         IR::Function.new(
           name:          label.to_s,
@@ -248,6 +259,7 @@ module RubyOpt
           local_table:   nil,   # raw bytes stored in misc if needed
           catch_table:   nil,   # raw bytes stored in misc if needed
           line_info:     nil,   # raw bytes stored in misc if needed
+          catch_entries: catch_entries,
           instructions:  instructions,
           children:      [],
           misc:          misc,

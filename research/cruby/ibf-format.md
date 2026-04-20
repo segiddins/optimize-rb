@@ -268,15 +268,36 @@ Bit  Flag
 
 ### 4.4 Catch Table Entry (compile.c:13367–13373)
 
-Each entry in the catch table is 6 small_values:
+Each entry in the catch table is 6 small_values written in this order:
 ```
-iseq_index  — iseq-list index of the associated iseq (-1 = none)
-type        — rb_catch_type enum value
-start       — bytecode instruction index (start of guarded range)
-end         — bytecode instruction index (end of guarded range)
-cont        — bytecode instruction index (continuation point)
-sp          — stack pointer value at catch point
+iseq_index  — iseq-list index of the handler iseq; stored as full uint64 max (0xFFFF…FF,
+               9-byte small_value) when there is no associated iseq (C sentinel: -1)
+type        — rb_catch_type enum value (see below)
+start       — YARV slot index (start of guarded range, inclusive)
+end         — YARV slot index (end of guarded range, exclusive)
+cont        — YARV slot index (continuation point; always present, may be slot 0)
+sp          — operand-stack depth at the catch point
 ```
+
+**rb_catch_type enum values** are stored as Ruby Fixnums (`INT2FIX(n)` = `(n << 1) | 1`):
+```
+Raw value  Enum constant        Symbol
+---------  -------------------  ------
+        3  CATCH_TYPE_RESCUE    :rescue
+        5  CATCH_TYPE_ENSURE    :ensure
+        7  CATCH_TYPE_RETRY     :retry
+        9  CATCH_TYPE_BREAK     :break
+       11  CATCH_TYPE_REDO      :redo
+       13  CATCH_TYPE_NEXT      :next
+```
+(Verified empirically against Ruby 4.0.2 binaries — the iseq.h enum uses `INT2FIX(1..6)`.)
+
+**No-iseq sentinel:** stored as a 9-byte small_value encoding `0xFFFFFFFFFFFFFFFF` (uint64 max,
+i.e. C `-1` cast to `ibf_offset_t`). The 4-byte sentinel 0xFFFFFFFF is **not** used here.
+
+**YARV slot indices** in start/end/cont are absolute slot numbers in the decoded VALUE array
+(same coordinate system as `slot_to_insn_idx` built during instruction stream decode). They are
+NOT byte offsets.
 
 ---
 

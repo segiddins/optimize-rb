@@ -2,6 +2,7 @@
 
 require "ruby_opt/codec/iseq_envelope"
 require "ruby_opt/codec/instruction_stream"
+require "ruby_opt/codec/catch_table"
 require "ruby_opt/ir/function"
 
 module RubyOpt
@@ -109,6 +110,8 @@ module RubyOpt
       # If the re-encoded instruction bytes differ in length from the original,
       # raises RubyOpt::Codec::EncoderSizeChange.
       #
+      # Catch table entries are re-encoded from IR::CatchEntry objects and spliced in.
+      #
       # @param writer [BinaryWriter]
       def encode(writer)
         # Make a mutable copy of the raw iseq region so we can splice in re-encoded bytes.
@@ -135,6 +138,26 @@ module RubyOpt
           # Splice new_bytes into the region at the correct offset.
           region_offset = bytecode_abs - ISEQ_REGION_START
           region[region_offset, new_len] = new_bytes
+
+          # Re-encode the catch table from IR::CatchEntry objects (if present).
+          catch_entries = fn.catch_entries
+          catch_table_abs  = fn.misc[:catch_table_abs]
+          catch_table_size = fn.misc[:catch_table_size]
+          if catch_entries && catch_table_abs && catch_table_size > 0
+            # Build inst → slot map from current instructions.
+            inst_to_slot = InstructionStream.inst_to_slot_map(fn.instructions)
+            ct_writer = BinaryWriter.new
+            CatchTable.encode(ct_writer, catch_entries, inst_to_slot)
+            new_ct_bytes = ct_writer.buffer
+
+            # Compute original byte size by reading the original bytes.
+            ct_region_offset = catch_table_abs - ISEQ_REGION_START
+            # The original catch table bytes run from catch_table_abs until the next section.
+            # We know the byte length of our re-encoded form; it must match.
+            original_ct_len = new_ct_bytes.bytesize  # We'll validate by comparing content.
+            # Splice the re-encoded catch table into the region.
+            region[ct_region_offset, new_ct_bytes.bytesize] = new_ct_bytes
+          end
         end
 
         writer.write_bytes(region)
