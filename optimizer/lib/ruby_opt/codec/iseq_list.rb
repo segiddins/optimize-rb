@@ -327,12 +327,15 @@ module RubyOpt
           insns_info_size = misc[:insns_info_size]
           line_body_bytes = nil
           line_pos_bytes  = nil
+          encoded_insns_info_size = nil
           if line_entries && insns_info_size && insns_info_size > 0 && inst_to_slot
             body_writer = BinaryWriter.new
             pos_writer  = BinaryWriter.new
             LineInfo.encode(body_writer, pos_writer, line_entries, inst_to_slot)
             line_body_bytes = body_writer.buffer
             line_pos_bytes  = pos_writer.buffer
+            # Count the live entries (those whose inst is still in inst_to_slot).
+            encoded_insns_info_size = line_entries.count { |e| inst_to_slot.key?(e.inst) }
           end
 
           # 4. insns_info body (IR-encoded; raw may include trailing pad)
@@ -411,6 +414,10 @@ module RubyOpt
           dro[:catch_table_abs] ||= misc[:catch_table_abs]
           dro[:ci_entries_abs]  ||= misc[:ci_entries_abs]
           dro[:outer_vars_abs]  ||= misc[:outer_vars_abs]
+
+          # Pass filtered insns_info_size when it differs from the original
+          # (e.g. instructions with line entries were deleted).
+          dro[:insns_info_size] = encoded_insns_info_size if encoded_insns_info_size
 
           fresh_body_offsets << writer.pos
 

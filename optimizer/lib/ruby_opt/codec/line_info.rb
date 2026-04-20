@@ -90,6 +90,8 @@ module RubyOpt
       # Encode insns_info entries into the body and positions sections.
       #
       # Writes to two separate writers that will land at the correct absolute offsets.
+      # Entries whose instruction is no longer in +inst_to_slot+ (dangling refs,
+      # e.g. the instruction was deleted) are silently dropped from the output.
       #
       # @param body_writer  [BinaryWriter] for the body section
       # @param pos_writer   [BinaryWriter] for the positions section
@@ -97,7 +99,9 @@ module RubyOpt
       # @param inst_to_slot [Hash{IR::Instruction=>Integer}] instruction → YARV start slot
       def encode(body_writer, pos_writer, entries, inst_to_slot)
         prev_slot = 0
-        entries.each do |e|
+        # Drop entries whose instruction has been removed from the instruction stream.
+        live_entries = entries.select { |e| inst_to_slot.key?(e.inst) }
+        live_entries.each do |e|
           # Body section: absolute values, no delta.
           body_writer.write_small_value(e.line_no)
           body_writer.write_small_value(e.node_id)

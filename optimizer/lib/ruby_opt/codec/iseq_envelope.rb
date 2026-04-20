@@ -356,10 +356,14 @@ module RubyOpt
         writer.write_small_value(misc[:location_end_column])
         writer.write_small_value(rel.call(:insns_body_abs))
         writer.write_small_value(rel.call(:insns_pos_abs))
-        writer.write_small_value(misc[:insns_info_size])
+        # Use caller-supplied filtered count when available (e.g. after instructions were deleted).
+        insns_info_size = data_region_offsets.key?(:insns_info_size) ? data_region_offsets[:insns_info_size] : misc[:insns_info_size]
+        writer.write_small_value(insns_info_size)
         writer.write_small_value(rel.call(:local_table_abs))
         writer.write_small_value(rel.call(:lvar_states_abs))
-        writer.write_small_value(misc[:catch_table_size])
+        # Use caller-supplied filtered count when available (e.g. after instructions were deleted).
+        catch_table_size = data_region_offsets.key?(:catch_table_size) ? data_region_offsets[:catch_table_size] : misc[:catch_table_size]
+        writer.write_small_value(catch_table_size)
         writer.write_small_value(rel.call(:catch_table_abs))
         writer.write_small_value(misc[:parent_iseq_index])
         writer.write_small_value(misc[:local_iseq_index])
