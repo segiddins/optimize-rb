@@ -134,27 +134,13 @@ module RubyOpt
         opt_plus_count_out = replacement.size - 1
         original_opt_pluses = chain[:opt_plus_indices].map { |k| insts[k] }
         opt_plus_count_out.times do |k|
-          replacement << (original_opt_pluses[k] || original_opt_pluses.last)
+          replacement << original_opt_pluses[k]
         end
 
         start = chain[:first_idx]
         length = chain[:end_idx] - chain[:first_idx] + 1
         insts[start, length] = replacement
         function.invalidate_cfg
-
-        # Reordering instructions within the chain can shuffle the slot
-        # positions of existing line entries; re-sort line_entries by the
-        # new instruction order so LineInfo.encode produces non-negative
-        # position deltas. Entries whose inst was removed stay put — they
-        # will be dropped at encode time.
-        if function.line_entries
-          inst_index = {}
-          insts.each_with_index { |inst, idx| inst_index[inst] = idx }
-          function.line_entries = function.line_entries.sort_by.with_index do |e, i|
-            [inst_index[e.inst] || Float::INFINITY, i]
-          end
-        end
-
         true
       end
     end

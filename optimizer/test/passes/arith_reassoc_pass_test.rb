@@ -96,6 +96,32 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal before, f.instructions.map(&:opcode)
   end
 
+  def test_rewritten_instruction_order_non_literals_first_then_literal_then_opt_pluses
+    src = "def f(x, y); 1 + x + 2 + y + 3; end; f(10, 20)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    # Find the chain in the rewritten instructions. Expect:
+    #   <getlocal-for-x>, <getlocal-for-y>, <literal 6>, opt_plus, opt_plus, ...
+    # Locate the two getlocal instructions.
+    getlocal_idxs = f.instructions.each_with_index.select { |i, _|
+      %i[getlocal getlocal_WC_0 getlocal_WC_1].include?(i.opcode)
+    }.map { |_, idx| idx }
+    assert_equal 2, getlocal_idxs.size
+    first_get, second_get = getlocal_idxs
+    assert_equal first_get + 1, second_get, "getlocals should be adjacent (x then y)"
+
+    # Directly after the second getlocal: the combined literal 6.
+    after_getlocals = f.instructions[second_get + 1]
+    assert_equal 6, RubyOpt::Passes::LiteralValue.read(after_getlocals, object_table: ot)
+
+    # Then two opt_pluses in a row.
+    assert_equal :opt_plus, f.instructions[second_get + 2].opcode
+    assert_equal :opt_plus, f.instructions[second_get + 3].opcode
+  end
+
   private
 
   def find_iseq(ir, name)

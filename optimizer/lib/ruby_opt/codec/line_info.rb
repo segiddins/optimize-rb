@@ -101,6 +101,13 @@ module RubyOpt
         prev_slot = 0
         # Drop entries whose instruction has been removed from the instruction stream.
         live_entries = entries.select { |e| inst_to_slot.key?(e.inst) }
+        # Sort by target slot so position deltas are non-negative even when a
+        # pass has reordered instructions (e.g. ArithReassocPass). Use the
+        # original array index as a stable secondary key to preserve the
+        # relative order of entries that land on the same slot.
+        live_entries = live_entries.each_with_index.sort_by do |e, i|
+          [inst_to_slot.fetch(e.inst) + (e.slot_offset || 0), i]
+        end.map(&:first)
         live_entries.each do |e|
           # Body section: absolute values, no delta.
           body_writer.write_small_value(e.line_no)
