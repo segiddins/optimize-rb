@@ -8,6 +8,7 @@ require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/catch_table"
 require "ruby_opt/codec/line_info"
 require "ruby_opt/codec/arg_positions"
+require "ruby_opt/codec/stack_max"
 
 module RubyOpt
   module Codec
@@ -377,7 +378,15 @@ module RubyOpt
         writer.write_small_value(misc[:ise_size])
         writer.write_small_value(misc[:ic_size])
         writer.write_small_value(misc[:ci_size])
-        writer.write_small_value(misc[:stack_max])
+        # Use recomputed stack_max from IR when RECOMPUTE_STACK_MAX env var is set,
+        # or always for functions without a stored misc value (e.g. synthesized IR).
+        # For byte-identical round-trips, misc[:stack_max] takes precedence unless forced.
+        stack_max_val = if ENV["RECOMPUTE_STACK_MAX"] || misc[:stack_max].nil?
+          Codec::StackMax.compute(function)
+        else
+          misc[:stack_max]
+        end
+        writer.write_small_value(stack_max_val)
         writer.write_small_value(misc[:builtin_attrs])
         writer.write_small_value(misc[:prism])
 
