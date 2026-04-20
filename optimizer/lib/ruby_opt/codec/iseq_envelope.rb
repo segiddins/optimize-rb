@@ -6,6 +6,7 @@ require "ruby_opt/codec/binary_reader"
 require "ruby_opt/codec/binary_writer"
 require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/catch_table"
+require "ruby_opt/codec/line_info"
 
 module RubyOpt
   module Codec
@@ -248,6 +249,22 @@ module RubyOpt
           catch_entries = CatchTable.decode(ct_reader, catch_table_size, slot_to_inst)
         end
 
+        # Decode the insns_info (line info) table into IR::LineEntry objects.
+        # CRuby splits this into two sections:
+        #   - body section (insns_body_abs): N × (line_no, node_id, events) — absolute small_values
+        #   - positions section (insns_pos_abs): N × pos_delta — delta-encoded slot positions
+        line_entries = nil
+        if insns_info_size > 0 && insns_body_abs && insns_pos_abs
+          slot_to_inst     = InstructionStream.slot_map(instructions)
+          inst_to_slot     = InstructionStream.inst_to_slot_map(instructions)
+          slot_to_containing = InstructionStream.slot_to_containing_inst_map(instructions)
+          body_reader = BinaryReader.new(binary)
+          body_reader.seek(insns_body_abs)
+          pos_reader = BinaryReader.new(binary)
+          pos_reader.seek(insns_pos_abs)
+          line_entries = LineInfo.decode(body_reader, pos_reader, insns_info_size, slot_to_inst, slot_to_containing, inst_to_slot)
+        end
+
         # Build the IR::Function. children will be populated by the caller.
         IR::Function.new(
           name:          label.to_s,
@@ -260,6 +277,7 @@ module RubyOpt
           catch_table:   nil,   # raw bytes stored in misc if needed
           line_info:     nil,   # raw bytes stored in misc if needed
           catch_entries: catch_entries,
+          line_entries:  line_entries,
           instructions:  instructions,
           children:      [],
           misc:          misc,

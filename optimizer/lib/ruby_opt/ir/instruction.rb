@@ -19,6 +19,19 @@ module RubyOpt
       def to_s
         "#{opcode} #{operands.inspect}"
       end
+
+      # Use object identity for Hash keys and Set membership.
+      # IR instructions must be compared by identity (not by value) because the
+      # same logical opcode+operands combination can appear at multiple positions
+      # in a single iseq. Value-based equality would cause Hash collisions and
+      # incorrect slot lookups in inst_to_slot_map / catch_table / line_info.
+      def hash
+        object_id.hash
+      end
+
+      def eql?(other)
+        equal?(other)
+      end
     end
   end
 end

@@ -3,6 +3,7 @@
 require "ruby_opt/codec/iseq_envelope"
 require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/catch_table"
+require "ruby_opt/codec/line_info"
 require "ruby_opt/ir/function"
 
 module RubyOpt
@@ -150,13 +151,28 @@ module RubyOpt
             CatchTable.encode(ct_writer, catch_entries, inst_to_slot)
             new_ct_bytes = ct_writer.buffer
 
-            # Compute original byte size by reading the original bytes.
-            ct_region_offset = catch_table_abs - ISEQ_REGION_START
-            # The original catch table bytes run from catch_table_abs until the next section.
-            # We know the byte length of our re-encoded form; it must match.
-            original_ct_len = new_ct_bytes.bytesize  # We'll validate by comparing content.
             # Splice the re-encoded catch table into the region.
+            ct_region_offset = catch_table_abs - ISEQ_REGION_START
             region[ct_region_offset, new_ct_bytes.bytesize] = new_ct_bytes
+          end
+
+          # Re-encode the insns_info (line info) from IR::LineEntry objects (if present).
+          # CRuby stores this as two separate sections: body (line_no/node_id/events) and
+          # positions (delta-encoded slot positions).
+          line_entries = fn.line_entries
+          insns_body_abs = fn.misc[:insns_body_abs]
+          insns_pos_abs  = fn.misc[:insns_pos_abs]
+          insns_info_size = fn.misc[:insns_info_size]
+          if line_entries && insns_body_abs && insns_pos_abs && insns_info_size > 0
+            inst_to_slot = InstructionStream.inst_to_slot_map(fn.instructions)
+            body_writer = BinaryWriter.new
+            pos_writer  = BinaryWriter.new
+            LineInfo.encode(body_writer, pos_writer, line_entries, inst_to_slot)
+
+            body_region_offset = insns_body_abs - ISEQ_REGION_START
+            pos_region_offset  = insns_pos_abs  - ISEQ_REGION_START
+            region[body_region_offset, body_writer.buffer.bytesize] = body_writer.buffer
+            region[pos_region_offset,  pos_writer.buffer.bytesize]  = pos_writer.buffer
           end
         end
 

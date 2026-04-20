@@ -218,6 +218,26 @@ module RubyOpt
         map
       end
 
+      # Build a slot → IR::Instruction map that covers every YARV slot within each
+      # instruction's range (not just the instruction start slot). This is used to
+      # decode insns_info entries that point to mid-instruction slots ("adjust" entries).
+      #
+      # @param instructions [Array<IR::Instruction>]
+      # @return [Hash{Integer=>IR::Instruction}] YARV slot → instruction (any slot in range)
+      def self.slot_to_containing_inst_map(instructions)
+        map = {}
+        slot = 0
+        instructions.each do |insn|
+          opcode_num = NAME_TO_OPCODE[insn.opcode]
+          raise "Unknown opcode name: #{insn.opcode.inspect}" unless opcode_num
+          _name, op_types = OPCODE_TO_INFO[opcode_num]
+          size = slots_for(op_types)
+          size.times { |i| map[slot + i] = insn }
+          slot += size
+        end
+        map
+      end
+
       # Build an IR::Instruction → slot map (reverse of slot_map).
       #
       # @param instructions [Array<IR::Instruction>]

@@ -383,5 +383,24 @@ numbers happen to match. This is by design: the format is an internal cache, not
 - **`node_id` in insns_info**: conditionally compiled with `USE_ISEQ_NODE_ID`; present in Ruby 4.0.2
   release builds but technically platform-dependent. Each insns_info entry is
   (line_no, node_id, events) when enabled.
+- **insns_info serialization — two sections**: CRuby splits insns_info into two separate data
+  sections (not one):
+  - **body** (`insns_info_body_offset_rel`): `N × (line_no, node_id, events)` — each field is an
+    absolute small_value (no delta encoding on line_no or node_id).
+  - **positions** (`insns_info_positions_offset_rel`): `N × pos_delta` — delta-encoded YARV slot
+    positions. The first delta is relative to 0; each subsequent delta is relative to the previous
+    entry's slot position. All deltas are non-negative (positions are strictly non-decreasing).
+  - Body section always precedes positions section in the data region (empirically verified for
+    Ruby 4.0.2). The two sections are adjacent: `insns_body_abs + 3*N_bytes == insns_pos_abs`.
+  - **Adjust entries**: CRuby occasionally emits insns_info entries whose slot position falls
+    inside an instruction's operand VALUE slots (not at the instruction's own opcode slot). These
+    are "adjust" entries emitted by `add_adjust_info`. The slot position is still a valid YARV slot
+    index but does not correspond to any instruction's first slot. Empirically observed in
+    `invokeblock` (opcode 69, `[:CALLDATA, :NUM]`, 3 YARV slots): an adjust entry can point to
+    the NUM operand slot (offset +2 from the opcode slot). The decoder must handle these by mapping
+    to the containing instruction plus an intra-instruction offset.
+  - **No signed values**: neither line_no deltas nor node_id values use CRuby's signed small_value
+    encoding in practice. line_no and node_id are stored as raw absolute unsigned small_values.
+    (The sketch in the implementation plan suggesting signed deltas for line_no is incorrect.)
 - **BDIGIT size**: platform-dependent (32 or 64 bits). Bignum round-trips correctly only between
   same-BDIGIT builds; no explicit BDIGIT size is recorded in the header.
