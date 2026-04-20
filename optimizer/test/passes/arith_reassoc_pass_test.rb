@@ -122,6 +122,40 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal :opt_plus, f.instructions[second_get + 3].opcode
   end
 
+  def test_logs_reassociated_on_success
+    src = "def f(x); x + 1 + 2 + 3; end; f(10)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: log, object_table: ot)
+    entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :reassociated }
+    assert_operator entries.size, :>=, 1
+  end
+
+  def test_logs_mixed_literal_types_when_chain_has_non_integer_literal
+    src = 'def f(x); x + "a" + 2; end; f("z")'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    assert_equal before, f.instructions.map(&:opcode)
+    entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :mixed_literal_types }
+    assert_operator entries.size, :>=, 1
+  end
+
+  def test_logs_chain_too_short_when_only_one_integer_literal
+    src = "def f(x, y); x + 1 + y; end; f(10, 20)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :chain_too_short }
+    assert_operator entries.size, :>=, 1
+  end
+
   private
 
   def find_iseq(ir, name)

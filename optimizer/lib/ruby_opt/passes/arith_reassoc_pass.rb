@@ -122,8 +122,18 @@ module RubyOpt
         non_integer_literals = literal_values.reject { |v| v.is_a?(Integer) }
         non_literals = classified.reject { |_, _, is_lit| is_lit }.map(&:first)
 
-        return false unless non_integer_literals.empty?
-        return false if integer_literals.size < 2
+        chain_line = insts[chain[:opt_plus_indices].first].line || function.first_lineno
+
+        unless non_integer_literals.empty?
+          log.skip(pass: :arith_reassoc, reason: :mixed_literal_types,
+                   file: function.path, line: chain_line)
+          return false
+        end
+        if integer_literals.size < 2
+          log.skip(pass: :arith_reassoc, reason: :chain_too_short,
+                   file: function.path, line: chain_line)
+          return false
+        end
 
         sum = integer_literals.inject(0, :+)
         first_opt_plus = insts[chain[:opt_plus_indices].first]
@@ -141,6 +151,8 @@ module RubyOpt
         length = chain[:end_idx] - chain[:first_idx] + 1
         insts[start, length] = replacement
         function.invalidate_cfg
+        log.skip(pass: :arith_reassoc, reason: :reassociated,
+                 file: function.path, line: chain_line)
         true
       end
     end
