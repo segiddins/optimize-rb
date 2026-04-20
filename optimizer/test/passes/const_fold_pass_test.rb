@@ -39,6 +39,33 @@ class ConstFoldPassTest < Minitest::Test
     assert_equal before, f.instructions.map(&:opcode)
   end
 
+  def test_folds_integer_comparison_to_boolean
+    ir = RubyOpt::Codec.decode(
+      RubyVM::InstructionSequence.compile("def f; 5 < 10; end; f").to_binary
+    )
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    folded = f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true }
+    refute_nil folded
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal true, loaded.eval
+  end
+
+  def test_folds_integer_equality
+    ir = RubyOpt::Codec.decode(
+      RubyVM::InstructionSequence.compile("def f; 5 == 5; end; def g; 5 == 6; end").to_binary
+    )
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    g = find_iseq(ir, "g")
+    pass = RubyOpt::Passes::ConstFoldPass.new
+    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    pass.apply(g, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true })
+    assert(g.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == false })
+  end
+
   private
 
   def find_iseq(ir, name)

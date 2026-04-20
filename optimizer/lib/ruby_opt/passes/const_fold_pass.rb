@@ -5,12 +5,18 @@ require "ruby_opt/passes/literal_value"
 module RubyOpt
   module Passes
     class ConstFoldPass < RubyOpt::Pass
-      ARITH_OPS = {
+      FOLDABLE_OPS = {
         opt_plus:  :+,
         opt_minus: :-,
         opt_mult:  :*,
         opt_div:   :/,
         opt_mod:   :%,
+        opt_lt:    :<,
+        opt_le:    :<=,
+        opt_gt:    :>,
+        opt_ge:    :>=,
+        opt_eq:    :==,
+        opt_neq:   :"!=",
       }.freeze
 
       def apply(function, type_env:, log:, object_table: nil)
@@ -24,7 +30,7 @@ module RubyOpt
           a  = insts[i]
           b  = insts[i + 1]
           op = insts[i + 2]
-          new_inst = try_fold_arith(a, b, op, function, log, object_table)
+          new_inst = try_fold_triple(a, b, op, function, log, object_table)
           if new_inst
             # Safe: the two removed instructions are `putobject`-family literal
             # producers — neither is ever a branch target, so absolute-index
@@ -43,8 +49,8 @@ module RubyOpt
 
       private
 
-      def try_fold_arith(a, b, op, function, log, object_table)
-        sym = ARITH_OPS[op.opcode]
+      def try_fold_triple(a, b, op, function, log, object_table)
+        sym = FOLDABLE_OPS[op.opcode]
         return nil unless sym
         av = LiteralValue.read(a, object_table: object_table)
         bv = LiteralValue.read(b, object_table: object_table)
