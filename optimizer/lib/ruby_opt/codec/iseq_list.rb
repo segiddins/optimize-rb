@@ -44,10 +44,9 @@ module RubyOpt
       # Absolute byte offset where the iseq data region begins in the binary.
       ISEQ_REGION_START = 40
 
-      def initialize(functions, root, raw_iseq_region, raw_offset_array, object_table, raw_trailing = "".b)
+      def initialize(functions, root, raw_offset_array, object_table, raw_trailing = "".b)
         @functions         = functions
         @root              = root
-        @raw_iseq_region   = raw_iseq_region   # bytes from pos 40 to iseq_list_offset (exclusive)
         @raw_offset_array  = raw_offset_array  # iseq_list_size × 4 bytes
         @object_table      = object_table
         @raw_trailing      = raw_trailing      # trailing bytes after last body record (before list_offset)
@@ -62,11 +61,6 @@ module RubyOpt
       def self.decode(binary, header, object_table)
         iseq_count  = header.iseq_list_size
         list_offset = header.iseq_list_offset
-
-        # Capture raw bytes: iseq data region (from pos 40 to list_offset).
-        iseq_region_start = 40
-        iseq_region_len   = list_offset - iseq_region_start
-        raw_iseq_region   = binary.byteslice(iseq_region_start, iseq_region_len)
 
         # Capture raw offset array bytes.
         raw_offset_array  = binary.byteslice(list_offset, iseq_count * 4)
@@ -103,7 +97,7 @@ module RubyOpt
         # After emit_section for non-bytecode sections, content_end advances by the FULL raw
         # size (abs + raw.bytesize), so the next section's pad_len calculation is 0 (the pad
         # is already embedded at the tail of the current section's raw blob).
-        prev_end = iseq_region_start   # byte offset where previous function's data ended
+        prev_end = ISEQ_REGION_START   # byte offset where previous function's data ended
         body_offsets.each_with_index do |body_offset, idx|
           fn   = all_functions[idx]
           misc = fn.misc
@@ -200,7 +194,7 @@ module RubyOpt
         # Convention: iseq-list index 0 is always the outermost iseq.
         root = all_functions[0]
 
-        new(all_functions, root, raw_iseq_region, raw_offset_array, object_table, raw_trailing)
+        new(all_functions, root, raw_offset_array, object_table, raw_trailing)
       end
 
       # Encode the iseq list into +writer+.
@@ -257,6 +251,7 @@ module RubyOpt
             # Emit section content (block writes to writer and returns content bytes).
             content_bytes = block.call
 
+            # ROUND-TRIP ONLY: zero-pad IR content to raw size; real length changes will fail the fresh body-offset assertion downstream.
             # Emit trailing zero bytes to match original raw size.
             # For bytecode the raw is exact (no trailing pad).
             # For other sections the raw includes alignment zeros before next section.
@@ -303,9 +298,8 @@ module RubyOpt
 
           # 2. opt_table (IR-encoded; VALUE[] entries; raw may include trailing pad to next section).
           # NOTE: If fn.arg_positions == nil (no positional optional args), we cannot re-encode
-          # from IR. This can happen when misc[:opt_table_abs] is non-nil due to a decoded
-          # field that isn't actually an opt_table (e.g., misaligned kw offset in the body
-          # record). In that case, fall back to writing original_raw verbatim.
+          # from IR. For keyword-only iseqs (param_opt_num == 0) arg_positions is nil but
+          # opt_table_abs may still be set; emit the raw slice to preserve round-trip.
           emit_section.call(:opt_table, :opt_table_abs) do
             arg_positions = fn.arg_positions
             if arg_positions && inst_to_slot
@@ -328,16 +322,24 @@ module RubyOpt
             raw
           end
 
+          # Pre-compute LineInfo.encode once per function (when line_entries are present).
+          line_entries    = fn.line_entries
+          insns_info_size = misc[:insns_info_size]
+          line_body_bytes = nil
+          line_pos_bytes  = nil
+          if line_entries && insns_info_size && insns_info_size > 0 && inst_to_slot
+            body_writer = BinaryWriter.new
+            pos_writer  = BinaryWriter.new
+            LineInfo.encode(body_writer, pos_writer, line_entries, inst_to_slot)
+            line_body_bytes = body_writer.buffer
+            line_pos_bytes  = pos_writer.buffer
+          end
+
           # 4. insns_info body (IR-encoded; raw may include trailing pad)
           emit_section.call(:insns_body, :insns_body_abs) do
-            line_entries    = fn.line_entries
-            insns_info_size = misc[:insns_info_size]
-            if line_entries && insns_info_size && insns_info_size > 0 && inst_to_slot
-              body_writer = BinaryWriter.new
-              pos_writer  = BinaryWriter.new
-              LineInfo.encode(body_writer, pos_writer, line_entries, inst_to_slot)
-              writer.write_bytes(body_writer.buffer)
-              body_writer.buffer
+            if line_body_bytes
+              writer.write_bytes(line_body_bytes)
+              line_body_bytes
             else
               "".b
             end
@@ -345,14 +347,9 @@ module RubyOpt
 
           # 5. insns_info positions (IR-encoded; re-encode to get pos bytes)
           emit_section.call(:insns_pos, :insns_pos_abs) do
-            line_entries    = fn.line_entries
-            insns_info_size = misc[:insns_info_size]
-            if line_entries && insns_info_size && insns_info_size > 0 && inst_to_slot
-              body_writer2 = BinaryWriter.new
-              pos_writer2  = BinaryWriter.new
-              LineInfo.encode(body_writer2, pos_writer2, line_entries, inst_to_slot)
-              writer.write_bytes(pos_writer2.buffer)
-              pos_writer2.buffer
+            if line_pos_bytes
+              writer.write_bytes(line_pos_bytes)
+              line_pos_bytes
             else
               "".b
             end
