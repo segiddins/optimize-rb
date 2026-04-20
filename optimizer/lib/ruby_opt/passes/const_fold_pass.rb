@@ -66,10 +66,27 @@ module RubyOpt
         return nil unless sym
         av = LiteralValue.read(a, object_table: object_table)
         bv = LiteralValue.read(b, object_table: object_table)
-        return nil unless av.is_a?(Integer) && bv.is_a?(Integer)
+
+        # Only fold Integer-on-Integer. A triple that LOOKS foldable but has at
+        # least one non-Integer literal gets a log entry so the talk can show it.
+        # A triple where one side isn't a literal at all (read -> nil) is silent —
+        # it's the common "variable + literal" case.
+        unless av.is_a?(Integer) && bv.is_a?(Integer)
+          both_literals = !av.nil? && !bv.nil?
+          if both_literals
+            log.skip(pass: :const_fold, reason: :non_integer_literal,
+                     file: function.path, line: (op.line || a.line || function.first_lineno))
+          end
+          return nil
+        end
+
         result = av.public_send(sym, bv)
+        log.skip(pass: :const_fold, reason: :folded,
+                 file: function.path, line: (op.line || a.line || function.first_lineno))
         LiteralValue.emit(result, line: a.line, object_table: object_table)
       rescue ZeroDivisionError
+        log.skip(pass: :const_fold, reason: :would_raise,
+                 file: function.path, line: (op.line || a.line || function.first_lineno))
         nil # would raise at runtime — leave the triple alone
       end
     end

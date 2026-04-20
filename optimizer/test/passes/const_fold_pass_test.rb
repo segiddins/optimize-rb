@@ -96,6 +96,47 @@ class ConstFoldPassTest < Minitest::Test
     assert_equal 20, loaded.eval  # 3 + 10 + 3 + 4 == 20
   end
 
+  def test_logs_folded_reason_for_each_successful_fold
+    src = "def f; 1 + 2 + 3; end; f"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ConstFoldPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: log, object_table: ot)
+    folded_entries = log.for_pass(:const_fold).select { |e| e.reason == :folded }
+    # 1+2 -> 3, then 3+3 -> 6 (folded triples in sequence)
+    assert_operator folded_entries.size, :>=, 2
+  end
+
+  def test_logs_would_raise_for_division_by_zero
+    src = "def f; 1 / 0; end"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    # The triple is left alone.
+    assert_equal before, f.instructions.map(&:opcode)
+    skipped = log.for_pass(:const_fold).select { |e| e.reason == :would_raise }
+    assert_operator skipped.size, :>=, 1, "expected a :would_raise skip entry"
+  end
+
+  def test_logs_non_integer_literal_when_float_operand_reaches_an_arith_op
+    # NOTE: this test originally targeted `"a" + "b"`, but YARV emits
+    # string literals as `putchilledstring`, which `LiteralValue.read`
+    # treats as non-literal (returns nil). Floats use `putobject`, so
+    # both operands read as literals but neither is an Integer — exactly
+    # the case the :non_integer_literal log entry is meant to cover.
+    src = "def f; 1.0 + 2.0; end"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    skipped = log.for_pass(:const_fold).select { |e| e.reason == :non_integer_literal }
+    assert_operator skipped.size, :>=, 1
+  end
+
   private
 
   def find_iseq(ir, name)
