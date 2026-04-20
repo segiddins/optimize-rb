@@ -26,6 +26,9 @@ module RubyOpt
           op = insts[i + 2]
           new_inst = try_fold_arith(a, b, op, function, log, object_table)
           if new_inst
+            # Safe: the two removed instructions are `putobject`-family literal
+            # producers — neither is ever a branch target, so absolute-index
+            # offsets in the (unshifted) earlier instructions remain valid.
             insts[i, 3] = [new_inst]
             # Step back so we recheck at `i-1` in case the previous
             # instruction is now the first of a new foldable triple.
@@ -48,7 +51,7 @@ module RubyOpt
         return nil unless av.is_a?(Integer) && bv.is_a?(Integer)
         result = av.public_send(sym, bv)
         LiteralValue.emit(result, line: a.line, object_table: object_table)
-      rescue StandardError
+      rescue ZeroDivisionError
         nil # would raise at runtime — leave the triple alone
       end
     end
