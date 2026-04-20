@@ -126,10 +126,13 @@ module RubyOpt
       # absolute positions that all shift by the same delta.
       iseq_list_delta = fresh_iseq_list_offset - header.iseq_list_offset
 
-      object_table.encode(writer, iseq_list_delta: iseq_list_delta)
+      fresh_object_list_offset_from_encode =
+        object_table.encode(writer, iseq_list_delta: iseq_list_delta)
 
       fresh_total_size = writer.pos
-      fresh_object_list_offset = header.global_object_list_offset + iseq_list_delta
+      fresh_object_list_offset =
+        fresh_object_list_offset_from_encode ||
+          (header.global_object_list_offset + iseq_list_delta)
 
       # Patch the three header fields that depend on layout.
       # Header layout: size@12(4 bytes), iseq_list_offset@28(4 bytes),
@@ -138,6 +141,12 @@ module RubyOpt
       buf[12, 4] = [fresh_total_size].pack("V")
       buf[28, 4] = [fresh_iseq_list_offset].pack("V")
       buf[32, 4] = [fresh_object_list_offset].pack("V")
+
+      appended = object_table.appended_count
+      if appended.positive?
+        fresh_object_list_size = header.global_object_list_size + appended
+        buf[24, 4] = [fresh_object_list_size].pack("V")
+      end
 
       buf
     end

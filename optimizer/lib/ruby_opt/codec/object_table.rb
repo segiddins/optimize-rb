@@ -133,23 +133,115 @@ module RubyOpt
       # @param iseq_list_delta [Integer] byte delta applied to all absolute offsets in the
       #   object offset array. 0 for unmodified IR (byte-identical round-trip).
       def encode(writer, iseq_list_delta: 0)
-        if iseq_list_delta == 0 || @obj_list_size == 0
+        no_appends = @appended.nil? || @appended.empty?
+        if (iseq_list_delta == 0 || @obj_list_size == 0) && no_appends
           # Fast path: byte-identical.
           writer.write_bytes(@raw_object_region)
+          return nil
         else
           # Write object payload bytes verbatim (everything before the offset array).
           writer.write_bytes(@raw_object_region.byteslice(0, @obj_list_offset_in_region))
-          # Patch each u32 in the offset array by adding iseq_list_delta.
+
+          # Append payloads for any newly interned objects, recording their absolute
+          # positions so we can write them into the offset array below.
+          appended_offsets = []
+          (@appended || []).each do |value|
+            appended_offsets << writer.pos
+            write_special_const(writer, value)
+          end
+
+          # The object offset array must be 4-byte aligned (ibf_dump_align uses
+          # sizeof(ibf_offset_t) = 4). Pad after appended payloads if needed.
+          writer.align_to(4)
+
+          # Capture the absolute position where the offset array begins in the new buffer.
+          fresh_obj_list_offset = writer.pos
+
+          # Patch each u32 in the original offset array by adding iseq_list_delta.
           @obj_list_size.times do |i|
             orig = @raw_object_region.byteslice(@obj_list_offset_in_region + i * 4, 4).unpack1("V")
             writer.write_bytes([orig + iseq_list_delta].pack("V"))
           end
+
+          # Write the new offset array entries. These are already absolute
+          # positions in the NEW buffer (writer.pos accounts for the fresh
+          # iseq region size), so no iseq_list_delta patch is needed.
+          appended_offsets.each do |abs_pos|
+            writer.write_bytes([abs_pos].pack("V"))
+          end
+
           # Any trailing bytes after the offset array (if any).
           trail_start = @obj_list_offset_in_region + @obj_list_size * 4
           trail = @raw_object_region.byteslice(trail_start, @raw_object_region.bytesize - trail_start)
           writer.write_bytes(trail) if trail && !trail.empty?
+          return fresh_obj_list_offset
         end
       end
+
+      # Find an existing index in the object table whose stored value equals +value+
+      # (compared by both == and class so true does not collide with 1, etc.).
+      # @return [Integer, nil]
+      def index_for(value)
+        @objects.index { |o| o == value && o.class == value.class }
+      end
+
+      # Return the index of +value+ in the table, appending it if absent.
+      # Only special-const values are supported (Integer fixnum, true, false, nil).
+      # The new payload is emitted at encode time; the offset array is regrown there.
+      # @return [Integer]
+      def intern(value)
+        existing = index_for(value)
+        return existing if existing
+
+        unless special_const?(value)
+          raise ArgumentError, "ObjectTable#intern only supports special-const values (Integer/true/false/nil), got #{value.inspect}"
+        end
+
+        new_idx = @objects.size
+        @objects << value
+        @appended ||= []
+        @appended << value
+        new_idx
+      end
+
+      # Number of newly-interned objects pending append on the next encode.
+      # @return [Integer]
+      def appended_count
+        (@appended || []).size
+      end
+
+      private
+
+      def special_const?(value)
+        case value
+        when Integer
+          # Conservatively only fixnum-shaped integers; CRuby fixnum range on 64-bit
+          # is roughly [-(1<<62), (1<<62)-1]. We're far inside that for tier-1 folds.
+          value.bit_length < 62
+        when true, false, nil
+          true
+        else
+          false
+        end
+      end
+
+      # Write one special-const object payload (1-byte header + 1 small_value VALUE).
+      def write_special_const(writer, value)
+        # header: type=0, special_const=1 (bit 5), frozen=1 (bit 6) → 0x60
+        writer.write_u8(0x60)
+        encoded =
+          case value
+          when true  then QTRUE
+          when false then QFALSE
+          when nil   then QNIL
+          when Integer then (value << 1) | 1
+          else
+            raise ArgumentError, "cannot encode #{value.inspect} as special_const"
+          end
+        writer.write_small_value(encoded)
+      end
+
+      public
 
       private
 
