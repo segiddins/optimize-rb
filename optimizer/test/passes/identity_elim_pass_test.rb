@@ -115,6 +115,23 @@ class IdentityElimPassTest < Minitest::Test
     assert_equal first, second
   end
 
+  def test_pipeline_collapses_v4_boundary_fully
+    require "ruby_opt/pipeline"
+    src = "def f(x); 2 * 3 / 6 * x; end; f(42)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    RubyOpt::Pipeline.default.run(ir, type_env: nil)
+    f = find_iseq(ir, "f")
+
+    remaining_arith = f.instructions.count { |i|
+      IDENTITY_ARITH_OPCODES.include?(i.opcode)
+    }
+    assert_equal 0, remaining_arith,
+      "expected no arith opcodes after pipeline; got #{f.instructions.map(&:opcode).inspect}"
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 42, loaded.eval
+  end
+
   private
 
   def assert_collapses_to_x(src, result:)

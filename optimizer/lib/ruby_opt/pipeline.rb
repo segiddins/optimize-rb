@@ -2,11 +2,12 @@
 require "ruby_opt/log"
 require "ruby_opt/passes/arith_reassoc_pass"
 require "ruby_opt/passes/const_fold_pass"
+require "ruby_opt/passes/identity_elim_pass"
 
 module RubyOpt
   class Pipeline
     def self.default
-      new([Passes::ArithReassocPass.new, Passes::ConstFoldPass.new])
+      new([Passes::ArithReassocPass.new, Passes::ConstFoldPass.new, Passes::IdentityElimPass.new])
     end
 
     def initialize(passes)
