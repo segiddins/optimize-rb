@@ -202,14 +202,12 @@ module RubyOpt
         emitted = []
         acc = nil
         acc_op = nil
-        acc_inst = nil
 
         commit = lambda do
           next if acc.nil?
-          emitted << { op: acc_op, value: acc, is_literal: true, inst: nil, committed: true }
+          emitted << { op: acc_op, value: acc, inst: nil }
           acc = nil
           acc_op = nil
-          acc_inst = nil
         end
 
         stream.each do |e|
@@ -217,7 +215,6 @@ module RubyOpt
             if acc.nil?
               acc = e[:value]
               acc_op = e[:op]
-              acc_inst = e[:inst]
             elsif acc_op == e[:op]
               # Same-op literal run: multiply into the accumulator.
               acc = acc * e[:value]
@@ -226,7 +223,6 @@ module RubyOpt
               commit.call
               acc = e[:value]
               acc_op = e[:op]
-              acc_inst = e[:inst]
             end
           else
             # Non-literal. If the op matches the current accumulator's op,
@@ -236,13 +232,13 @@ module RubyOpt
             if !acc.nil? && acc_op != e[:op]
               commit.call
             end
-            emitted << e.merge(committed: false)
+            emitted << e
           end
         end
         commit.call
 
-        # Fits-intern check on every committed literal.
-        if emitted.any? { |e| e[:committed] && !fits_intern_range?(e[:value]) }
+        # Fits-intern check on every committed literal (inst: nil entries).
+        if emitted.any? { |e| e[:inst].nil? && !fits_intern_range?(e[:value]) }
           log.skip(pass: :arith_reassoc, reason: :would_exceed_intern_range,
                    file: function.path, line: chain_line)
           return false
@@ -251,7 +247,7 @@ module RubyOpt
         # No-change check: if we emitted the same number of literals as we
         # started with, nothing folded — preserve idempotence.
         input_literal_count  = stream.count  { |e| e[:is_literal] }
-        output_literal_count = emitted.count { |e| e[:is_literal] }
+        output_literal_count = emitted.count { |e| e[:inst].nil? }
         if input_literal_count == output_literal_count
           log.skip(pass: :arith_reassoc, reason: :no_change,
                    file: function.path, line: chain_line)
@@ -261,11 +257,13 @@ module RubyOpt
         first_op_inst = insts[chain[:op_positions].first[:idx]]
 
         # Emit. The leading entry's op is implicit (just the push). Every
-        # subsequent entry emits `push; op`.
+        # subsequent entry emits `push; op`. Committed literals have inst: nil
+        # and are reconstructed via LiteralValue.emit; non-literals carry the
+        # original inst.
         replacement = []
         emitted.each_with_index do |e, idx|
           push_inst =
-            if e[:committed]
+            if e[:inst].nil?
               LiteralValue.emit(e[:value], line: first_op_inst.line, object_table: object_table)
             else
               e[:inst]
