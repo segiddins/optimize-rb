@@ -4,13 +4,13 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-21 (after IdentityElimPass v1).
+Last updated: 2026-04-21 (after InliningPass v1).
 
 ## Three-pass plan: status
 
 | Pass | Original scope | Shipped | Remaining |
 |---|---|---|---|
-| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | **nothing** | entire pass |
+| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1: zero-arg FCALL inline of constant-body callees (no locals, no branches, no catch, no nested sends) | args, receivers via RBS, wrapper flattening, CFG splicing |
 | Arithmetic specialization | Reassoc of `+ - * / %` chains under "no BOP redef"; RBS-typed operands; sub-chain folding; post-inlining collapse | ArithReassoc v1–v4 (`opt_plus`, `opt_mult`, `opt_minus`, `opt_div`) + IdentityElim v1. **Literal-only operands, no RBS typing.** | `opt_mod`; true Integer-typed operand proofs; post-inlining demo |
 | Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). | Tier 2 (frozen top-level constants), Tier 3 proper (RBS-typed identities), Tier 4 (ENV folding) |
 
@@ -30,9 +30,11 @@ Last updated: 2026-04-21 (after IdentityElimPass v1).
 
 ## Roadmap gap, ranked by talk-ROI
 
-1. **Inlining pass.** The enabling pass for the original narrative.
-   Without it, the "often only exposed *after* inlining" const-fold
-   slide doesn't land.
+1. **Inlining v2 — one-arg FCALL with local-table growth.** v1 shipped
+   (zero-arg, constant-body). v2 unblocks the wrapper-flattening demo
+   and requires `local_table` codec extension to allocate a caller-side
+   slot for the passed arg. The "often only exposed *after* inlining"
+   const-fold slide still wants v2 to fully land.
 2. **RBS type environment.** Prerequisite for "sound in principle"
    across every pass and for the object-y demo. Big spec on its own
    (~option F in the session-ladder history).
@@ -61,6 +63,10 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
 - **ArithReassocPass helper extraction.** The `:abelian` and `:ordered`
   kind branches duplicate a ~10-line prologue. Worth extracting if a
   third kind lands.
+- **InliningPass v2** — one-arg FCALL inline with caller local-table
+  extension for arg passing; prerequisite for wrapper flattening. Needs
+  codec work: growing `local_table` bytes, updating `local_table_size`
+  in `misc`, stack_max recomputation for the additional setlocal.
 
 ## Known bugs / blockers
 
