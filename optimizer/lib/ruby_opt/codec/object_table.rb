@@ -251,8 +251,12 @@ module RubyOpt
       def self.decode_special_const(reader)
         value = reader.read_small_value
         if value & 1 == 1
-          # Fixnum: VALUE = (n << 1) | 1
-          value >> 1
+          # Fixnum: VALUE = (n << 1) | 1. The VALUE was stored as an unsigned
+          # 64-bit integer; interpret it as signed before shifting so that
+          # negative fixnums (e.g. -6 → VALUE 0xFFFF_FFFF_FFFF_FFF5) decode
+          # correctly. Values with bit 63 set are negative CRuby fixnums.
+          signed = value >= (1 << 63) ? value - (1 << 64) : value
+          signed >> 1
         elsif value == QNIL
           nil
         elsif value == QTRUE
@@ -430,7 +434,11 @@ module RubyOpt
           when true  then QTRUE
           when false then QFALSE
           when nil   then QNIL
-          when Integer then (value << 1) | 1
+          when Integer
+            # CRuby VALUE for fixnum: (n << 1) | 1. For negative n this is a
+            # negative signed 64-bit integer; mask to unsigned so write_small_value
+            # (which only accepts non-negative) can use the 9-byte uint64 path.
+            ((value << 1) | 1) & 0xFFFF_FFFF_FFFF_FFFF
           else
             raise ArgumentError, "cannot encode #{value.inspect} as special_const"
           end

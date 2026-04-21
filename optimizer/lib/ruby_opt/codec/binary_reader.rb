@@ -49,8 +49,10 @@ module RubyOpt
       def read_small_value
         b0 = read_u8
         if b0 == 0
-          # 9-byte form: full uint64 in next 8 bytes (little-endian)
-          read_bytes(8).unpack1("Q<")
+          # 9-byte form: full uint64 in next 8 bytes (big-endian).
+          # ibf_dump_small_value uses the same "value = (value << 8) | byte[i]"
+          # algorithm for all multi-byte forms, including the 9-byte case.
+          read_bytes(8).unpack1("Q>")
         else
           # Count trailing zero bits of b0 to determine total byte count
           n = 0

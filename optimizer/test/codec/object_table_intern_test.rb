@@ -62,4 +62,15 @@ class ObjectTableInternTest < Minitest::Test
     ir = RubyOpt::Codec.decode(original)
     assert_equal original, RubyOpt::Codec.encode(ir)
   end
+
+  def test_intern_negative_integer_round_trips
+    src = "def f; 2 + 3; end; f"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    idx = ot.intern(-6)
+    assert_equal(-6, ot.objects[idx])
+    modified = RubyOpt::Codec.encode(ir)
+    loaded = RubyVM::InstructionSequence.load_from_binary(modified)
+    assert_kind_of RubyVM::InstructionSequence, loaded
+  end
 end

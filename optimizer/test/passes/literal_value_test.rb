@@ -117,6 +117,17 @@ class LiteralValueTest < Minitest::Test
     assert_equal false, RubyOpt::Passes::LiteralValue.read(f, object_table: ot)
   end
 
+  def test_emit_negative_integer_is_readable
+    ir = RubyOpt::Codec.decode(
+      RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
+    )
+    ot = ir.misc[:object_table]
+    inst = RubyOpt::Passes::LiteralValue.emit(-6, line: 7, object_table: ot)
+    assert_equal :putobject, inst.opcode
+    assert_equal(-6, ot.objects[inst.operands[0]])
+    assert_equal(-6, RubyOpt::Passes::LiteralValue.read(inst, object_table: ot))
+  end
+
   def test_emit_reuses_existing_index_when_value_already_in_table
     ir = RubyOpt::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary

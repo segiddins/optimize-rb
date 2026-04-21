@@ -55,8 +55,10 @@ module RubyOpt
           b0 = ((value >> 24) << 4) | 8
           @buffer << [b0, b1, b2, b3].pack("CCCC")
         else
-          # 9-byte form for large values
-          @buffer << "\x00".b << [value].pack("Q<")
+          # 9-byte form for large values: full uint64 big-endian
+          # (ibf_dump_small_value uses the same big-endian shift algorithm as the
+          # general case: "value = (value << 8) | byte[i]" for i in [1..8)).
+          @buffer << "\x00".b << [value].pack("Q>")
         end
       end
 
