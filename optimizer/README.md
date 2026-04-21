@@ -27,18 +27,23 @@ Talk-artifact Ruby optimizer. Companion to
 ## Passes
 
 - `RubyOpt::Passes::ArithReassocPass` — arithmetic reassociation driven by
-  the `REASSOC_OPS` table. Two rows today: `opt_plus` (identity 0, reducer `:+`)
-  and `opt_mult` (identity 1, reducer `:*`). Collapses chains of one operator
-  within a basic block where ≥2 operands are Integer literals, keeping non-literal
-  operands in original order and emitting a single combined-literal tail. Reaches
-  shapes const-fold cannot: `x + 1 + 2 + 3` → `x + 6`, `x * 2 * 3 * 4` → `x * 24`.
-  Non-Integer literals, chains with <2 integer literals, and results that would
-  fall outside `ObjectTable#special_const?`'s intern range are left alone
-  (`:mixed_literal_types`, `:chain_too_short`, `:would_exceed_intern_range`).
-  An outer any-rewrite fixpoint wraps the per-operator inner fixpoints so a
-  mult rewrite can expose a `+` chain (e.g., `x + 2 * 3 + 4` → `x + 10`).
-  Mixed same-precedence chains (`+`/`-`, `*`/`/`) and `**` are out of scope;
-  see follow-up plans.
+  the `REASSOC_GROUPS` table. Two groups today: the additive group
+  (`opt_plus` identity 0, `opt_minus` with sign `-`, primary `opt_plus`) and
+  the multiplicative group (`opt_mult` identity 1, primary `opt_mult`).
+  Collapses chains within a single basic block where ≥2 operands are
+  Integer literals, partitions non-literal operands into `+`/`-` effective
+  signs (leading `+` first, trailing `-` second), and emits a single
+  combined-literal tail via the group's primary op. Reaches shapes
+  const-fold cannot: `x + 1 + 2 + 3` → `x + 6`, `x + 1 - 2 + 3` → `x + 2`,
+  `x * 2 * 3 * 4` → `x * 24`, `x + 1 - y + 2` → `x - y + 3`. Non-Integer
+  literals, chains with <2 integer literals, results that would exceed the
+  `ObjectTable#intern` range, and additive chains where all non-literals
+  have effective sign `-` are left alone (`:mixed_literal_types`,
+  `:chain_too_short`, `:would_exceed_intern_range`,
+  `:no_positive_nonliteral`). An outer any-rewrite fixpoint wraps the
+  per-group inner fixpoints so mult rewrites expose additive chains
+  (e.g., `x + 2 * 3 - 4` → `x + 2`). `**` and mixed-precedence chains with
+  `opt_div` are out of scope; see follow-up plans.
 - `RubyOpt::Passes::ConstFoldPass` — tier 1 constant folding. Folds
   Integer literal arithmetic (`+ - * / %`) and Integer literal
   comparison (`< <= > >= == !=`) triples within a basic block,
