@@ -182,6 +182,12 @@ module RubyOpt
         end
       end
 
+      # Resolve an object-table index to the stored value (Symbol for ID refs,
+      # frozen String for STRING entries, etc.). Used by IR::CallData#mid_symbol.
+      def resolve(index)
+        @objects[index]
+      end
+
       # Find an existing index in the object table whose stored value equals +value+
       # (compared by both == and class so true does not collide with 1, etc.).
       # @return [Integer, nil]

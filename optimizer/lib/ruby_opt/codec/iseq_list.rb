@@ -486,7 +486,12 @@ module RubyOpt
           # the body record legitimately differs (new bytecode_size, new relative offsets, new
           # iseq_size), so we skip the identity assertion and trust the fresh dro values.
           bytecode_size_changed = dro.key?(:bytecode_size) && dro[:bytecode_size] != misc[:bytecode_size]
-          unless bytecode_size_changed
+          # iseq_size (slot count) can change even when bytecode_size (byte count) is unchanged,
+          # e.g. when a length-changing IR edit replaces instructions whose small_value-encoded
+          # bytes happen to be equal length. Treat that as a legitimate change too.
+          iseq_size_changed = fn.instructions &&
+            InstructionStream.total_slots(fn.instructions) != misc[:iseq_size]
+          unless bytecode_size_changed || iseq_size_changed
             if emitted_body.bytesize != original_body.bytesize
               raise RuntimeError,
                 "body record size mismatch: iseq=#{fn.name} was=#{original_body.bytesize} got=#{emitted_body.bytesize}"
