@@ -94,8 +94,10 @@ For each `(op_k, p_k)`:
   - Else, if `acc_op == op_k` (same-op literal run — either `*` followed by `*`, or `/` followed by `/`) → `acc.value = acc.value * p_k.value`. (Note: for the `/`-run case, literal divisors coalesce into a single larger divisor via `*`, not via `/` — `(a/L1)/L2 = a/(L1·L2)`.)
   - Else (`*`/`/` boundary between two literals) → commit `(acc_op, acc)` to `emitted`, start new `acc = {value: p_k.value, line: p_k.line}`, `acc_op = op_k`.
 - **p_k is non-literal** (or a classified-out non-Integer, which would have been caught by the pre-scan):
-  - If `acc` is not `nil` → commit `(acc_op, acc)` to `emitted`. `acc = nil`.
+  - If `acc` is not `nil` and `acc_op != op_k` (this non-literal sits on the *other* side of a `*`/`/` boundary from the accumulator) → commit `(acc_op, acc)` to `emitted`, then `acc = nil`. Otherwise the accumulator survives: within a same-op run, literals freely commute past non-literals (sound by `*`-commutativity inside a pure-`*` sub-run; sound by the integer floor-div identity inside a pure-`/` sub-run, given the positive-literal guarantee from the pre-scan).
   - Append `(op_k, p_k)` to `emitted`.
+
+  **Why this rule, not "commit on every non-literal":** a stricter "commit on every non-literal" would fail to fold v2-compatible chains like `x * y * 2 * 3`, because the two `*`-literals sit on opposite sides of a `*`-non-literal. v2 commutes those literals through because `*` is abelian within a pure-`*` run. The same reasoning carries over here: inside a same-op sub-run the algebra is still abelian. The `*`/`/` boundary is the only place where order actually matters, and it's exactly where this rule forces a commit.
 
 After the walk: if `acc` is not `nil`, commit it.
 
@@ -130,7 +132,7 @@ This yields `push v_0; push v_1; op_1; push v_2; op_2; …` — the same "interl
 - Same-op `*`-run: `(a * L1) * L2 = a * (L1 * L2)` — standard associativity.
 - Same-op `/`-run: `(a / L1) / L2 = a / (L1 * L2)` when `L1, L2` are positive integers — standard integer floor-div identity, guaranteed by the `≤0` pre-scan.
 - `*`/`/` boundary between literals: `(a * L1) / L2` is emitted unchanged (`L1` and `L2` remain separate committed literals). No algebraic rewrite happens across the boundary.
-- Non-literal operands: always emitted in original position with their original op. The `:ordered` walker never commutes past a non-literal.
+- Non-literal operands: always emitted in original position with their original op. The `:ordered` walker never reorders non-literals. *Literals*, however, may commute past a non-literal when both sit inside the same same-op sub-run (e.g. `x * y * 2 * 3 → x * y * 6` folds the `2` and `3` past the `x * y` prefix). That motion is sound: `*` is abelian within a pure-`*` run, and `/` is right-associative-across-positive-literals within a pure-`/` run. The `*`/`/` boundary is the only place where order matters, and it's exactly where the walker forces a commit.
 
 **Two-level fixpoint.** Unchanged from v3. A successful `:ordered` rewrite strictly shrinks the literal count in the chain (same-op run of N literals collapses to 1), so termination is guaranteed by the existing argument. The `:no_change` bail handles the edge where `literal_count(emitted) == literal_count(stream)`.
 
