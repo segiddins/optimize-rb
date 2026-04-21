@@ -164,8 +164,8 @@ module RubyOpt
         end
 
         reduced = integer_literals.inject(op_spec[:identity], op_spec[:reducer])
-        unless fits_fixnum?(reduced)
-          log.skip(pass: :arith_reassoc, reason: :would_overflow_fixnum,
+        unless fits_intern_range?(reduced)
+          log.skip(pass: :arith_reassoc, reason: :would_exceed_intern_range,
                    file: function.path, line: chain_line)
           return false
         end
@@ -188,7 +188,7 @@ module RubyOpt
         true
       end
 
-      def fits_fixnum?(n)
+      def fits_intern_range?(n)
         n.is_a?(Integer) && n.bit_length < INTERN_BIT_LENGTH_LIMIT
       end
     end

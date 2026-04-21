@@ -86,7 +86,7 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal 6, loaded.eval
   end
 
-  def test_non_opt_plus_chains_are_now_handled_by_opt_mult
+  def test_opt_mult_basic_two_literal_fold_with_non_literal
     src = "def f(x); x * 2 * 3; end; f(4)"
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
@@ -278,7 +278,7 @@ class ArithReassocPassTest < Minitest::Test
     assert_operator entries.size, :>=, 1
   end
 
-  # ---- fixnum-overflow guard ----
+  # ---- intern-range overflow guard ----
 
   def test_product_that_overflows_intern_range_is_skipped
     # Two literals only (no foldable sub-chain). Product (1 << 62) has
@@ -293,7 +293,7 @@ class ArithReassocPassTest < Minitest::Test
 
     assert_equal before_opcodes, f.instructions.map(&:opcode),
       "overflow-guard should leave the chain untouched"
-    entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :would_overflow_fixnum }
+    entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :would_exceed_intern_range }
     assert_operator entries.size, :>=, 1
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal 1 << 62, loaded.eval
