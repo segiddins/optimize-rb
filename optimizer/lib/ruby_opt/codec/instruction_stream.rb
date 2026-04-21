@@ -281,8 +281,11 @@ module RubyOpt
       # @param bytes        [String]        raw bytecode bytes (ASCII-8BIT)
       # @param object_table [ObjectTable]   decoded global object table (for index resolution)
       # @param iseqs        [Array]         iseq-list array (for TS_ISEQ resolution)
+      # @param ci_entries   [Array<IR::CallData>] decoded ci_entries records for this iseq,
+      #   consumed in iteration order as CALLDATA operand slots are decoded.
       # @return [Array<IR::Instruction>]
-      def self.decode(bytes, object_table, iseqs)
+      def self.decode(bytes, object_table, iseqs, ci_entries: [])
+        ci = ci_entries.dup
         reader = BinaryReader.new(bytes)
         instructions = []
         # slot_to_insn_idx[slot] = instruction index; built as we decode.
@@ -309,27 +312,25 @@ module RubyOpt
           insn_slot_start = current_slot
           insn_slots << [insn_slot_start, op_types]
 
-          operand_idx = 0
-          operands = op_types.filter_map do |op_type|
+          # map (not filter_map): every op_type contributes one operand slot so
+          # operand indices line up with op_types. CALLDATA now carries the
+          # IR::CallData record directly at its slot.
+          operands = op_types.each_with_index.map do |op_type, op_idx|
             case op_type
             when :VALUE, :CDHASH, :ID, :ISEQ, :LINDEX, :NUM, :ISE, :IVC, :ICVARC, :IC
-              operand_idx += 1
               reader.read_small_value
             when :OFFSET
-              offset_operand_positions << [insn_idx, operand_idx]
-              operand_idx += 1
+              offset_operand_positions << [insn_idx, op_idx]
               reader.read_small_value  # raw relative offset; converted below
             when :CALLDATA
-              # TS_CALLDATA: nothing written in the bytecode stream.
-              # We store nil to mark where a calldata slot would be,
-              # but filter_map drops it (nil -> filtered out).
-              nil
+              # TS_CALLDATA: nothing in the bytecode stream, but we materialise
+              # one IR::CallData record from the per-iseq ci_entries list.
+              ci.shift or raise "InstructionStream.decode: ran out of ci_entries at insn #{opcode_sym}"
             when :BUILTIN
               # TS_BUILTIN: small_value index + small_value name_len + name bytes.
               idx = reader.read_small_value
               name_len = reader.read_small_value
               name_bytes = reader.read_bytes(name_len)
-              operand_idx += 1
               [idx, name_len, name_bytes]
             else
               raise "Unknown operand type #{op_type.inspect} for opcode #{opcode_sym}"
@@ -344,6 +345,8 @@ module RubyOpt
             line:     nil,
           )
         end
+
+        raise "InstructionStream.decode: #{ci.size} ci_entries unconsumed" unless ci.empty?
 
         # Convert OFFSET operands from YARV relative slot offsets to instruction indices.
         # The binary stores: OFFSET_raw = target_slot - next_insn_slot
@@ -372,8 +375,11 @@ module RubyOpt
       # @param instructions [Array<IR::Instruction>]
       # @param object_table [ObjectTable]  (unused in current identity encoding, reserved)
       # @param iseqs        [Array]        (unused in current identity encoding, reserved)
+      # @param ci_entries_out [Array<IR::CallData>] mutable array that this method
+      #   appends CALLDATA operands onto, in iteration order. The caller re-emits
+      #   the iseq's ci_entries section from this harvest.
       # @return [String] ASCII-8BIT bytecode bytes
-      def self.encode(instructions, object_table, iseqs)
+      def self.encode(instructions, object_table, iseqs, ci_entries_out: [])
         writer = BinaryWriter.new
 
         # Build instruction-index -> YARV starting slot map for OFFSET conversion.
@@ -411,8 +417,11 @@ module RubyOpt
               writer.write_small_value(target_slot - next_insn_slot)
               operand_idx += 1
             when :CALLDATA
-              # TS_CALLDATA: write nothing in the bytecode stream.
-              # (No operand consumed from insn.operands either.)
+              # TS_CALLDATA: write nothing in the bytecode stream; harvest the
+              # IR::CallData operand onto the caller-supplied output list so the
+              # iseq's ci_entries section can be re-emitted from it.
+              ci_entries_out << insn.operands[operand_idx]
+              operand_idx += 1
             when :BUILTIN
               # TS_BUILTIN: stored as [idx, name_len, name_bytes] array.
               builtin = insn.operands[operand_idx]

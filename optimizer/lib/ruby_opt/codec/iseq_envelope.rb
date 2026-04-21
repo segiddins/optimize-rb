@@ -9,6 +9,7 @@ require "ruby_opt/codec/catch_table"
 require "ruby_opt/codec/line_info"
 require "ruby_opt/codec/arg_positions"
 require "ruby_opt/codec/stack_max"
+require "ruby_opt/codec/ci_entries"
 
 module RubyOpt
   module Codec
@@ -237,7 +238,23 @@ module RubyOpt
         # produces byte-identical output.
         raw_bytecode = bytecode_abs && bytecode_size > 0 ?
                          binary.byteslice(bytecode_abs, bytecode_size) : "".b
-        instructions = InstructionStream.decode(raw_bytecode, object_table, all_functions)
+
+        # Decode this iseq's own ci_entries blob into IR::CallData records so
+        # the InstructionStream decoder can attach them to each send-family
+        # instruction's CALLDATA operand slot. ci entries are per-iseq; we do
+        # NOT pool them across iseqs.
+        # Slice from ci_entries_abs up to body_offset (section end is at most
+        # there; CiEntries.decode only consumes ci_size records so any trailing
+        # bytes are ignored). iseq_list.rb re-captures a tighter raw slice for
+        # round-trip via misc[:ci_entries_raw] after this returns.
+        ci_entries_raw = ci_entries_abs && ci_size > 0 ?
+                           binary.byteslice(ci_entries_abs, body_offset - ci_entries_abs) : "".b
+        ci_entries_records = CiEntries.decode(ci_entries_raw, ci_size)
+
+        instructions = InstructionStream.decode(
+          raw_bytecode, object_table, all_functions,
+          ci_entries: ci_entries_records,
+        )
         # Store the raw bytecode in misc so IseqList can re-emit the region verbatim.
         misc[:raw_bytecode] = raw_bytecode
 
@@ -384,7 +401,10 @@ module RubyOpt
         writer.write_small_value(misc[:icvarc_size])
         writer.write_small_value(misc[:ise_size])
         writer.write_small_value(misc[:ic_size])
-        writer.write_small_value(misc[:ci_size])
+        # Use caller-supplied filtered count when available (e.g. after send
+        # instructions were removed by a pass).
+        ci_size_val = data_region_offsets.key?(:ci_size) ? data_region_offsets[:ci_size] : misc[:ci_size]
+        writer.write_small_value(ci_size_val)
         # Use recomputed stack_max from IR when RECOMPUTE_STACK_MAX env var is set,
         # or always for functions without a stored misc value (e.g. synthesized IR).
         # For byte-identical round-trips, misc[:stack_max] takes precedence unless forced.

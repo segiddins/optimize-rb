@@ -7,6 +7,7 @@ require "ruby_opt/codec/instruction_stream"
 require "ruby_opt/codec/catch_table"
 require "ruby_opt/codec/line_info"
 require "ruby_opt/codec/arg_positions"
+require "ruby_opt/codec/ci_entries"
 require "ruby_opt/ir/function"
 
 module RubyOpt
@@ -223,6 +224,11 @@ module RubyOpt
           # Build inst_to_slot once if this function has instructions.
           inst_to_slot = fn.instructions ? InstructionStream.inst_to_slot_map(fn.instructions) : nil
 
+          # ci_entries harvested from InstructionStream.encode as it walks
+          # CALLDATA operand slots. Populated in the bytecode section below,
+          # consumed in the ci_entries section emit.
+          ci_entries_out = []
+
           # Fresh offsets for this function's data sections (all absolute byte offsets).
           dro = {}
 
@@ -303,7 +309,7 @@ module RubyOpt
 
             bytecode_size = misc[:bytecode_size]
             if bytecode_size && bytecode_size > 0 && fn.instructions
-              new_bytes = InstructionStream.encode(fn.instructions, @object_table, @functions)
+              new_bytes = InstructionStream.encode(fn.instructions, @object_table, @functions, ci_entries_out: ci_entries_out)
               writer.write_bytes(new_bytes)
               dro[:bytecode_size] = new_bytes.bytesize
             end
@@ -412,11 +418,28 @@ module RubyOpt
             end
           end
 
-          # 9. ci_entries (raw)
-          emit_section.call(:ci_entries, :ci_entries_abs) do
-            raw = misc[:ci_entries_raw] || "".b
-            writer.write_bytes(raw)
-            raw
+          # 9. ci_entries (IR-encoded from records harvested by InstructionStream.encode
+          # above). For unmodified IR, harvested records equal original ci_entries
+          # and bytes match byte-for-byte (Task 1 proves CiEntries.encode(decode(raw))
+          # == raw). When passes have removed send-family instructions, the harvested
+          # list is SHORTER than the original; we update ci_size in the body record
+          # to the new count and suppress the byte-identity assertion.
+          # Fallback to raw bytes when there are no instructions to harvest from
+          # (e.g. iseqs whose bytecode section was absent).
+          emit_section.call(:ci_entries, :ci_entries_abs, allow_content_change: true) do
+            bytes = if fn.instructions
+                      CiEntries.encode(ci_entries_out)
+                    else
+                      misc[:ci_entries_raw] || "".b
+                    end
+            writer.write_bytes(bytes)
+            bytes
+          end
+          # Propagate the harvested ci_size so the body record reflects the
+          # post-pass count. Only override when we actually harvested (i.e. the
+          # function has instructions); otherwise the original ci_size is kept.
+          if fn.instructions
+            dro[:ci_size] = ci_entries_out.size
           end
 
           # 10. outer_vars (raw)
