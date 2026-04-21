@@ -28,22 +28,29 @@ Talk-artifact Ruby optimizer. Companion to
 
 - `RubyOpt::Passes::ArithReassocPass` — arithmetic reassociation driven by
   the `REASSOC_GROUPS` table. Two groups today: the additive group
-  (`opt_plus` identity 0, `opt_minus` with sign `-`, primary `opt_plus`) and
-  the multiplicative group (`opt_mult` identity 1, primary `opt_mult`).
-  Collapses chains within a single basic block where ≥2 operands are
-  Integer literals, partitions non-literal operands into `+`/`-` effective
-  signs (leading `+` first, trailing `-` second), and emits a single
-  combined-literal tail via the group's primary op. Reaches shapes
+  (`opt_plus` identity 0, `opt_minus` with sign `-`, primary `opt_plus`,
+  kind `:abelian`) and the multiplicative group (`opt_mult` identity 1,
+  `opt_div` secondary, primary `opt_mult`, kind `:ordered`). The
+  `:abelian` algorithm partitions non-literal operands by effective sign
+  and injects literals through a single combiner. The `:ordered`
+  algorithm walks the chain left-to-right with a single literal
+  accumulator, coalescing contiguous same-op literal runs (`* L1 * L2`
+  or `/ L1 / L2`) but refusing to fold across a `*`/`/` boundary —
+  required because Ruby integer `/` is floor-division, so
+  `(a * L1) / L2 ≠ a * (L1 / L2)` in general. Reaches shapes
   const-fold cannot: `x + 1 + 2 + 3` → `x + 6`, `x + 1 - 2 + 3` → `x + 2`,
-  `x * 2 * 3 * 4` → `x * 24`, `x + 1 - y + 2` → `x - y + 3`. Non-Integer
-  literals, chains with <2 integer literals, results that would exceed the
-  `ObjectTable#intern` range, and additive chains where all non-literals
-  have effective sign `-` are left alone (`:mixed_literal_types`,
-  `:chain_too_short`, `:would_exceed_intern_range`,
-  `:no_positive_nonliteral`). An outer any-rewrite fixpoint wraps the
-  per-group inner fixpoints so mult rewrites expose additive chains
-  (e.g., `x + 2 * 3 - 4` → `x + 2`). `**` and mixed-precedence chains with
-  `opt_div` are out of scope; see follow-up plans.
+  `x * 2 * 3 * 4` → `x * 24`, `x + 1 - y + 2` → `x - y + 3`,
+  `x / 2 / 3` → `x / 6`, `x * 2 * 3 / 4 / 5` → `x * 6 / 20`. Non-Integer
+  literals, chains with <2 integer literals, results that would exceed
+  the `ObjectTable#intern` range, additive chains where all non-literals
+  have effective sign `-`, multiplicative chains with any `≤0` literal
+  divisor, and multiplicative chains whose walk produces no fold are
+  left alone (`:mixed_literal_types`, `:chain_too_short`,
+  `:would_exceed_intern_range`, `:no_positive_nonliteral`,
+  `:unsafe_divisor`, `:no_change`). An outer any-rewrite fixpoint wraps
+  the per-group inner fixpoints so mult rewrites expose additive chains
+  (e.g., `x + 2 * 3 - 4` → `x + 2`). `**` and exact-divisibility folds
+  (e.g. `x * 6 / 2 → x * 3`) are out of scope; see follow-up plans.
 - `RubyOpt::Passes::ConstFoldPass` — tier 1 constant folding. Folds
   Integer literal arithmetic (`+ - * / %`) and Integer literal
   comparison (`< <= > >= == !=`) triples within a basic block,
