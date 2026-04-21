@@ -16,9 +16,15 @@ module RubyOpt
       #   identity:   neutral element for the group (0 for +, 1 for *).
       #   primary_op: opcode used to emit the single literal-carrying trailing
       #               op after a rewrite. Must be a key in `ops`.
+      #   kind:       selects the rewrite algorithm. :abelian uses v3's
+      #               partition-by-combiner + inject-reduce (valid when all
+      #               ops in the group commute and associate, e.g. +/-).
+      #               :ordered walks the chain left-to-right with a single
+      #               literal accumulator, used when the group contains a
+      #               non-commutative op like opt_div.
       REASSOC_GROUPS = [
-        { ops: { opt_plus: :+, opt_minus: :- }, identity: 0, primary_op: :opt_plus },
-        { ops: { opt_mult: :*                 }, identity: 1, primary_op: :opt_mult },
+        { ops: { opt_plus: :+, opt_minus: :- }, identity: 0, primary_op: :opt_plus, kind: :abelian },
+        { ops: { opt_mult: :*                 }, identity: 1, primary_op: :opt_mult, kind: :abelian },
       ].freeze
 
       # ObjectTable#intern accepts integers with bit_length < 62
@@ -142,6 +148,21 @@ module RubyOpt
       end
 
       def try_rewrite_chain(insts, chain, function, log, object_table, group:)
+        case group[:kind]
+        when :abelian
+          try_rewrite_chain_abelian(insts, chain, function, log, object_table, group: group)
+        when :ordered
+          try_rewrite_chain_ordered(insts, chain, function, log, object_table, group: group)
+        else
+          raise "unknown REASSOC_GROUPS kind: #{group[:kind].inspect}"
+        end
+      end
+
+      def try_rewrite_chain_ordered(_insts, _chain, _function, _log, _object_table, group:)
+        raise NotImplementedError, ":ordered kind not yet implemented (group: #{group.inspect})"
+      end
+
+      def try_rewrite_chain_abelian(insts, chain, function, log, object_table, group:)
         producer_insts = chain[:producer_indices].map { |k| insts[k] }
 
         # Combiner for each producer is the combiner of the op immediately to
