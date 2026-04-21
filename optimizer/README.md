@@ -59,6 +59,22 @@ Talk-artifact Ruby optimizer. Companion to
   (`:would_raise`, `:non_integer_literal`). The default pipeline runs
   `ConstFoldPass` only; inlining, arithmetic specialization, and
   higher tiers of const-fold are future plans.
+- `RubyOpt::Passes::IdentityElimPass` — strips arithmetic identities the
+  upstream passes leave behind: `x * 1`, `1 * x`, `x + 0`, `0 + x`,
+  `x - 0`, `x / 1`. Driven by the `IDENTITY_OPS` table, which encodes
+  each operator's identity element and which sides are eligible
+  (`:either` for commutative `+`/`*`, `:right` only for `-`/`/` since
+  `0 - x = -x` and `1 / x ≠ x`). Fires only when the non-literal side
+  is in `SAFE_PRODUCER_OPCODES` (shared with `ArithReassocPass`), so
+  no potentially-side-effecting producer (a `send`, `invokesuper`,
+  etc.) is ever elided. Integer-literal-only: `x * 1.0` is left alone
+  (float identities have `-0.0` / `NaN` edge cases worth their own
+  pass). The pass is *sound in practice, not sound in principle*: for
+  a receiver whose class does not treat the operator as an identity
+  (e.g. `"abc" + 0` raises `TypeError`; `[1,2] * 1` returns a copy),
+  eliding the op changes observable behavior. We take the same bet
+  CRuby's `opt_*` fast paths take — numeric operands, specialized
+  shape. Completes the three-pass collapse for `2 * 3 / 6 * x` → `x`.
 
 ## Running tests
 
