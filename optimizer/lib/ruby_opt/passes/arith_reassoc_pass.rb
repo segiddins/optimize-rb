@@ -17,8 +17,8 @@ module RubyOpt
       #   primary_op: opcode used to emit the single literal-carrying trailing
       #               op after a rewrite. Must be a key in `ops`.
       REASSOC_GROUPS = [
-        { ops: { opt_plus: :+ }, identity: 0, primary_op: :opt_plus },
-        { ops: { opt_mult: :* }, identity: 1, primary_op: :opt_mult },
+        { ops: { opt_plus: :+, opt_minus: :- }, identity: 0, primary_op: :opt_plus },
+        { ops: { opt_mult: :*                 }, identity: 1, primary_op: :opt_mult },
       ].freeze
 
       # ObjectTable#intern accepts integers with bit_length < 62
@@ -189,6 +189,13 @@ module RubyOpt
           return false
         end
 
+        has_pos_non_literal = non_literals.any? { |c| c[:combiner] == primary_combiner }
+        if !non_literals.empty? && !has_pos_non_literal
+          log.skip(pass: :arith_reassoc, reason: :no_positive_nonliteral,
+                   file: function.path, line: chain_line)
+          return false
+        end
+
         first_op_inst = insts[chain[:op_positions].first[:idx]]
         literal_inst = LiteralValue.emit(reduced, line: first_op_inst.line, object_table: object_table)
 
@@ -201,22 +208,49 @@ module RubyOpt
         true
       end
 
-      # Task-1 behavior: every producer in the group uses the same combiner
-      # (the primary op's), so non-literal order is preserved and every
-      # intermediate op is the primary op. Task 2 overrides this logic for
-      # the additive group (sign-aware partition + reorder).
+      # Emit the rewritten tail. For single-op groups (today: multiplicative),
+      # this preserves non-literal order and fills intermediate ops with the
+      # primary op. For multi-op groups (today: additive with opt_plus +
+      # opt_minus), non-literals partition into pos/neg by combiner, emit as
+      # pos ++ neg with intermediate ops driven by adjacent combiners, tail
+      # literal via the primary op.
       def build_replacement(non_literals, literal_inst, first_op_inst, group)
-        replacement = non_literals.map { |c| c[:inst] }
+        primary_combiner = group[:ops].fetch(group[:primary_op])
+
+        pos = non_literals.select { |c| c[:combiner] == primary_combiner }
+        neg = non_literals.reject { |c| c[:combiner] == primary_combiner }
+        ordered = pos + neg
+
+        replacement = []
+        ordered.each_with_index do |c, idx|
+          replacement << c[:inst]
+          next if idx == 0
+          # Intermediate op is driven by c's combiner: same as primary →
+          # primary op; different → find the opcode in group[:ops] whose
+          # combiner matches c's.
+          intermediate_opcode = opcode_for_combiner(group, c[:combiner])
+          replacement << IR::Instruction.new(
+            opcode: intermediate_opcode,
+            operands: first_op_inst.operands,
+            line: first_op_inst.line,
+          )
+        end
+
         replacement << literal_inst
-        op_count_out = replacement.size - 1
-        op_count_out.times do
+        if !ordered.empty?
           replacement << IR::Instruction.new(
             opcode: group[:primary_op],
             operands: first_op_inst.operands,
             line: first_op_inst.line,
           )
         end
+
         replacement
+      end
+
+      def opcode_for_combiner(group, combiner)
+        group[:ops].each { |opcode, c| return opcode if c == combiner }
+        raise "no opcode in group for combiner #{combiner.inspect}"
       end
 
       def fits_intern_range?(n)
