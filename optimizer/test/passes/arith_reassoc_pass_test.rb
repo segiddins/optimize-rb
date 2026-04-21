@@ -524,6 +524,57 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal 10, loaded.eval
   end
 
+  def test_mult_div_trailing_divisor_run_folds
+    src = "def f(x); x * 2 * 3 / 4 / 5; end; f(100)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_div }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 20 }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 30, loaded.eval
+  end
+
+  def test_mult_div_crossing_boundary_bails_no_change
+    src = "def f(x); x * 2 / 3 * 4; end; f(6)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before, f.instructions.map(&:opcode)
+    assert(log.entries.any? { |e| e[:reason] == :no_change },
+      "expected :no_change log entry, got reasons: #{log.entries.map { |e| e[:reason] }.inspect}")
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 16, loaded.eval
+  end
+
+  def test_mult_div_literal_run_with_mixed_ops_folds
+    # 2 * 3 / 6 * x: two literal runs separated by the /6 boundary.
+    # The *->/ boundary does not allow 6/6 to further reduce within this pass.
+    src = "def f(x); 2 * 3 / 6 * x; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    sixes = f.instructions.count { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    assert_equal 2, sixes
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_div }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 5, loaded.eval
+  end
+
   private
 
   def find_iseq(ir, name)
