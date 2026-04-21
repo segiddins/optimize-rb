@@ -4,6 +4,7 @@ require "ruby_opt/codec"
 require "ruby_opt/log"
 require "ruby_opt/passes/arith_reassoc_pass"
 require "ruby_opt/passes/literal_value"
+require "ruby_opt/pipeline"
 
 class ArithReassocPassTest < Minitest::Test
   def test_collapses_leading_non_literal_chain_to_single_literal_tail
@@ -573,6 +574,122 @@ class ArithReassocPassTest < Minitest::Test
 
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal 5, loaded.eval
+  end
+
+  def test_mult_div_zero_divisor_bails
+    # / 0 must not be folded away. Chain left alone.
+    src = "def f(x); x / 2 / 0; end"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before, f.instructions.map(&:opcode)
+    assert(log.entries.any? { |e| e[:reason] == :unsafe_divisor },
+      "expected :unsafe_divisor log entry, got: #{log.entries.map { |e| e[:reason] }.inspect}")
+
+    assert_equal 2, f.instructions.count { |i| i.opcode == :opt_div }
+  end
+
+  def test_mult_div_negative_divisor_bails
+    src = "def f(x); x / -3 / -2; end; f(12)"
+    ir_unopt = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir_opt   = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot_opt   = ir_opt.misc[:object_table]
+    f_opt    = find_iseq(ir_opt, "f")
+    before = f_opt.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f_opt, type_env: nil, log: log, object_table: ot_opt)
+
+    assert_equal before, f_opt.instructions.map(&:opcode)
+    assert(log.entries.any? { |e| e[:reason] == :unsafe_divisor })
+
+    loaded_unopt = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_unopt))
+    loaded_opt   = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_opt))
+    assert_equal loaded_unopt.eval, loaded_opt.eval
+  end
+
+  def test_mult_div_non_integer_divisor_bails
+    src = 'def f(x); x / 2 / "foo"; end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before, f.instructions.map(&:opcode)
+    assert(log.entries.any? { |e| e[:reason] == :unsafe_divisor })
+  end
+
+  def test_mult_div_mixed_literal_types_bails
+    src = "def f(x); x * 2 * 1.5; end"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before, f.instructions.map(&:opcode)
+    assert(log.entries.any? { |e| e[:reason] == :mixed_literal_types })
+  end
+
+  def test_mult_div_would_exceed_intern_range_bails
+    src = "def f(x); x * #{1 << 31} * #{1 << 31}; end"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before, f.instructions.map(&:opcode)
+    assert(log.entries.any? { |e| e[:reason] == :would_exceed_intern_range })
+  end
+
+  def test_mult_div_non_literals_preserved_in_position
+    src = "def f(x, y); x * y * 2 * 3; end; f(5, 4)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 2, f.instructions.count { |i| i.opcode == :opt_mult }
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 120, loaded.eval
+  end
+
+  def test_mult_div_idempotent
+    src = "def f(x); x * 2 * 3 / 4 / 5; end; f(100)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+
+    pass = RubyOpt::Passes::ArithReassocPass.new
+    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    after_first = f.instructions.map(&:opcode)
+    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    after_second = f.instructions.map(&:opcode)
+
+    assert_equal after_first, after_second, "pass must be idempotent on a folded chain"
+  end
+
+  def test_mult_div_cross_group_with_additive_via_pipeline
+    src = "def f(x); x + 6 / 2 + 1; end; f(10)"
+    ir_unopt = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir_opt   = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    RubyOpt::Pipeline.default.run(ir_opt, type_env: nil)
+
+    loaded_unopt = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_unopt))
+    loaded_opt   = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_opt))
+    assert_equal loaded_unopt.eval, loaded_opt.eval
+    assert_equal 14, loaded_opt.eval
   end
 
   private
