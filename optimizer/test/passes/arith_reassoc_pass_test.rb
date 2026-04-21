@@ -86,14 +86,16 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal 6, loaded.eval
   end
 
-  def test_non_opt_plus_chains_untouched
+  def test_non_opt_plus_chains_are_now_handled_by_opt_mult
     src = "def f(x); x * 2 * 3; end; f(4)"
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    before = f.instructions.map(&:opcode)
     RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-    assert_equal before, f.instructions.map(&:opcode)
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 24, loaded.eval
   end
 
   def test_rewritten_instruction_order_non_literals_first_then_literal_then_opt_pluses
@@ -197,6 +199,131 @@ class ArithReassocPassTest < Minitest::Test
     RubyOpt::Passes::ArithReassocPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: RubyOpt::Log.new, object_table: ot)
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal [16, 99], loaded.eval
+  end
+
+  # ---- opt_mult ----
+
+  def test_opt_mult_collapses_leading_non_literal_chain
+    src = "def f(x); x * 2 * 3 * 4; end; f(10)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 24 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 240, loaded.eval
+  end
+
+  def test_opt_mult_reorders_around_mid_chain_non_literal
+    src = "def f(x); 2 * x * 3; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 30, loaded.eval
+  end
+
+  def test_opt_mult_multiple_non_literals_preserved_in_order
+    src = "def f(x, y); 2 * x * 3 * y * 4; end; f(10, 5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 2, f.instructions.count { |i| i.opcode == :opt_mult }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 24 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 1200, loaded.eval
+  end
+
+  def test_opt_mult_all_literal_chain_folds
+    src = "def f; 2 * 3 * 4; end; f"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_mult }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 24 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 24, loaded.eval
+  end
+
+  def test_opt_mult_single_literal_chain_is_left_alone
+    src = "def f(x); x * 2; end; f(10)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert_equal before, f.instructions.map(&:opcode)
+  end
+
+  def test_opt_mult_mixed_literal_types_leaves_chain_alone
+    src = "def f(x); x * 1.5 * 2; end; f(4)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    assert_equal before, f.instructions.map(&:opcode)
+    entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :mixed_literal_types }
+    assert_operator entries.size, :>=, 1
+  end
+
+  # ---- fixnum-overflow guard ----
+
+  def test_product_that_overflows_intern_range_is_skipped
+    # Two literals only (no foldable sub-chain). Product (1 << 62) has
+    # bit_length == 62, outside the intern-accepted range.
+    src = "def f(x); x * #{1 << 31} * #{1 << 31}; end; f(1)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before_opcodes = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before_opcodes, f.instructions.map(&:opcode),
+      "overflow-guard should leave the chain untouched"
+    entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :would_overflow_fixnum }
+    assert_operator entries.size, :>=, 1
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 1 << 62, loaded.eval
+  end
+
+  # ---- cross-operator interaction (outer fixpoint) ----
+
+  def test_mult_rewrite_exposes_plus_chain_across_outer_fixpoint
+    src = "def f(x); x + 2 * 3 + 4; end; f(10)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_mult },
+      "mult should have folded 2*3 to a literal"
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_plus },
+      "plus should have collapsed x + 6 + 4 to one opt_plus after outer fixpoint re-ran it"
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 10 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 20, loaded.eval
+  end
+
+  def test_opt_mult_deep_chain_end_to_end
+    src = "def f(x); x * 2 * 3 * 4 * 5 * 6; end; f(1)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    RubyOpt::Passes::ArithReassocPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 720, loaded.eval
   end
 
   private

@@ -15,7 +15,13 @@ module RubyOpt
       #   reducer:  the Symbol method used to combine Integer literals
       REASSOC_OPS = [
         { opcode: :opt_plus, identity: 0, reducer: :+ },
+        { opcode: :opt_mult, identity: 1, reducer: :* },
       ].freeze
+
+      # ObjectTable#intern accepts integers with bit_length < 62
+      # (i.e. values in -(2^61)..(2^61)-1). Results outside this range
+      # cannot be interned and must be skipped.
+      INTERN_BIT_LENGTH_LIMIT = 62
 
       # Opcodes that each push exactly one value, pop zero, and have no
       # side effects relevant to reordering literals past them. Shared across
@@ -40,10 +46,19 @@ module RubyOpt
         insts = function.instructions
         return unless insts
 
-        REASSOC_OPS.each do |op_spec|
-          loop do
-            break unless rewrite_once(insts, function, log, object_table, op_spec: op_spec)
+        # Outer any-rewrite fixpoint: a mult rewrite can replace
+        # `... opt_mult ...` with a single-push literal, which may expose
+        # a `+` chain that plus's inner fixpoint missed on its first visit.
+        # See spec "Two-level fixpoint" section.
+        loop do
+          any_outer = false
+          REASSOC_OPS.each do |op_spec|
+            loop do
+              break unless rewrite_once(insts, function, log, object_table, op_spec: op_spec)
+              any_outer = true
+            end
           end
+          break unless any_outer
         end
       end
 
@@ -149,6 +164,12 @@ module RubyOpt
         end
 
         reduced = integer_literals.inject(op_spec[:identity], op_spec[:reducer])
+        unless fits_fixnum?(reduced)
+          log.skip(pass: :arith_reassoc, reason: :would_overflow_fixnum,
+                   file: function.path, line: chain_line)
+          return false
+        end
+
         first_op_inst = insts[chain[:op_indices].first]
         literal_inst = LiteralValue.emit(reduced, line: first_op_inst.line, object_table: object_table)
 
@@ -165,6 +186,10 @@ module RubyOpt
         log.skip(pass: :arith_reassoc, reason: :reassociated,
                  file: function.path, line: chain_line)
         true
+      end
+
+      def fits_fixnum?(n)
+        n.is_a?(Integer) && n.bit_length < INTERN_BIT_LENGTH_LIMIT
       end
     end
   end
