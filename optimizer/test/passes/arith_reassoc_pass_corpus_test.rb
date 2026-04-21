@@ -22,8 +22,13 @@ class ArithReassocPassCorpusTest < Minitest::Test
 
   def test_default_pipeline_includes_arith_before_const_fold
     passes = RubyOpt::Pipeline.default.instance_variable_get(:@passes)
-    assert_equal :arith_reassoc, passes[0].name
-    assert_equal :const_fold,    passes[1].name
+    names = passes.map(&:name)
+    arith_idx = names.index(:arith_reassoc)
+    const_idx = names.index(:const_fold)
+    refute_nil arith_idx
+    refute_nil const_idx
+    assert arith_idx < const_idx,
+      "expected arith_reassoc before const_fold in default pipeline, got #{names.inspect}"
   end
 
   def test_default_pipeline_collapses_chain_const_fold_cannot_reach

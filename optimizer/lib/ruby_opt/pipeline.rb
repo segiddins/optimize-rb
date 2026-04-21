@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 require "ruby_opt/log"
+require "ruby_opt/passes/inlining_pass"
 require "ruby_opt/passes/arith_reassoc_pass"
 require "ruby_opt/passes/const_fold_pass"
 require "ruby_opt/passes/identity_elim_pass"
@@ -7,7 +8,12 @@ require "ruby_opt/passes/identity_elim_pass"
 module RubyOpt
   class Pipeline
     def self.default
-      new([Passes::ArithReassocPass.new, Passes::ConstFoldPass.new, Passes::IdentityElimPass.new])
+      new([
+        Passes::InliningPass.new,
+        Passes::ArithReassocPass.new,
+        Passes::ConstFoldPass.new,
+        Passes::IdentityElimPass.new,
+      ])
     end
 
     def initialize(passes)
@@ -19,10 +25,15 @@ module RubyOpt
     def run(ir, type_env:)
       log = Log.new
       object_table = ir.misc && ir.misc[:object_table]
+      callee_map = build_callee_map(ir)
       each_function(ir) do |function|
         @passes.each do |pass|
           begin
-            pass.apply(function, type_env: type_env, log: log, object_table: object_table)
+            pass.apply(
+              function,
+              type_env: type_env, log: log,
+              object_table: object_table, callee_map: callee_map,
+            )
           rescue => e
             log.skip(
               pass: pass.name,
@@ -43,6 +54,16 @@ module RubyOpt
       function.children&.each do |child|
         each_function(child, &block)
       end
+    end
+
+    def build_callee_map(ir)
+      map = {}
+      each_function(ir) do |fn|
+        next unless fn.type == :method
+        next unless fn.name
+        map[fn.name.to_sym] = fn
+      end
+      map
     end
   end
 end

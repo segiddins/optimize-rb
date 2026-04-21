@@ -22,7 +22,7 @@ module RubyOpt
 
       def name = :identity_elim
 
-      def apply(function, type_env:, log:, object_table: nil)
+      def apply(function, type_env:, log:, object_table: nil, **_extras)
         _ = type_env
         return unless object_table
         insts = function.instructions

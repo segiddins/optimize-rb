@@ -13,7 +13,7 @@ class PipelineTest < Minitest::Test
       @visited = []
     end
 
-    def apply(function, type_env:, log:, object_table: nil)
+    def apply(function, type_env:, log:, object_table: nil, **_extras)
       @visited << function.name
     end
 
@@ -23,7 +23,7 @@ class PipelineTest < Minitest::Test
   end
 
   class RaisingPass < RubyOpt::Pass
-    def apply(function, type_env:, log:, object_table: nil)
+    def apply(function, type_env:, log:, object_table: nil, **_extras)
       raise "boom"
     end
 
@@ -75,5 +75,22 @@ class PipelineTest < Minitest::Test
     f = ir.children.flat_map { |c| [c, *(c.children || [])] }.find { |x| x.name == "f" }
     refute_nil f
     assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 5 })
+  end
+
+  def test_inlining_pass_runs_end_to_end
+    src = File.read(File.expand_path("codec/corpus/inlining_zero_arg.rb", __dir__))
+    bin = RubyVM::InstructionSequence.compile(src).to_binary
+    ir  = RubyOpt::Codec.decode(bin)
+
+    log = RubyOpt::Pipeline.default.run(ir, type_env: nil)
+
+    use_it = ir.children.find { |c| c.name == "use_it" }
+    refute_nil use_it
+    refute use_it.instructions.any? { |i| i.opcode == :opt_send_without_block },
+      "expected `use_it` to have its call to `magic` inlined"
+    assert log.entries.any? { |e| e.pass == :inlining && e.reason == :inlined }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 42, loaded.eval
   end
 end

@@ -11,7 +11,7 @@ module RubyOpt
     # @param function [RubyOpt::IR::Function]
     # @param type_env [RubyOpt::TypeEnv, nil]
     # @param log     [RubyOpt::Log]
-    def apply(function, type_env:, log:, object_table: nil)
+    def apply(function, type_env:, log:, object_table: nil, **_extras)
       raise NotImplementedError
     end
 
@@ -23,7 +23,7 @@ module RubyOpt
   # Pass that does nothing. Used to exercise the pipeline without depending
   # on real passes.
   class NoopPass < Pass
-    def apply(function, type_env:, log:, object_table: nil)
+    def apply(function, type_env:, log:, object_table: nil, **_extras)
       # Intentionally empty.
     end
 
