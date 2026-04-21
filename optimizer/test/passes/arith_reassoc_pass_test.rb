@@ -507,6 +507,23 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal before_opcodes, f.instructions.map(&:opcode)
   end
 
+  # --- v4: multiplicative :ordered group ---
+
+  def test_mult_div_same_op_div_chain_folds
+    src = "def f(x); x / 2 / 3; end; f(60)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_div }
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_mult }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 10, loaded.eval
+  end
+
   private
 
   def find_iseq(ir, name)

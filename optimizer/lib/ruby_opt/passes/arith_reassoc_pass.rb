@@ -24,7 +24,7 @@ module RubyOpt
       #               non-commutative op like opt_div.
       REASSOC_GROUPS = [
         { ops: { opt_plus: :+, opt_minus: :- }, identity: 0, primary_op: :opt_plus, kind: :abelian },
-        { ops: { opt_mult: :*                 }, identity: 1, primary_op: :opt_mult, kind: :abelian },
+        { ops: { opt_mult: :*, opt_div: :/    }, identity: 1, primary_op: :opt_mult, kind: :ordered },
       ].freeze
 
       # ObjectTable#intern accepts integers with bit_length < 62
@@ -158,8 +158,133 @@ module RubyOpt
         end
       end
 
-      def try_rewrite_chain_ordered(_insts, _chain, _function, _log, _object_table, group:)
-        raise NotImplementedError, ":ordered kind not yet implemented (group: #{group.inspect})"
+      def try_rewrite_chain_ordered(insts, chain, function, log, object_table, group:)
+        producer_insts = chain[:producer_indices].map { |k| insts[k] }
+
+        # Build the op-tagged stream. The leading producer has no preceding op
+        # in source, so we tag it with the group's primary op.
+        stream = producer_insts.each_with_index.map do |p, k|
+          op =
+            if k == 0
+              group[:primary_op]
+            else
+              chain[:op_positions][k - 1][:opcode]
+            end
+          v = LiteralValue.read(p, object_table: object_table)
+          { op: op, value: v, is_literal: LiteralValue.literal?(p), inst: p }
+        end
+
+        chain_line = insts[chain[:op_positions].first[:idx]].line || function.first_lineno
+
+        # Pre-scan 1: unsafe divisor (0, negative, or non-Integer literal on a /).
+        if stream.any? { |e| e[:op] == :opt_div && e[:is_literal] && !(e[:value].is_a?(Integer) && e[:value] > 0) }
+          log.skip(pass: :arith_reassoc, reason: :unsafe_divisor,
+                   file: function.path, line: chain_line)
+          return false
+        end
+
+        # Pre-scan 2: non-Integer literal anywhere else (e.g. Float/String on a *).
+        if stream.any? { |e| e[:is_literal] && !e[:value].is_a?(Integer) }
+          log.skip(pass: :arith_reassoc, reason: :mixed_literal_types,
+                   file: function.path, line: chain_line)
+          return false
+        end
+
+        # Pre-scan 3: coarse chain-too-short filter.
+        if stream.count { |e| e[:is_literal] && e[:value].is_a?(Integer) } < 2
+          log.skip(pass: :arith_reassoc, reason: :chain_too_short,
+                   file: function.path, line: chain_line)
+          return false
+        end
+
+        # Walk. Maintain an `emitted` list of entries with the same shape as
+        # `stream`, and a pending literal accumulator (acc: Integer or nil).
+        emitted = []
+        acc = nil
+        acc_op = nil
+        acc_inst = nil
+
+        commit = lambda do
+          next if acc.nil?
+          emitted << { op: acc_op, value: acc, is_literal: true, inst: nil, committed: true }
+          acc = nil
+          acc_op = nil
+          acc_inst = nil
+        end
+
+        stream.each do |e|
+          if e[:is_literal]
+            if acc.nil?
+              acc = e[:value]
+              acc_op = e[:op]
+              acc_inst = e[:inst]
+            elsif acc_op == e[:op]
+              # Same-op literal run: multiply into the accumulator.
+              acc = acc * e[:value]
+            else
+              # *<->/ boundary between literals: commit and start fresh.
+              commit.call
+              acc = e[:value]
+              acc_op = e[:op]
+              acc_inst = e[:inst]
+            end
+          else
+            # Non-literal. If the op matches the current accumulator's op,
+            # we can keep accumulating after this non-literal (within the same
+            # op-run). If the op differs, we've crossed a boundary — commit
+            # the pending accumulator first.
+            if !acc.nil? && acc_op != e[:op]
+              commit.call
+            end
+            emitted << e.merge(committed: false)
+          end
+        end
+        commit.call
+
+        # Fits-intern check on every committed literal.
+        if emitted.any? { |e| e[:committed] && !fits_intern_range?(e[:value]) }
+          log.skip(pass: :arith_reassoc, reason: :would_exceed_intern_range,
+                   file: function.path, line: chain_line)
+          return false
+        end
+
+        # No-change check: if we emitted the same number of literals as we
+        # started with, nothing folded — preserve idempotence.
+        input_literal_count  = stream.count  { |e| e[:is_literal] }
+        output_literal_count = emitted.count { |e| e[:is_literal] }
+        if input_literal_count == output_literal_count
+          log.skip(pass: :arith_reassoc, reason: :no_change,
+                   file: function.path, line: chain_line)
+          return false
+        end
+
+        first_op_inst = insts[chain[:op_positions].first[:idx]]
+
+        # Emit. The leading entry's op is implicit (just the push). Every
+        # subsequent entry emits `push; op`.
+        replacement = []
+        emitted.each_with_index do |e, idx|
+          push_inst =
+            if e[:committed]
+              LiteralValue.emit(e[:value], line: first_op_inst.line, object_table: object_table)
+            else
+              e[:inst]
+            end
+          replacement << push_inst
+
+          next if idx == 0
+          replacement << IR::Instruction.new(
+            opcode: e[:op],
+            operands: first_op_inst.operands,
+            line: first_op_inst.line,
+          )
+        end
+
+        range = chain[:first_idx]..chain[:end_idx]
+        function.splice_instructions!(range, replacement)
+        log.skip(pass: :arith_reassoc, reason: :reassociated,
+                 file: function.path, line: chain_line)
+        true
       end
 
       def try_rewrite_chain_abelian(insts, chain, function, log, object_table, group:)
