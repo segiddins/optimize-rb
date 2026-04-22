@@ -116,6 +116,15 @@ Kept here so future sessions don't rediscover these:
   than RBS.
 - **Comparison-chain specialization** (`x < 10 && x > 0`). Would be the
   first pass to cross control flow.
+- **Hoist frozen empty literals** (`[].freeze`, `{}.freeze`). Each call
+  allocates a fresh object today; a pass could detect the
+  `newarray 0 / newhash 0` + `opt_send_without_block :freeze` shape and
+  rewrite to a single `putobject <frozen_empty>` that references an
+  interned frozen `[]` / `{}` in the object table. Once interned, all
+  call sites share the same VALUE — no per-call allocation. Depends on
+  extending `ObjectTable#intern` to accept `Array`/`Hash` (currently
+  special-const + String only after 2026-04-24). Talk-adjacent: a
+  visible allocation-count delta in `benchmark_ips` / `ObjectSpace`.
 
 ## Maintenance note
 
