@@ -32,6 +32,8 @@ module RubyOpt
       ])
     end
 
+    attr_reader :passes
+
     def initialize(passes)
       @passes = passes
     end

@@ -266,3 +266,17 @@ class PipelineTest < Minitest::Test
     nil
   end
 end
+
+class PipelineAccessorTest < Minitest::Test
+  def test_passes_accessor_returns_configured_passes
+    passes = [Object.new, Object.new]
+    pipeline = RubyOpt::Pipeline.new(passes)
+    assert_equal passes, pipeline.passes
+  end
+
+  def test_default_pipeline_pass_names_are_symbols
+    names = RubyOpt::Pipeline.default.passes.map(&:name)
+    assert(names.all? { |n| n.is_a?(Symbol) })
+    assert_includes names, :inlining
+  end
+end
