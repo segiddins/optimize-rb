@@ -145,6 +145,48 @@ class ConstFoldPassTest < Minitest::Test
     assert_equal [3, 99], loaded.eval
   end
 
+  def test_folds_string_equality_triple_to_true
+    src = 'def f; "abc" == "abc"; end; f'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true })
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal true, loaded.eval
+  end
+
+  def test_folds_string_equality_triple_to_false
+    src = 'def f; "abc" == "def"; end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == false })
+  end
+
+  def test_folds_string_inequality_triple
+    src = 'def f; "a" != "b"; end; f'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true })
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal true, loaded.eval
+  end
+
+  def test_leaves_mixed_type_equality_alone
+    # "a" == 5 — both are literals but types differ; skip fold (not Integer-Integer, not String-String).
+    src = 'def f; "a" == 5; end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert_equal before, f.instructions.map(&:opcode)
+  end
+
   private
 
   def find_iseq(ir, name)

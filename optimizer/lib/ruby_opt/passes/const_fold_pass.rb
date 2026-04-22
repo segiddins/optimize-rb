@@ -67,6 +67,16 @@ module RubyOpt
         av = LiteralValue.read(a, object_table: object_table)
         bv = LiteralValue.read(b, object_table: object_table)
 
+        # String-on-String equality: only opt_eq and opt_neq are in scope.
+        # Other string ops (+, <, etc.) are not folded — their semantics
+        # (Encoding, coercion) are not worth the risk for a talk demo.
+        if av.is_a?(String) && bv.is_a?(String) && (op.opcode == :opt_eq || op.opcode == :opt_neq)
+          result = av.public_send(sym, bv)
+          log.skip(pass: :const_fold, reason: :folded,
+                   file: function.path, line: (op.line || a.line || function.first_lineno))
+          return LiteralValue.emit(result, line: a.line, object_table: object_table)
+        end
+
         # Only fold Integer-on-Integer. A triple that LOOKS foldable but has at
         # least one non-Integer literal gets a log entry so the talk can show it.
         # A triple where one side isn't a literal at all (read -> nil) is silent —
