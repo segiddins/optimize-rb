@@ -45,22 +45,23 @@ class ConstFoldEnvPassTest < Minitest::Test
     assert_operator tainted.size, :>=, 1
   end
 
-  def test_env_fetch_taints_tree
+  def test_env_fetch_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.fetch("B"); end'
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
     log = RubyOpt::Log.new
     r = find_iseq(ir, "r")
-    before_r = r.instructions.map(&:opcode)
 
     pass = RubyOpt::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
 
-    assert_equal before_r, r.instructions.map(&:opcode)
-    assert_operator log.for_pass(:const_fold_env).count { |e| e.reason == :env_write_observed }, :>=, 1
+    opcodes = r.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_aref, "r should fold — ENV.fetch sibling must not taint"
+    refute(log.for_pass(:const_fold_env).any? { |e| e.reason == :env_write_observed },
+           "read-only ENV.fetch should not taint the tree")
   end
 
   def test_env_with_dynamic_key_does_not_taint
