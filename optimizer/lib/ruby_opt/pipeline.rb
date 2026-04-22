@@ -2,6 +2,7 @@
 require "ruby_opt/log"
 require "ruby_opt/passes/inlining_pass"
 require "ruby_opt/passes/arith_reassoc_pass"
+require "ruby_opt/passes/const_fold_env_pass"
 require "ruby_opt/passes/const_fold_pass"
 require "ruby_opt/passes/identity_elim_pass"
 
@@ -11,6 +12,9 @@ module RubyOpt
       new([
         Passes::InliningPass.new,
         Passes::ArithReassocPass.new,
+        # ConstFoldEnvPass runs BEFORE ConstFoldPass so `ENV["FLAG"] == "true"`
+        # can cascade through string-eq folding in a single pipeline run.
+        Passes::ConstFoldEnvPass.new,
         Passes::ConstFoldPass.new,
         Passes::IdentityElimPass.new,
       ])

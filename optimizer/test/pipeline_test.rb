@@ -129,4 +129,32 @@ class PipelineTest < Minitest::Test
     refute_empty captured
     assert_equal snap, captured.first
   end
+
+  def test_pipeline_collapses_env_feature_flag_to_boolean
+    require "ruby_opt/passes/literal_value"
+    src = 'def f; ENV["FLAG"] == "true"; end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    snap = { "FLAG" => "true" }.freeze
+
+    RubyOpt::Pipeline.default.run(ir, type_env: nil, env_snapshot: snap)
+
+    f = find_iseq(ir, "f")
+    # ENV["FLAG"] folds to "true", then "true"=="true" folds to true in the same run.
+    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true },
+           "expected ENV[FLAG] == 'true' to collapse to true")
+    refute(f.instructions.any? { |i| i.opcode == :opt_getconstant_path })
+    refute(f.instructions.any? { |i| i.opcode == :opt_aref })
+  end
+
+  private
+
+  def find_iseq(ir, name)
+    return ir if ir.name == name
+    ir.children&.each do |c|
+      found = find_iseq(c, name)
+      return found if found
+    end
+    nil
+  end
 end
