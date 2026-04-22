@@ -21,5 +21,14 @@ module RubyOpt
     def empty?
       @by_key.empty?
     end
+
+    def signature_for_function(function, class_context:)
+      return nil unless function.type == :method && function.name
+      @by_key[[class_context, function.name.to_sym]]
+    end
+
+    def new_returns?(class_name)
+      class_name
+    end
   end
 end
