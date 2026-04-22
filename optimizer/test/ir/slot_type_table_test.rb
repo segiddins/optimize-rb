@@ -97,6 +97,30 @@ class SlotTypeTableTest < Minitest::Test
     assert_equal "Point", child.lookup(0, 1)
   end
 
+  def test_opt_new_wrapper_types_destination_slot
+    # Ruby 4.0+ compiles `p = Point.new(1, 2)` roughly as:
+    #   opt_getconstant_path; putnil; swap; <args>; opt_new; opt_send :initialize;
+    #   jump; opt_send :new; swap; pop; setlocal
+    # The setlocal is preceded by pop, not opt_send :new.
+    insts = [
+      InstStub.new(opcode: :opt_getconstant_path, operands: [[:Point]]),
+      InstStub.new(opcode: :putnil, operands: []),
+      InstStub.new(opcode: :swap, operands: []),
+      InstStub.new(opcode: :putobject_INT2FIX_1_, operands: []),
+      InstStub.new(opcode: :putobject, operands: [2]),
+      InstStub.new(opcode: :opt_new, operands: [FakeCD.new(:new, 2), 9]),
+      InstStub.new(opcode: :opt_send_without_block, operands: [FakeCD.new(:initialize, 2)]),
+      InstStub.new(opcode: :jump, operands: [11]),
+      InstStub.new(opcode: :opt_send_without_block, operands: [FakeCD.new(:new, 2)]),
+      InstStub.new(opcode: :swap, operands: []),
+      InstStub.new(opcode: :pop, operands: []),
+      InstStub.new(opcode: :setlocal_WC_0, operands: [3]),
+    ]
+    fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
+    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    assert_equal "Point", table.lookup(0, 0)
+  end
+
   def test_lookup_above_root_returns_nil
     fn = FnStub.new(arg_spec: {}, instructions: [], misc: { local_table_size: 0 })
     table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)

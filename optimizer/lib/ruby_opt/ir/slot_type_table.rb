@@ -87,16 +87,13 @@ module RubyOpt
           (inst.opcode == :setlocal && (inst.operands[1] || 0) == 0)
       end
 
-      # Walk back from the setlocal at idx looking for
-      # [opt_getconstant_path <path>, arg pushes..., opt_send_without_block :new].
-      #
-      # v1 assumes each arg occupies exactly one instruction (literals,
-      # `getlocal`, etc.). A compound arg like `Point.new(a + b, 2)` has
-      # a multi-instruction producer for the first arg; the back-walk
-      # will land mid-expression and fail to match, which is safe but
-      # misses a real `.new` call. Stack-effect-aware back-walk is future
-      # work.
       def detect_class_new_producer(insts, set_idx, object_table)
+        detect_via_direct_new_send(insts, set_idx, object_table) ||
+          detect_via_opt_new(insts, set_idx, object_table)
+      end
+
+      # Ruby 3.x shape: setlocal directly preceded by opt_send_without_block :new.
+      def detect_via_direct_new_send(insts, set_idx, object_table)
         return nil if set_idx.zero?
         send_inst = insts[set_idx - 1]
         return nil unless send_inst.opcode == :opt_send_without_block
@@ -107,9 +104,56 @@ module RubyOpt
         return nil if recv_idx < 0
         recv = insts[recv_idx]
         return nil unless recv.opcode == :opt_getconstant_path
-        path = recv.operands[0]
-        return nil unless path.is_a?(Array) && !path.empty?
-        path.last.to_s
+        resolve_constant_path_tail(recv.operands[0], object_table)
+      end
+
+      # Resolves the tail symbol of a constant-path operand on an
+      # `opt_getconstant_path` instruction. Handles both shapes:
+      # - Array literal (older/test-stub form): `[:Point]` → "Point"
+      # - Object-table index into an Array of Symbol indices (codec form):
+      #   `4` → object_table.objects[4] = [12] → objects[12] = :Point.
+      def resolve_constant_path_tail(operand, object_table)
+        if operand.is_a?(Array)
+          return nil if operand.empty?
+          return operand.last.to_s
+        end
+        return nil unless operand.is_a?(Integer) && object_table
+        path_array = object_table.objects[operand]
+        return nil unless path_array.is_a?(Array) && !path_array.empty?
+        tail = path_array.last
+        tail = object_table.objects[tail] if tail.is_a?(Integer)
+        return nil unless tail.is_a?(Symbol)
+        tail.to_s
+      end
+
+      # Ruby 4.0+ shape: setlocal is preceded by a fast/slow-path wrapper
+      # around `opt_new`. We scan back up to MAX_NEW_WRAPPER_LOOKBACK
+      # instructions for the :opt_new opcode; if found, look further back
+      # for the opt_getconstant_path that names the class.
+      MAX_NEW_WRAPPER_LOOKBACK = 12
+      MAX_GETCONSTANT_LOOKBACK = 6
+
+      def detect_via_opt_new(insts, set_idx, object_table)
+        i = set_idx - 1
+        limit = [0, set_idx - MAX_NEW_WRAPPER_LOOKBACK].max
+        while i >= limit
+          if insts[i].opcode == :opt_new
+            cd = insts[i].operands[0]
+            return nil unless cd.respond_to?(:mid_symbol)
+            return nil unless cd.mid_symbol(object_table) == :new
+            j = i - 1
+            jlimit = [0, i - MAX_GETCONSTANT_LOOKBACK].max
+            while j >= jlimit
+              if insts[j].opcode == :opt_getconstant_path
+                return resolve_constant_path_tail(insts[j].operands[0], object_table)
+              end
+              j -= 1
+            end
+            return nil
+          end
+          i -= 1
+        end
+        nil
       end
     end
   end

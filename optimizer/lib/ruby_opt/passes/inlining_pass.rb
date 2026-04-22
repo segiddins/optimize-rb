@@ -11,7 +11,7 @@ module RubyOpt
     # v1: inline zero-arg FCALLs to constant-body callees. See
     # docs/superpowers/specs/2026-04-21-pass-inlining-v1-design.md.
     class InliningPass < RubyOpt::Pass
-      INLINE_BUDGET = 8  # max callee instructions INCLUDING the trailing leave
+      INLINE_BUDGET = 16 # max callee instructions INCLUDING the trailing leave
 
       SEND_OPCODES = %i[
         send opt_send_without_block
