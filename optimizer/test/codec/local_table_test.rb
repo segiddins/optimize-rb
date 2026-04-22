@@ -90,6 +90,23 @@ class LocalTableCodecTest < Minitest::Test
                  take.misc[:local_table_raw].bytesize
   end
 
+  def test_grow_sentinel_captures_pre_first_growth_size_only
+    src = "def take(x); x; end; take(1)"
+    bin = RubyVM::InstructionSequence.compile(src).to_binary
+    ir  = RubyOpt::Codec.decode(bin)
+    take = find_iseq_named(ir, "take")
+    refute_nil take
+    original_size = take.misc[:local_table_size]
+    sentinel = RubyOpt::Codec::LocalTable.decode(
+      take.misc[:local_table_raw], take.misc[:local_table_size]
+    )[0]
+
+    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+
+    assert_equal original_size, take.misc[:local_table_size_pre_growth]
+  end
+
   private
 
   def find_iseq_named(fn, name)

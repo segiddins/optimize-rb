@@ -49,15 +49,24 @@ module RubyOpt
       # pad bytes that the original raw carried — the iseq_list encoder uses
       # `raw.bytesize` for downstream section positioning).
       #
+      # Side effect: on the first call for a given iseq, stashes the
+      # pre-growth size in `fn.misc[:local_table_size_pre_growth]` (set-once;
+      # subsequent grow! calls leave it alone). The encoder's body-identity
+      # guard reads this to detect legitimate growth.
+      #
       # Does NOT mutate getlocal/setlocal LINDEX operands in `fn.instructions`;
       # that rewrite is the inlining pass's responsibility.
       #
-      # @param fn [Object] function/iseq IR node with a `misc` Hash
+      # @param fn [IR::Function] function/iseq IR node with a `misc` Hash
       # @param object_table_index [Integer] index into the object table
-      #   naming the new local's Symbol
+      #   naming the new local's Symbol; must be a non-negative Integer
+      #   less than 2**64 (u64 range for the BinaryWriter layer)
       # @return [Integer] the new entry's local-table index
       #   (post-growth `local_table_size - 1`, i.e. the prior size)
       def grow!(fn, object_table_index)
+        unless object_table_index.is_a?(Integer) && object_table_index >= 0 && object_table_index < (1 << 64)
+          raise ArgumentError, "object_table_index must be a non-negative Integer < 2**64, got #{object_table_index.inspect}"
+        end
         misc = fn.misc
         old_size = (misc[:local_table_size] || 0)
         old_raw  = (misc[:local_table_raw]  || "".b)
@@ -66,10 +75,10 @@ module RubyOpt
         new_content = encode(entries)
         old_content_size = old_size * ID_SIZE
         pad_bytes = [old_raw.bytesize - old_content_size, 0].max
-        # Preserve the original size once, so the iseq_list encoder can detect
+        # Preserve the pre-growth size once, so the iseq_list encoder can detect
         # that the body record's local_table_size / relative offsets have
         # legitimately changed and skip byte-identity assertions.
-        misc[:local_table_size_original] ||= old_size
+        misc[:local_table_size_pre_growth] ||= old_size
         misc[:local_table_raw]  = new_content + ("\x00".b * pad_bytes)
         misc[:local_table_size] = old_size + 1
         old_size
