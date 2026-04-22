@@ -98,12 +98,51 @@ class ConstFoldEnvPassTest < Minitest::Test
     refute(log.for_pass(:const_fold_env).any? { |e| e.reason == :env_write_observed })
   end
 
-  def test_env_values_at_two_args_still_taints_v1
-    # v1 scope: argc>=2 safe methods are NOT narrowed; still taint.
+  def test_env_values_at_two_args_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B"); end'
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
+    log = RubyOpt::Log.new
+    r = find_iseq(ir, "r")
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    refute_includes r.instructions.map(&:opcode), :opt_aref,
+      "r should fold — ENV.values_at (argc=2) sibling must not taint in v2"
+    refute(log.for_pass(:const_fold_env).any? { |e| e.reason == :env_write_observed },
+           "argc=2 safe sends should not taint the tree in v2")
+  end
+
+  def test_env_values_at_three_args_does_not_taint_tree
+    src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B", "C"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    snap = { "A" => "1", "B" => "2", "C" => "3" }.freeze
+    log = RubyOpt::Log.new
+    r = find_iseq(ir, "r")
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    refute_includes r.instructions.map(&:opcode), :opt_aref,
+      "r should fold — ENV.values_at (argc=3) sibling must not taint in v2"
+    refute(log.for_pass(:const_fold_env).any? { |e| e.reason == :env_write_observed },
+           "argc=3 safe sends should not taint the tree in v2")
+  end
+
+  def test_env_store_two_args_still_taints_tree
+    # ENV.store is not in SAFE_ENV_READ_METHODS — v2's argc-generic scan
+    # still taints on it (mid check is what gates safety).
+    src = 'def r; ENV["A"]; end; def w; ENV.store("B", "x"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    snap = { "A" => "1" }.freeze
     log = RubyOpt::Log.new
     r = find_iseq(ir, "r")
     before_r = r.instructions.map(&:opcode)
@@ -114,7 +153,7 @@ class ConstFoldEnvPassTest < Minitest::Test
     end
 
     assert_equal before_r, r.instructions.map(&:opcode),
-      "v1 does not narrow argc>=2 safe sends — r should NOT fold"
+      "r should NOT fold — ENV.store sibling still taints in v2"
     assert_operator log.for_pass(:const_fold_env).count { |e| e.reason == :env_write_observed }, :>=, 1
   end
 
