@@ -64,6 +64,60 @@ class ConstFoldEnvPassTest < Minitest::Test
            "read-only ENV.fetch should not taint the tree")
   end
 
+  def test_env_to_h_does_not_taint_tree
+    src = 'def r; ENV["A"]; end; def g; ENV.to_h; end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    snap = { "A" => "1" }.freeze
+    log = RubyOpt::Log.new
+    r = find_iseq(ir, "r")
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    refute_includes r.instructions.map(&:opcode), :opt_aref
+    refute(log.for_pass(:const_fold_env).any? { |e| e.reason == :env_write_observed })
+  end
+
+  def test_env_key_question_does_not_taint_tree
+    src = 'def r; ENV["A"]; end; def g; ENV.key?("B"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    snap = { "A" => "1" }.freeze
+    log = RubyOpt::Log.new
+    r = find_iseq(ir, "r")
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    refute_includes r.instructions.map(&:opcode), :opt_aref
+    refute(log.for_pass(:const_fold_env).any? { |e| e.reason == :env_write_observed })
+  end
+
+  def test_env_values_at_two_args_still_taints_v1
+    # v1 scope: argc>=2 safe methods are NOT narrowed; still taint.
+    src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    snap = { "A" => "1", "B" => "2" }.freeze
+    log = RubyOpt::Log.new
+    r = find_iseq(ir, "r")
+    before_r = r.instructions.map(&:opcode)
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    assert_equal before_r, r.instructions.map(&:opcode),
+      "v1 does not narrow argc>=2 safe sends — r should NOT fold"
+    assert_operator log.for_pass(:const_fold_env).count { |e| e.reason == :env_write_observed }, :>=, 1
+  end
+
   def test_env_with_dynamic_key_does_not_taint
     # ENV[name] — opt_aref with a getlocal key. Safe use (i+2 is opt_aref).
     # Must NOT emit :env_write_observed.
