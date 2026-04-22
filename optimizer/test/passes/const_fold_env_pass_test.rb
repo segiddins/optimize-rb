@@ -81,6 +81,83 @@ class ConstFoldEnvPassTest < Minitest::Test
            "opt_aref with non-literal key is a safe use, not a taint")
   end
 
+  def test_folds_env_aref_when_value_already_interned
+    # "hello" appears as the RHS literal so it's in the object table.
+    src = 'def f; ENV["K"] == "hello"; end; f'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    snap = { "K" => "hello" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = f.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_getconstant_path, "ENV producer should be gone"
+    refute_includes opcodes, :opt_aref, "opt_aref should be gone"
+  end
+
+  def test_folds_missing_key_to_putnil
+    src = 'def f; ENV["MISSING"]; end; f'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    snap = {}.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = f.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_getconstant_path
+    refute_includes opcodes, :opt_aref
+    assert_includes opcodes, :putnil
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_nil loaded.eval
+  end
+
+  def test_skips_fold_when_snapshot_value_not_in_object_table
+    # "xyzzy" is in the snapshot but NOT anywhere in the compiled program.
+    # intern() can't add strings → skip this fold site, log.
+    src = 'def f; ENV["K"]; end; f'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    snap = { "K" => "xyzzy" }.freeze
+    log = RubyOpt::Log.new
+    before = f.instructions.map(&:opcode)
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    assert_equal before, f.instructions.map(&:opcode)
+    not_interned = log.for_pass(:const_fold_env).count { |e| e.reason == :env_value_not_interned }
+    assert_operator not_interned, :>=, 1
+  end
+
+  def test_logs_folded_for_each_successful_fold
+    src = 'def f; ENV["K"] == "hello"; end; f'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    snap = { "K" => "hello" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    folded = log.for_pass(:const_fold_env).select { |e| e.reason == :folded }
+    assert_operator folded.size, :>=, 1
+  end
+
   private
 
   def each_function(fn, &blk)

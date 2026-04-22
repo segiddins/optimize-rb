@@ -43,7 +43,53 @@ module RubyOpt
         end
         return if root.misc[TAINT_FLAG_KEY]
 
-        # Fold phase is added in Task 4. For now: no folding.
+        # Fold phase. Match the 3-tuple:
+        #   opt_getconstant_path <ENV>; putchilledstring/putstring KEY; opt_aref
+        # Splice to a single putobject <idx> or putnil, where idx comes from
+        # object_table.index_for(snapshot_value). If the snapshot value isn't
+        # already interned, skip that fold site (intern can't append strings).
+        i = 0
+        while i <= insts.size - 3
+          a  = insts[i]
+          b  = insts[i + 1]
+          op = insts[i + 2]
+
+          unless env_producer?(a, object_table) && literal_string?(b, object_table) && op.opcode == :opt_aref
+            i += 1
+            next
+          end
+
+          key = LiteralValue.read(b, object_table: object_table)
+          value = env_snapshot[key]
+
+          replacement =
+            if value.nil?
+              IR::Instruction.new(opcode: :putnil, operands: [], line: a.line)
+            elsif value.is_a?(String)
+              idx = object_table.index_for(value)
+              if idx.nil?
+                log.skip(pass: :const_fold_env, reason: :env_value_not_interned,
+                         file: function.path, line: (a.line || function.first_lineno || 0))
+                nil
+              else
+                IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
+              end
+            else
+              # ENV values are strings or nil by contract. Defensive.
+              log.skip(pass: :const_fold_env, reason: :env_value_not_string,
+                       file: function.path, line: (a.line || function.first_lineno || 0))
+              nil
+            end
+
+          if replacement
+            function.splice_instructions!(i..(i + 2), [replacement])
+            log.skip(pass: :const_fold_env, reason: :folded,
+                     file: function.path, line: (a.line || function.first_lineno || 0))
+            i += 1
+          else
+            i += 1
+          end
+        end
       end
 
       private
@@ -91,6 +137,19 @@ module RubyOpt
           id_idx = inst.operands[0]
           return false unless id_idx.is_a?(Integer)
           object_table.objects[id_idx] == :ENV
+        else
+          false
+        end
+      end
+
+      # Returns true if +inst+ is a literal string producer whose operand
+      # resolves to a String in the object table.
+      def literal_string?(inst, object_table)
+        return false unless inst
+        case inst.opcode
+        when :putchilledstring, :putstring
+          idx = inst.operands[0]
+          idx.is_a?(Integer) && object_table.objects[idx].is_a?(String)
         else
           false
         end
