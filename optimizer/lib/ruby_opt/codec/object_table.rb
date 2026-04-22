@@ -151,7 +151,11 @@ module RubyOpt
           appended_offsets = []
           (@appended || []).each do |value|
             appended_offsets << writer.pos
-            write_special_const(writer, value)
+            if value.is_a?(String)
+              write_string(writer, value)
+            else
+              write_special_const(writer, value)
+            end
           end
 
           # The object offset array must be 4-byte aligned (ibf_dump_align uses
@@ -203,8 +207,17 @@ module RubyOpt
         existing = index_for(value)
         return existing if existing
 
+        if value.is_a?(String)
+          stored = value.dup.freeze
+          new_idx = @objects.size
+          @objects << stored
+          @appended ||= []
+          @appended << stored
+          return new_idx
+        end
+
         unless special_const?(value)
-          raise ArgumentError, "ObjectTable#intern only supports special-const values (Integer/true/false/nil), got #{value.inspect}"
+          raise ArgumentError, "ObjectTable#intern only supports special-const values (Integer/true/false/nil) or String, got #{value.inspect}"
         end
 
         new_idx = @objects.size
@@ -449,6 +462,26 @@ module RubyOpt
             raise ArgumentError, "cannot encode #{value.inspect} as special_const"
           end
         writer.write_small_value(encoded)
+      end
+
+      # Write one T_STRING object payload.
+      # Layout (mirrors decode_string):
+      #   header byte: 0x45 (T_STRING=5, frozen bit set)
+      #   small_value: encindex (0=ASCII_8BIT, 1=UTF_8, 2=US_ASCII)
+      #   small_value: byte length
+      #   raw bytes
+      def write_string(writer, value)
+        writer.write_u8(0x45)
+        encindex =
+          case value.encoding
+          when Encoding::ASCII_8BIT then 0
+          when Encoding::US_ASCII   then 2
+          else                           1  # UTF-8 / fallback
+          end
+        bytes = value.b
+        writer.write_small_value(encindex)
+        writer.write_small_value(bytes.bytesize)
+        writer.write_bytes(bytes)
       end
     end
   end
