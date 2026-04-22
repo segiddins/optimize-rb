@@ -126,7 +126,6 @@ module RubyOpt
           return :callee_makes_call   if SEND_OPCODES.include?(inst.opcode)
           return :callee_has_leave_midway if inst.opcode == :leave
           return :callee_has_throw if inst.opcode == :throw
-          # v2: slot 1 is the sole arg; anything else means a local we can't yet handle.
           case inst.opcode
           when :setlocal, :setlocal_WC_0, :setlocal_WC_1
             return :callee_writes_local
@@ -134,8 +133,10 @@ module RubyOpt
             return :callee_reads_outer_scope
           when :getlocal, :getlocal_WC_0
             idx = inst.operands[0]
-            # Slot 1 is the single arg. Anything else rejects.
-            return :callee_reads_unknown_slot unless idx == 1
+            # IR preserves YARV's raw EP offset:
+            #   LINDEX = VM_ENV_DATA_SIZE (3) + (local_table_size - 1 - table_index)
+            # For lt_size == 1, the sole local (arg at table idx 0) has LINDEX 3.
+            return :callee_reads_unknown_slot unless idx == 3
           end
         end
         nil
