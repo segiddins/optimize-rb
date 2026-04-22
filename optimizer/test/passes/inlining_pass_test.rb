@@ -2,6 +2,8 @@
 require "test_helper"
 require "ruby_opt/codec"
 require "ruby_opt/log"
+require "ruby_opt/type_env"
+require "ruby_opt/ir/slot_type_table"
 require "ruby_opt/passes/inlining_pass"
 
 class InliningPassTest < Minitest::Test
@@ -286,6 +288,84 @@ class InliningPassTest < Minitest::Test
     pass = RubyOpt::Passes::InliningPass.new
     assert_equal :callee_has_branches,
                  pass.send(:disqualify_callee_for_opt_send, callee)
+  end
+
+  def test_opt_send_with_typed_receiver_and_constant_body_splices
+    src = <<~RUBY
+      class Point
+        # @rbs (Point) -> Integer
+        def distance_to(other); 42; end
+      end
+      # @rbs (Point, Point) -> Integer
+      def distance(p, q); p.distance_to(q); end
+      distance(Point.new, Point.new)
+    RUBY
+    ir       = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot       = ir.misc[:object_table]
+    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    caller   = find_iseq(ir, "distance")
+    callee   = find_iseq(ir, "distance_to")
+    refute_nil caller
+    refute_nil callee
+
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    refute_nil caller_sig, "caller must have an @rbs signature for this test"
+    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    original_locals = caller.misc[:local_table_size]
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: { ["Point", :distance_to] => callee },
+      slot_type_map: slot_type_map,
+    )
+
+    ops = caller.instructions.map(&:opcode)
+    refute_includes ops, :opt_send_without_block, "call site should be spliced"
+    assert_includes ops, :putobject, "constant body should appear in caller"
+    assert log.entries.any? { |e| e.reason == :inlined }
+    # Arg-stash slot added; no self-stash since body has no putself.
+    assert_equal original_locals + 1, caller.misc[:local_table_size]
+  end
+
+  def test_opt_send_with_typed_receiver_roundtrips_through_vm
+    src = <<~RUBY
+      class Point
+        # @rbs (Point) -> Integer
+        def distance_to(other); 42; end
+      end
+      # @rbs (Point, Point) -> Integer
+      def distance(p, q); p.distance_to(q); end
+      distance(Point.new, Point.new)
+    RUBY
+    ir       = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot       = ir.misc[:object_table]
+    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    caller   = find_iseq(ir, "distance")
+    callee   = find_iseq(ir, "distance_to")
+
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: { ["Point", :distance_to] => callee },
+      slot_type_map: slot_type_map,
+    )
+    # Sanity: confirm the inline actually happened before we trust the eval.
+    assert log.entries.any? { |e| e.reason == :inlined }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 42, loaded.eval
   end
 
   private

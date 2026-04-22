@@ -12,6 +12,7 @@ module RubyOpt
       def initialize(function, signature, parent, object_table: nil)
         @slot_types = {}
         @parent = parent
+        @local_table_size = (function.misc && function.misc[:local_table_size]) || 0
         seed_from_signature(function, signature)
         scan_for_constructors(function, object_table)
       end
@@ -25,6 +26,24 @@ module RubyOpt
         table.slot_types[slot]
       end
 
+      # Returns the local_table_size of the table `level` parents up.
+      # Returns nil if the parent chain ends before reaching `level`.
+      def local_table_size_at(level)
+        table = self
+        level.times do
+          table = table.parent
+          return nil unless table
+        end
+        table.local_table_size
+      end
+
+      # Update the cached size after the function's local table grew. The
+      # cache is what `local_table_size_at` walks; after a pass calls
+      # Codec::LocalTable.grow!, the slot-table view must be re-synced.
+      def refresh_local_table_size!(new_size)
+        @local_table_size = new_size
+      end
+
       # LINDEX ↔ slot-index conversion.
       # LINDEX = VM_ENV_DATA_SIZE(3) + (size - 1 - slot)  →  slot = size - 1 - (LINDEX - 3).
       def self.lindex_to_slot(lindex, size)
@@ -33,7 +52,7 @@ module RubyOpt
 
       protected
 
-      attr_reader :slot_types
+      attr_reader :slot_types, :local_table_size
 
       private
 

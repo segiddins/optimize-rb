@@ -3,6 +3,7 @@ require "ruby_opt/pass"
 require "ruby_opt/ir/call_data"
 require "ruby_opt/ir/instruction"
 require "ruby_opt/ir/cfg"
+require "ruby_opt/ir/slot_type_table"
 require "ruby_opt/codec/local_table"
 
 module RubyOpt
@@ -32,9 +33,10 @@ module RubyOpt
 
       def name = :inlining
 
-      def apply(function, type_env:, log:, object_table: nil, callee_map: {}, **_extras)
+      def apply(function, type_env:, log:, object_table: nil, callee_map: {}, slot_type_map: {}, **_extras)
         _ = type_env
         return unless object_table
+        slot_table = slot_type_map[function]
         insts = function.instructions
         return unless insts
 
@@ -44,12 +46,19 @@ module RubyOpt
           while i < insts.size
             b = insts[i]
             if b.opcode == :opt_send_without_block
-              if try_inline(function, i, callee_map, object_table, log)
-                changed = true
-                insts = function.instructions
-                # Do not step back; v1 disallows nested calls in the callee,
-                # so the spliced region cannot contain new inline candidates.
-                next
+              cd = b.operands[0]
+              if cd.is_a?(IR::CallData) && cd.fcall?
+                if try_inline(function, i, callee_map, object_table, log)
+                  changed = true
+                  insts = function.instructions
+                  next
+                end
+              elsif slot_table
+                if try_inline_opt_send(function, i, callee_map, object_table, log, slot_table)
+                  changed = true
+                  insts = function.instructions
+                  next
+                end
               end
             end
             i += 1
@@ -176,6 +185,112 @@ module RubyOpt
         log.skip(pass: :inlining, reason: :inlined,
                  file: function.path, line: line)
         true
+      end
+
+      def try_inline_opt_send(function, send_idx, callee_map, object_table, log, slot_table)
+        insts = function.instructions
+        send_inst = insts[send_idx]
+        cd = send_inst.operands[0]
+        line = send_inst.line || function.first_lineno
+        return false unless cd.is_a?(IR::CallData)
+        return false unless cd.argc == 1
+        return false unless cd.args_simple? && cd.kwlen.zero? && !cd.blockarg? && !cd.has_splat?
+        return false if send_idx < 2
+
+        recv_inst = insts[send_idx - 2]
+        slot, level = decode_getlocal(recv_inst, slot_table)
+        return false unless slot
+
+        type = slot_table.lookup(slot, level)
+        return false unless type
+
+        mid = cd.mid_symbol(object_table)
+        callee = callee_map[[type, mid]]
+        unless callee
+          log.skip(pass: :inlining, reason: :callee_unresolved,
+                   file: function.path, line: line)
+          return false
+        end
+
+        reason = disqualify_callee_for_opt_send(callee)
+        if reason
+          log.skip(pass: :inlining, reason: reason, file: function.path, line: line)
+          return false
+        end
+
+        body = callee.instructions[0..-2]
+        if body.any? { |inst| inst.opcode == :putself }
+          log.skip(pass: :inlining, reason: :opt_send_needs_self_rewrite,
+                   file: function.path, line: line)
+          return false
+        end
+
+        callee_arg_obj_idx = Codec::LocalTable.decode(
+          callee.misc[:local_table_raw] || "".b,
+          callee.misc[:local_table_size] || 0,
+        ).first
+        if callee_arg_obj_idx.nil?
+          log.skip(pass: :inlining, reason: :callee_local_table_unreadable,
+                   file: function.path, line: line)
+          return false
+        end
+
+        Codec::LocalTable.grow!(function, callee_arg_obj_idx)
+        shift_level0_lindex_by_1(function)
+        # Keep slot_table's cached local_table_size in sync with the caller.
+        slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
+
+        insts = function.instructions
+        arg_push = insts[send_idx - 1]
+        setlocal_arg = IR::Instruction.new(
+          opcode: :setlocal_WC_0,
+          operands: [NEW_SLOT_LINDEX],
+          line: arg_push.line || line,
+        )
+        # Drop the receiver producer; its value is unused in Task 8.
+        replacement = [arg_push, setlocal_arg, *body]
+        function.splice_instructions!((send_idx - 2)..send_idx, replacement)
+
+        log.skip(pass: :inlining, reason: :inlined, file: function.path, line: line)
+        true
+      end
+
+      def decode_getlocal(inst, slot_table)
+        case inst.opcode
+        when :getlocal_WC_0
+          size = lt_size_at_level(slot_table, 0)
+          return [nil, nil] unless size
+          [IR::SlotTypeTable.lindex_to_slot(inst.operands[0], size), 0]
+        when :getlocal_WC_1
+          size = lt_size_at_level(slot_table, 1)
+          return [nil, nil] unless size
+          [IR::SlotTypeTable.lindex_to_slot(inst.operands[0], size), 1]
+        when :getlocal
+          level = inst.operands[1]
+          size = lt_size_at_level(slot_table, level)
+          return [nil, nil] unless size
+          [IR::SlotTypeTable.lindex_to_slot(inst.operands[0], size), level]
+        else
+          [nil, nil]
+        end
+      end
+
+      def lt_size_at_level(slot_table, level)
+        return nil unless slot_table
+        slot_table.local_table_size_at(level)
+      end
+
+      def shift_level0_lindex_by_1(function)
+        function.instructions.each do |inst|
+          case inst.opcode
+          when :getlocal_WC_0, :setlocal_WC_0
+            inst.operands[0] = inst.operands[0] + 1
+          when :getlocal, :setlocal
+            if inst.operands[1] == 0
+              inst.operands[0] = inst.operands[0] + 1
+            end
+          end
+        end
       end
 
       # Like #disqualify_callee but permits nested plain sends
