@@ -121,25 +121,32 @@ class ConstFoldEnvPassTest < Minitest::Test
     assert_nil loaded.eval
   end
 
-  def test_skips_fold_when_snapshot_value_not_in_object_table
+  def test_folds_env_to_interned_string_value
     # "xyzzy" is in the snapshot but NOT anywhere in the compiled program.
-    # intern() can't add strings → skip this fold site, log.
+    # After string-intern support, the pass MUST fold by interning the
+    # snapshot value into the object table.
     src = 'def f; ENV["K"]; end; f'
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     snap = { "K" => "xyzzy" }.freeze
     log = RubyOpt::Log.new
-    before = f.instructions.map(&:opcode)
 
     pass = RubyOpt::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
 
-    assert_equal before, f.instructions.map(&:opcode)
+    refute_includes f.instructions.map(&:opcode), :opt_aref,
+      "opt_aref should be folded away"
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_operator folded, :>=, 1
     not_interned = log.for_pass(:const_fold_env).count { |e| e.reason == :env_value_not_interned }
-    assert_operator not_interned, :>=, 1
+    assert_equal 0, not_interned, ":env_value_not_interned should no longer fire for strings"
+
+    # End-to-end: the re-encoded binary loads and returns the snapshot value.
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal "xyzzy", loaded.eval
   end
 
   def test_logs_folded_for_each_successful_fold

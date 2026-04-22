@@ -30,17 +30,16 @@ module RubyOpt
         _ = type_env
         return unless object_table
         return unless env_snapshot
-        insts = function.instructions
-        return unless insts
 
-        tainted_here, first_taint_line = classify(insts, object_table)
         root = tree_root(function)
         root.misc ||= {}
-        if tainted_here && !root.misc[TAINT_FLAG_KEY]
-          root.misc[TAINT_FLAG_KEY] = true
-          log.skip(pass: :const_fold_env, reason: :env_write_observed,
-                   file: function.path, line: first_taint_line || function.first_lineno || 0)
+        unless root.misc.key?(:const_fold_env_tree_scanned)
+          root.misc[:const_fold_env_tree_scanned] = true
+          scan_tree_for_taint(root, object_table, log)
         end
+
+        insts = function.instructions
+        return unless insts
         return if root.misc[TAINT_FLAG_KEY]
 
         # Fold phase. Match the 3-tuple:
@@ -66,14 +65,8 @@ module RubyOpt
             if value.nil?
               IR::Instruction.new(opcode: :putnil, operands: [], line: a.line)
             elsif value.is_a?(String)
-              idx = object_table.index_for(value)
-              if idx.nil?
-                log.skip(pass: :const_fold_env, reason: :env_value_not_interned,
-                         file: function.path, line: (a.line || function.first_lineno || 0))
-                nil
-              else
-                IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
-              end
+              idx = object_table.intern(value)
+              IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
             else
               # ENV values are strings or nil by contract. Defensive.
               log.skip(pass: :const_fold_env, reason: :env_value_not_string,
@@ -93,6 +86,26 @@ module RubyOpt
       end
 
       private
+
+      # Whole-tree taint scan. Called once per pipeline run on the root
+      # function before any folds happen. Walks every function in the
+      # tree, and if any carries a tainted ENV use, records a single
+      # :env_write_observed log entry and sets the tree's taint flag.
+      def scan_tree_for_taint(fn, object_table, log)
+        insts = fn.instructions
+        if insts
+          tainted_here, first_taint_line = classify(insts, object_table)
+          if tainted_here
+            root = tree_root(fn)
+            unless root.misc[TAINT_FLAG_KEY]
+              root.misc[TAINT_FLAG_KEY] = true
+              log.skip(pass: :const_fold_env, reason: :env_write_observed,
+                       file: fn.path, line: first_taint_line || fn.first_lineno || 0)
+            end
+          end
+        end
+        fn.children&.each { |c| scan_tree_for_taint(c, object_table, log) }
+      end
 
       # Walk `insts`. For every ENV producer, the stack consumer is
       # `insts[i+2]` (the key producer sits at i+1). Safe iff the
