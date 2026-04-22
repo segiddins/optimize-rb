@@ -278,6 +278,32 @@ Two new skip reasons on `:const_fold_env`:
   `def f; ENV["FOO"]; end` under the target Ruby and branching if
   needed. Keep the `getconstant :ENV` fallback.
 
+## Addendum: emit-path constraint (discovered during plan)
+
+`ObjectTable#intern` only supports special-const values
+(Integer/true/false/nil). It cannot append arbitrary frozen strings
+without a codec extension. Rather than couple this pass to a codec
+change, v1 restricts the fold:
+
+- snapshot value is `nil` → emit `putnil` (always possible).
+- snapshot value is a String and `object_table.index_for(value)`
+  returns a non-nil index → emit `putobject <idx>`.
+- snapshot value is a String not present in the object table → skip
+  this fold site, log `skip(pass: :const_fold_env,
+  reason: :env_value_not_interned, ...)`. Other fold sites in the
+  same tree (with interned values) still fold.
+
+For the talk's canonical pattern `ENV["FLAG"] == "true"`, the RHS
+`"true"` is in the object table (as `putchilledstring "true"` from
+the comparison), so `index_for("true")` succeeds and the fold works.
+Cases that fail to fold are an explicit narrative beat: "even the
+optimizer has its limits — extending the string table stays on the
+v2 list."
+
+Queued v2 work: extend `ObjectTable#intern` + encoder
+`write_special_const` branching to emit T_STRING payloads for frozen
+strings. Unblocks unconditional ENV folding.
+
 ## Out-of-scope but queued for v2
 
 - `ENV.fetch` in all its forms.
