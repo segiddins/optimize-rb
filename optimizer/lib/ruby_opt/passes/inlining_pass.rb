@@ -111,6 +111,17 @@ module RubyOpt
         true
       end
 
+      # The IR stores raw YARV EP offsets:
+      #   LINDEX = VM_ENV_DATA_SIZE (3) + (local_table_size - 1 - table_index)
+      # Two invariants drive this method:
+      #   - The last-appended slot (what `grow!` returns) always has LINDEX 3,
+      #     regardless of the new size. So the callee's `getlocal_WC_0 3`
+      #     arg-read lands at the right LINDEX post-splice with no rewrite.
+      #   - Growing local_table_size by 1 shifts every pre-existing level-0
+      #     LINDEX up by 1. Level-1 ops reference the outer EP and are
+      #     untouched. The loop below enforces that.
+      # Example, caller going from size 1 → 2: old slot 0 moves from LINDEX 3
+      # to LINDEX 4; new slot (table index 1) gets LINDEX 3.
       def try_inline_one_arg(function, send_idx, cd, callee, log, line)
         insts = function.instructions
         unless cd.fcall? && cd.args_simple? && cd.kwlen.zero? &&

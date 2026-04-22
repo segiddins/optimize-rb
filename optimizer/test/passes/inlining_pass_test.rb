@@ -216,6 +216,44 @@ class InliningPassTest < Minitest::Test
     assert log.entries.any? { |e| e.reason == :unsupported_call_shape }
   end
 
+  def test_v2_inlines_two_one_arg_fcalls_in_same_caller
+    # Two independent one-arg callees inlined back-to-back into the same
+    # caller. Exercises grow! composing across calls (size 1 → 2 → 3) and
+    # the LINDEX +1 shift applying correctly to the FIRST inline's emitted
+    # setlocal when the second grow runs.
+    src = <<~RUBY
+      def double(x); x * 2; end
+      def triple(x); x * 3; end
+      def use_it(n); double(n) + triple(n); end
+      use_it(5)
+    RUBY
+    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot  = ir.misc[:object_table]
+    use_it = find_iseq(ir, "use_it")
+    double = find_iseq(ir, "double")
+    triple = find_iseq(ir, "triple")
+
+    # use_it starts with 1 local (the `n` param).
+    assert_equal 1, use_it.misc[:local_table_size]
+
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { double: double, triple: triple },
+    )
+
+    # Both sends inlined.
+    refute use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    # local_table grew by 2 (one per inlined arg).
+    assert_equal 3, use_it.misc[:local_table_size]
+    # Two :inlined entries logged.
+    assert_equal 2, log.entries.count { |e| e.reason == :inlined }
+
+    # The semantic check: 5*2 + 5*3 == 25.
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 25, loaded.eval
+  end
+
   private
 
   def find_iseq(fn, name)

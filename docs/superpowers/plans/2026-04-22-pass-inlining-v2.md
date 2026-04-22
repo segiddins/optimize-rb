@@ -416,17 +416,23 @@ jj commit -m "InliningPass: widen callee predicate for v2 (one-arg + one local)"
 
 ---
 
-## Task 4: `InliningPass` v2 — splice + LINDEX rewrite
+## Task 4: `InliningPass` v2 — splice + LINDEX shift
 
-**Context:** With the widened predicate and `LocalTable.grow!` both in place, v2's splice is: allocate a caller slot, emit `setlocal`, splice callee body with LINDEX remap. The candidate call-site pattern is `<push-arg>; putself; opt_send_without_block cd` with `cd.argc == 1`. **Note the order**: Ruby compiles `foo(x)` as `putself; putobject|getlocal x; send` — `putself` comes first, then the arg push. Verify this empirically in Step 1 before committing to the splice shape.
+**Context:** With the widened predicate and `LocalTable.grow!` both in place, v2's splice is: grow the caller's local_table, **shift all existing caller LINDEXes by +1**, emit a `setlocal` into the new slot, and splice the callee body as-is. Call-site pattern: `putself; <single-instr-arg-push>; opt_send_without_block cd` with `cd.argc == 1`.
+
+**LINDEX math — the non-obvious part.** Empirical finding (verified pre-Task 3): the IR stores raw YARV EP offsets, where `LINDEX = VM_ENV_DATA_SIZE (3) + (local_table_size − 1 − table_index)`. Consequences:
+
+- The last-appended slot (what `grow!` returns) always has LINDEX = **3**, regardless of table size. Both the emitted `setlocal` and the callee body's `getlocal_WC_0 3` arg-read are correctly pointed at this LINDEX — **no rewrite needed inside the spliced callee body**.
+- Every pre-existing caller `getlocal*`/`setlocal*` at level 0 (i.e. `getlocal_WC_0`, `setlocal_WC_0`, and `getlocal`/`setlocal` with level-operand == 0) must have its LINDEX **incremented by 1** to remain pointed at its original local (table index unchanged, but `local_table_size` grew by 1, so EP offset shifts up).
+- Level-1 ops (`getlocal_WC_1`, `setlocal_WC_1`, and `getlocal`/`setlocal` with level > 0) reference the outer EP and are unaffected by the caller's growth. Predicate already excludes callees that use these.
 
 **Files:**
 - Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
 - Modify: `optimizer/test/passes/inlining_pass_test.rb`
 
-- [ ] **Step 1: Verify caller-side instruction order for `foo(x)`.**
+- [ ] **Step 1: Re-verify the call-site instruction order (small sanity check).**
 
-Use `mcp__ruby-bytecode__disasm` on:
+Use `mcp__ruby-bytecode__disasm` (or a direct `RubyVM::InstructionSequence#disasm` call via `mcp__ruby-bytecode__run_ruby`) on:
 
 ```ruby
 def double(x); x * 2; end
@@ -434,18 +440,9 @@ def use_it(n); double(n); end
 use_it(7)
 ```
 
-Read the disassembly of `use_it`. Expected shape (confirm before
-proceeding):
+Confirm `use_it`'s instruction order is `putself → getlocal_WC_0 n → opt_send_without_block` (putself FIRST, arg push SECOND). This is the order assumed in Step 4's splice. If it's inverted, stop and flag — your splice region math changes.
 
-```
-0000 putself
-0001 getlocal_WC_0 n
-0003 opt_send_without_block <calldata !mid:double, argc:1, FCALL|ARGS_SIMPLE>
-0005 leave
-```
-
-If the arg is *before* `putself`, invert the splice region in Step 3.
-Record what you observed in a comment in the pass source.
+Note: EP-offset/LINDEX math has already been verified separately. The arg of a 1-arg/1-local callee reads at LINDEX 3. Any getlocal at LINDEX 3 in the callee body is reading the arg.
 
 - [ ] **Step 2: Write the v2 happy-path test.**
 
@@ -616,6 +613,8 @@ Replace `try_inline` with a dispatch on `cd.argc`:
         true
       end
 
+      NEW_SLOT_LINDEX = 3  # VM_ENV_DATA_SIZE: LINDEX of the last-appended local
+
       def try_inline_one_arg(function, send_idx, cd, callee, log, line)
         insts = function.instructions
         # Shape: insts[send_idx - 2] == putself
@@ -630,9 +629,9 @@ Replace `try_inline` with a dispatch on `cd.argc`:
           return false
         end
 
-        # Allocate a caller-side slot, re-using the callee's arg-symbol
-        # object-table index (Task 2 rationale: avoids ObjectTable.intern
-        # extension for new Symbols).
+        # 1. Read the callee's single local-table entry (the arg's Symbol
+        #    object-table index). Reused as the new caller slot's name —
+        #    see v2 design for why this avoids ObjectTable.intern extension.
         callee_local_idx = Codec::LocalTable.decode(
           callee.misc[:local_table_raw] || "".b,
           callee.misc[:local_table_size] || 0,
@@ -642,30 +641,43 @@ Replace `try_inline` with a dispatch on `cd.argc`:
                    file: function.path, line: line)
           return false
         end
-        new_slot = Codec::LocalTable.grow!(function, callee_local_idx)
 
-        # Build the spliced region.
-        arg_push = insts[send_idx - 1]
-        setlocal = IR::Instruction.new(
-          opcode: :setlocal, operands: [new_slot, 0],
-          line: arg_push.line || line,
-        )
-        body = callee.instructions[0..-2].map do |inst|
+        # 2. Grow the caller's local_table by one entry. This bumps
+        #    local_table_size; EP offsets for every existing caller local
+        #    now sit one higher than before.
+        Codec::LocalTable.grow!(function, callee_local_idx)
+
+        # 3. Shift every existing caller LINDEX at level 0 by +1 so
+        #    pre-existing locals keep pointing at the same table index.
+        #    Level-1 ops reference the outer EP and are untouched.
+        #    Applies across ALL instructions — including the captured
+        #    arg-push region, which is about to be spliced out; shifting
+        #    it too keeps the reasoning uniform (the doomed ops don't
+        #    survive the splice anyway).
+        function.instructions.each do |inst|
           case inst.opcode
-          when :getlocal_WC_0
-            IR::Instruction.new(opcode: :getlocal_WC_0,
-                                operands: [new_slot],
-                                line: inst.line)
-          when :getlocal
-            # getlocal <idx>, <level> — v2 callees never have level>0 by
-            # predicate; rewrite idx.
-            IR::Instruction.new(opcode: :getlocal,
-                                operands: [new_slot, inst.operands[1]],
-                                line: inst.line)
-          else
-            inst  # pass-through; predicate already forbade setlocal*
+          when :getlocal_WC_0, :setlocal_WC_0
+            inst.operands[0] = inst.operands[0] + 1
+          when :getlocal, :setlocal
+            # [LINDEX, LEVEL] — only level 0 references this EP.
+            if inst.operands[1] == 0
+              inst.operands[0] = inst.operands[0] + 1
+            end
           end
         end
+
+        # 4. Build the spliced region. Re-read arg_push AFTER the shift
+        #    so it reflects the new LINDEX if it was a getlocal_WC_0.
+        insts    = function.instructions
+        arg_push = insts[send_idx - 1]
+        setlocal = IR::Instruction.new(
+          opcode: :setlocal_WC_0, operands: [NEW_SLOT_LINDEX],
+          line: arg_push.line || line,
+        )
+        # Callee body splices as-is. Its `getlocal_WC_0 3` arg-read
+        # already points at the caller's new slot (which also has
+        # LINDEX 3 by the "last-appended has LINDEX 3" invariant).
+        body = callee.instructions[0..-2]
 
         # Splice [putself, arg_push, send] -> [arg_push, setlocal, ...body]
         replacement = [arg_push, setlocal, *body]
@@ -685,10 +697,9 @@ Invoke `mcp__ruby-bytecode__run_optimizer_tests` on `inlining_pass_test.rb`. Exp
 
 Diagnostic notes if it fails:
 
-- If `load_from_binary` raises in the `test_v2_inlines_one_arg_forwarded_fcall` case, the LINDEX growth likely broke an existing caller `getlocal`. Dump `use_it`'s instructions before and after the pass; the original `getlocal_WC_0 1, 0` (reading `n`) should **still** be `getlocal_WC_0 1, 0` — growing the table appends, so the existing slot 1 is unchanged. If the VM rejects, the disassembler may be revealing that CRuby's on-wire LINDEX is from the *end* of the table, not the start. In that case, existing `getlocal` ops need to shift too. Verify using `mcp__ruby-bytecode__disasm` on a compiled `def f(a, b); b; end` — see whether `b` (added second) appears as index 1 or index 2.
-- If `loaded.eval` returns `nil` or wrong value, the `setlocal` / `getlocal` pair on the new slot may be fighting LINDEX direction. Same verification applies.
-
-Whichever direction the VM actually uses, encode that into a single helper `caller_slot_lindex(fn, table_idx)` at the top of the pass and use it for BOTH the `setlocal` and the spliced `getlocal` ops. Don't let direction assumptions leak through the pass body.
+- If `load_from_binary` raises or `loaded.eval` returns a wrong value in `test_v2_inlines_one_arg_forwarded_fcall`: inspect whether the LINDEX-shift pass correctly updated every pre-existing `getlocal_WC_0`/`setlocal_WC_0` in `use_it`. A common bug: mutating `inst.operands[0]` might be a no-op if operands is frozen or if the IR uses a different operand-storage mechanism (e.g. a dedicated struct). If so, you'll need to construct replacement instructions via `IR::Instruction.new` — check `optimizer/lib/ruby_opt/ir/instruction.rb` for the ctor, and match whatever pattern existing passes use to mutate operands.
+- If only the `literal_fcall` test passes but the `forwarded_fcall` test fails, the shift logic is the suspect (literal arg push doesn't have a LINDEX to shift).
+- If both fail with a `load_from_binary` error, suspect the setlocal opcode choice — `setlocal_WC_0` takes ONE operand (just LINDEX), while `setlocal` takes TWO (LINDEX + LEVEL). The plan uses `setlocal_WC_0` for the single-operand form.
 
 - [ ] **Step 6: Commit.**
 

@@ -103,30 +103,41 @@ the push — skips with `:unsupported_call_shape`.
 
 ## Transformation
 
-1. Allocate a caller-side slot: grow `caller.local_table` by one entry.
-   **Name reuse:** the entry is the callee's own arg-Symbol
-   object-table index, read directly off the callee's decoded
-   local_table. Rationale: avoids extending `ObjectTable.intern` to
-   new Symbols (currently special-const only). Local names are
-   cosmetic at runtime — YARV uses indices — so shadowing any caller
-   local that happens to share the name is harmless for correctness.
-   Record the slot's **table index** (post-growth `local_table_size
-   − 1`, i.e. the last entry).
-2. Splice the three-instruction call-site region `<push-arg>;
-   putself; opt_send_without_block` to:
-   - `<push-arg>` (unchanged — leaves the arg value on the stack)
-   - `setlocal <new_slot>, 0` (pop into the fresh caller slot)
-   - `<callee body minus trailing leave, with rewrites below>`
-3. Rewrites applied to each spliced callee instruction:
-   - `getlocal_WC_0 1, 0` → `getlocal_WC_0 <new_slot_table_idx>, 0`
-   - `getlocal 1, 0` → `getlocal <new_slot_table_idx>, 0`
+**LINDEX reality check (verified empirically):** the IR stores raw
+YARV EP offsets, where `LINDEX = VM_ENV_DATA_SIZE (3) + (local_table_size
+− 1 − table_index)`. Two consequences that drive the transformation:
 
-   Every other opcode passes through unchanged (no locals other than
-   the arg; no sends; no branches).
-4. The `putself` is dropped because the callee no longer cares about
-   the `self` receiver — v1 already established this.
-5. Drop the send's `CallData` record (handled automatically by
-   re-harvesting ci_entries from the rewritten instruction stream).
+- The **last-appended slot** (the one `grow!` returns) has LINDEX = 3,
+  regardless of table size.
+- Growing `local_table_size` by 1 shifts every pre-existing LINDEX at
+  level 0 up by 1. Level-1 LINDEXes (outer EP) are unaffected.
+
+Transformation:
+
+1. Allocate a caller-side slot via `LocalTable.grow!`, reusing the
+   callee's arg-Symbol object-table index (read from the callee's
+   local_table; avoids extending `ObjectTable.intern` to new Symbols).
+   Local names are cosmetic at runtime — YARV uses indices — so
+   shadowing any caller local with the same name is harmless.
+2. **Shift every pre-existing caller LINDEX at level 0 by +1.** This
+   applies to `getlocal_WC_0`, `setlocal_WC_0`, and `getlocal`/`setlocal`
+   with level operand == 0. Level-1 opcodes are left alone. Apply the
+   shift across the whole instruction list *before* the splice — the
+   ops about to be removed are shifted too, which keeps the logic
+   uniform and doesn't affect the final state.
+3. Replace the three-instruction call-site region `putself;
+   <arg-push>; opt_send_without_block` with:
+   - `<arg-push>` (leaves the value on the stack; if it's a
+     `getlocal_WC_0`, it already reflects the shift from step 2)
+   - `setlocal_WC_0 3` (the new slot's LINDEX is always 3)
+   - the callee body minus the trailing `leave`, spliced as-is
+4. **No LINDEX rewrites inside the spliced callee body.** The callee's
+   `getlocal_WC_0 3` arg-read was sized for `lt_size == 1` and lands
+   at LINDEX 3 post-splice, exactly matching the caller's new slot.
+   This is the invariant that makes the splice clean: "last-appended
+   slot has LINDEX 3 regardless of table size."
+5. Drop the send's `CallData` record — handled automatically by
+   re-harvesting ci_entries from the rewritten instruction stream.
 
 Line numbers: same policy as v1 (spliced instructions keep their
 callee-side line numbers).
