@@ -178,6 +178,40 @@ module RubyOpt
         true
       end
 
+      # Like #disqualify_callee but permits nested plain sends
+      # (needed for the OPT_SEND receiver-typed inlining path). Forbidden:
+      # branches, catch tables, block setup, ivar ops, mid-body leaves,
+      # throw, and block-carrying sends.
+      def disqualify_callee_for_opt_send(callee)
+        return :callee_has_catch if callee.catch_entries && !callee.catch_entries.empty?
+        insts = callee.instructions || []
+        return :callee_empty if insts.empty?
+        return :callee_over_budget if insts.size > INLINE_BUDGET
+        return :callee_no_trailing_leave unless insts.last.opcode == :leave
+
+        body = insts[0..-2]
+        body.each do |inst|
+          return :callee_has_branches    if CONTROL_FLOW_OPCODES.include?(inst.opcode)
+          return :callee_has_leave_midway if inst.opcode == :leave
+          return :callee_has_throw       if inst.opcode == :throw
+          return :callee_uses_ivar       if inst.opcode == :getinstancevariable
+          return :callee_uses_ivar       if inst.opcode == :setinstancevariable
+          case inst.opcode
+          when :invokeblock, :invokesuper, :invokesuperforward, :getblockparam
+            return :callee_uses_block
+          when :opt_send_without_block, :send
+            cd = inst.operands[0]
+            if cd.respond_to?(:blockarg?) && cd.blockarg?
+              return :callee_send_has_block
+            end
+            if cd.respond_to?(:flag) && (cd.flag & 0x20) != 0 # FLAG_BLOCKISEQ
+              return :callee_send_has_block
+            end
+          end
+        end
+        nil
+      end
+
       def disqualify_callee(callee)
         as = callee.arg_spec || {}
         # v2: lead_num may be 0 or 1. Anything else (2+) still rejects as args.

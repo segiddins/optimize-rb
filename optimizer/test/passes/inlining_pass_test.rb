@@ -254,6 +254,40 @@ class InliningPassTest < Minitest::Test
     assert_equal 25, loaded.eval
   end
 
+  def test_opt_send_eligibility_allows_nested_plain_sends
+    # A callee body with attr_reader-style send on self: `def getter; x; end`
+    # — where `x` is an instance-method call on self — compiles to
+    # `putself; opt_send_without_block :x, 0; leave`. The existing
+    # FCALL classifier rejects this as `:callee_makes_call`; the new
+    # OPT_SEND classifier should accept it.
+    src = "class Foo; attr_reader :x; def getter; x; end; end; 1"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    getter = find_iseq(ir, "getter")
+    refute_nil getter
+    pass = RubyOpt::Passes::InliningPass.new
+    assert_nil pass.send(:disqualify_callee_for_opt_send, getter)
+  end
+
+  def test_opt_send_eligibility_rejects_getinstancevariable
+    src = "class Foo; def read_ivar; @x; end; end; 1"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    callee = find_iseq(ir, "read_ivar")
+    refute_nil callee
+    pass = RubyOpt::Passes::InliningPass.new
+    assert_equal :callee_uses_ivar,
+                 pass.send(:disqualify_callee_for_opt_send, callee)
+  end
+
+  def test_opt_send_eligibility_rejects_branches
+    src = "def maybe; 1 > 0 ? 1 : 2; end; 1"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    callee = find_iseq(ir, "maybe")
+    refute_nil callee
+    pass = RubyOpt::Passes::InliningPass.new
+    assert_equal :callee_has_branches,
+                 pass.send(:disqualify_callee_for_opt_send, callee)
+  end
+
   private
 
   def find_iseq(fn, name)
