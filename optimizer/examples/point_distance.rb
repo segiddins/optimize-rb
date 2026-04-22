@@ -14,8 +14,3 @@ class Point
     (x - other.x) + (y - other.y)
   end
 end
-
-p = Point.new(1, 2)
-q = Point.new(4, 6)
-
-1_000_000.times { p.distance_to(q) }
