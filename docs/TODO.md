@@ -89,6 +89,52 @@ Last updated: 2026-04-22 (after RBS type env v1 — receiver-resolving inlining 
 
 ## Refinements of shipped work (not roadmap progress, but talk-adjacent)
 
+### Polynomial-demo cascade gaps (filed 2026-04-22)
+
+The `polynomial` demo (exercising inlining + tier 2 + tier 1 + identity
++ dead-branch-fold end-to-end) surfaced three places where passes
+don't compose as tightly as the slide would suggest. Each is a
+self-contained fix; none is a talk blocker.
+
+- **InliningPass v3 leaves a redundant `setlocal/getlocal` round-trip
+  at the stash site.** The self-stash + arg-stash emit
+  `setlocal n@K; getlocal n@K` for a slot that's never read again
+  before being overwritten. On `(n * 2 * SCALE / 12) + 0` with `n = 42`
+  this breaks the literal-pair window that Tier 1 needs (`putobject
+  42; setlocal n@1; getlocal n@1; putobject 2; opt_mult` — the
+  `42; 2; opt_mult` triple isn't adjacent). Fix: emit a peephole
+  cleanup in InliningPass (or a new pass) that drops
+  `setlocal X; getlocal X` when the slot has no other reader between
+  the stash and the next write. Would unlock Tier 1 cascading across
+  inlined arguments — the polynomial demo's arithmetic would collapse.
+
+- **ArithReassoc runs before Tier 2 / Inlining expose literal
+  operands.** Pipeline.default order is `inlining → arith_reassoc →
+  tier2 → … → tier1`. On the polynomial fixture, by the time Tier 2
+  rewrites `SCALE` to `6`, arith_reassoc has already walked the
+  chain and given up (it saw `42 * 2 * <getconstant> / 12`, couldn't
+  reassociate across the non-literal). Fix option A: run
+  arith_reassoc twice — once pre-Tier 2, once post-Tier 2 (and
+  post-inlining). Option B: move arith_reassoc to after Tier 2 in
+  Pipeline.default. Option B is probably right — it's strictly more
+  informed. Check whether any existing test relies on the current
+  order before swapping.
+
+- **IdentityElim doesn't fire on `n + 0` when the `0` is
+  `putobject_INT2FIX_0_` after a multi-instruction producer.** On
+  `(… opt_div …) + 0`, the three-instruction window walker expects
+  a simple literal producer for the LHS; the actual LHS is a whole
+  arithmetic chain. Extend v1 to recognise `SAFE_PRODUCER_OPCODES`
+  + `putobject_INT2FIX_0_` + `opt_plus` as a valid shape (drop the
+  `INT2FIX_0_` producer and the `opt_plus`). Same treatment for
+  `+ 0 / - 0 / * 1 / / 1` where the zero/one operand is the
+  shortcut opcode (`putobject_INT2FIX_0_`, `putobject_INT2FIX_1_`).
+  Once this lands, the polynomial demo's trailing `+ 0` will
+  disappear — and by implication, IdentityElim should get a new
+  walkthrough slide with a real diff instead of `(no change)`.
+
+---
+
 Filed in session memory / pass-identity-elim-design but not yet picked up:
 
 - **RBS-typed IdentityElim / ArithReassoc.** Now that `SlotTypeTable`
