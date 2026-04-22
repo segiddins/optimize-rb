@@ -106,6 +106,21 @@ specific instructions used later (`send`, `opt_plus`, `getlocal`,
 - Pass 3: constant folding — often only enabled by the inlining pass
 - IR → iseq — hand back to the VM
 
+Name the shape before walking through the passes: every pass we ship
+scans a small sliding window of adjacent instructions and rewrites it
+in place — no control-flow graph, no dataflow analysis, just
+`while i < insts.size; match window at i; maybe splice; advance`.
+That's a *peephole optimizer*: the window is the peephole, the
+instruction stream is what you see through it. Const-fold is a
+three-instruction window (`lit; lit; opt_op`). Identity-elim is the
+same shape with one operand required to be the identity. A
+dead-branch folder would be a two-instruction window (`lit_bool;
+branch*`). Saying this up front turns the pass walkthrough from
+"here are three bespoke tricks" into "here is one technique applied
+three ways" — and it honestly labels the ceiling: anything needing
+reachability or def-use (true DCE, SCCP, register allocation) is
+outside what a peephole can see, which is §6's tradeoff slide.
+
 **§5 Demos.** Two examples, with benchmarks. Called out honestly: these
 are chosen to make the optimizer look good, and the measurement
 methodology is shown.
