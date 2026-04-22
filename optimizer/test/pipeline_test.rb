@@ -3,6 +3,9 @@ require "test_helper"
 require "ruby_opt/pipeline"
 require "ruby_opt/pass"
 require "ruby_opt/codec"
+require "ruby_opt/type_env"
+require "ruby_opt/ir/function"
+require "ruby_opt/ir/slot_type_table"
 
 class PipelineTest < Minitest::Test
   class TrackingPass < RubyOpt::Pass
@@ -145,6 +148,52 @@ class PipelineTest < Minitest::Test
            "expected ENV[FLAG] == 'true' to collapse to true")
     refute(f.instructions.any? { |i| i.opcode == :opt_getconstant_path })
     refute(f.instructions.any? { |i| i.opcode == :opt_aref })
+  end
+
+  # End-to-end: `"a" == "a"` → ConstFoldPass folds to `true` →
+  # DeadBranchFoldPass drops the `putobject true; branchunless ...` pair.
+  def test_pipeline_collapses_const_equality_branch
+    src = <<~RUBY
+      def f(x)
+        if "a" == "a"
+          x + 1
+        else
+          x - 1
+        end
+      end
+      f(10)
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    RubyOpt::Pipeline.default.run(ir, type_env: nil)
+
+    f = find_iseq(ir, "f")
+    refute(f.instructions.any? { |i| i.opcode == :branchunless },
+           "expected branchunless to be folded away by the pipeline")
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 11, loaded.eval
+  end
+
+  class ExtrasSpyPass < RubyOpt::Pass
+    attr_reader :seen_slot_map, :seen_signature_map
+    def name = :extras_spy
+    def apply(function, type_env:, log:, object_table: nil, slot_type_map: nil, signature_map: nil, **_extras)
+      @seen_slot_map = slot_type_map
+      @seen_signature_map = signature_map
+    end
+  end
+
+  def test_pipeline_threads_slot_type_map_and_signature_map
+    ir = RubyOpt::IR::Function.new(
+      name: "<main>", type: :top, path: "t.rb", first_lineno: 1,
+      instructions: [], children: [], misc: {},
+    )
+    spy = ExtrasSpyPass.new
+    pipeline = RubyOpt::Pipeline.new([spy])
+    type_env = RubyOpt::TypeEnv.from_source("", "t.rb")
+    pipeline.run(ir, type_env: type_env)
+    refute_nil spy.seen_slot_map
+    refute_nil spy.seen_signature_map
+    assert_kind_of RubyOpt::IR::SlotTypeTable, spy.seen_slot_map[ir]
   end
 
   private
