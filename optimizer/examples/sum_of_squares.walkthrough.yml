@@ -1,0 +1,7 @@
+fixture: sum_of_squares.rb
+entry_setup: ""
+entry_call: sum_of_squares(1000)
+walkthrough:
+  - arith_reassoc
+  - identity_elim
+  - const_fold

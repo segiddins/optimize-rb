@@ -1,0 +1,9 @@
+fixture: point_distance.rb
+entry_setup: |
+  p = Point.new(1, 2)
+  q = Point.new(4, 6)
+entry_call: p.distance_to(q)
+walkthrough:
+  - inlining
+  - const_fold
+  - dead_branch_fold
