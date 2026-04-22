@@ -1,6 +1,6 @@
 # point_distance demo
 
-Pipeline.default: **1.01x** vs unoptimized.
+Pipeline.default: **0.99x** vs unoptimized.
 
 ## Source
 
@@ -29,8 +29,8 @@ end
 
 ```
 Comparison:
-  optimized:   17966015.2 i/s
-  plain:   17851529.0 i/s - 1.01x  slower
+  plain:   18197883.3 i/s
+  optimized:   18048060.3 i/s - 1.01x  slower
 ```
 
 ## Walkthrough
@@ -48,27 +48,31 @@ Replace `send` with the callee's body when the receiver is resolvable.
  putspecialobject                       3
  putnil
  defineclass                            :Point, <class:Point>, 0
-@@ -29,7 +29,19 @@
+@@ -28,9 +28,21 @@
+ pop
  setlocal_WC_0                          q@1
  getlocal_WC_0                          p@0
- getlocal_WC_0                          q@1
+-getlocal_WC_0                          q@1
 -opt_send_without_block                 <calldata!mid:distance_to, argc:1, ARGS_SIMPLE>
-+setlocal_WC_0                          other@3
-+setlocal_WC_0                          other@2
-+getlocal_WC_0                          other@2
-+opt_send_without_block                 <calldata!mid:x, argc:0, FCALL|VCALL|ARGS_SIMPLE>
-+getlocal_WC_0                          other@3
-+opt_send_without_block                 <calldata!mid:x, argc:0, ARGS_SIMPLE>
-+opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>
-+getlocal_WC_0                          other@2
-+opt_send_without_block                 <calldata!mid:y, argc:0, FCALL|VCALL|ARGS_SIMPLE>
-+getlocal_WC_0                          other@3
-+opt_send_without_block                 <calldata!mid:y, argc:0, ARGS_SIMPLE>
-+opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>
-+opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
- leave
+-leave
++getlocal_WC_0                          q@1[Li]
++setlocal_WC_0                          other@3[Li]
++setlocal_WC_0                          other@2[Li]
++getlocal_WC_0                          other@2[Li]
++opt_send_without_block                 <calldata!mid:x, argc:0, FCALL|VCALL|ARGS_SIMPLE>[Li]
++getlocal_WC_0                          other@3[Li]
++opt_send_without_block                 <calldata!mid:x, argc:0, ARGS_SIMPLE>[Li]
++opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>[Li]
++getlocal_WC_0                          other@2[Li]
++opt_send_without_block                 <calldata!mid:y, argc:0, FCALL|VCALL|ARGS_SIMPLE>[Li]
++getlocal_WC_0                          other@3[Li]
++opt_send_without_block                 <calldata!mid:y, argc:0, ARGS_SIMPLE>[Li]
++opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>[Li]
++opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[Li]
++leave                                  [Li]
  == block: <class:Point
  putself
+ putobject                              :x
 ```
 
 ### `const_fold`
@@ -201,21 +205,21 @@ local table (size: 4, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0046 pop
 0047 setlocal_WC_0                          q@1
 0049 getlocal_WC_0                          p@0                       (  21)[Li]
-0051 getlocal_WC_0                          q@1
-0053 setlocal_WC_0                          other@3
-0055 setlocal_WC_0                          other@2
-0057 getlocal_WC_0                          other@2
-0059 opt_send_without_block                 <calldata!mid:x, argc:0, FCALL|VCALL|ARGS_SIMPLE>
-0061 getlocal_WC_0                          other@3
-0063 opt_send_without_block                 <calldata!mid:x, argc:0, ARGS_SIMPLE>
-0065 opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>
-0067 getlocal_WC_0                          other@2
-0069 opt_send_without_block                 <calldata!mid:y, argc:0, FCALL|VCALL|ARGS_SIMPLE>
-0071 getlocal_WC_0                          other@3
-0073 opt_send_without_block                 <calldata!mid:y, argc:0, ARGS_SIMPLE>
-0075 opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>
-0077 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
-0079 leave
+0051 getlocal_WC_0                          q@1[Li]
+0053 setlocal_WC_0                          other@3[Li]
+0055 setlocal_WC_0                          other@2[Li]
+0057 getlocal_WC_0                          other@2[Li]
+0059 opt_send_without_block                 <calldata!mid:x, argc:0, FCALL|VCALL|ARGS_SIMPLE>[Li]
+0061 getlocal_WC_0                          other@3[Li]
+0063 opt_send_without_block                 <calldata!mid:x, argc:0, ARGS_SIMPLE>[Li]
+0065 opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>[Li]
+0067 getlocal_WC_0                          other@2[Li]
+0069 opt_send_without_block                 <calldata!mid:y, argc:0, FCALL|VCALL|ARGS_SIMPLE>[Li]
+0071 getlocal_WC_0                          other@3[Li]
+0073 opt_send_without_block                 <calldata!mid:y, argc:0, ARGS_SIMPLE>[Li]
+0075 opt_minus                              <calldata!mid:-, argc:1, ARGS_SIMPLE>[Li]
+0077 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[Li]
+0079 leave                                  [Li]
 
 == disasm: #<ISeq:<class:Point>@/w/examples/point_distance.rb:3 (3,0)-(16,3)>
 0000 putself                                                          (   4)[LiCl]
@@ -260,15 +264,15 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-               plain     1.752M i/100ms
+               plain     1.852M i/100ms
 Calculating -------------------------------------
-               plain     17.852M (± 1.1%) i/s   (56.02 ns/i) -     89.360M in   5.006349s
+               plain     18.198M (± 2.3%) i/s   (54.95 ns/i) -     92.582M in   5.090208s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-           optimized     1.789M i/100ms
+           optimized     1.845M i/100ms
 Calculating -------------------------------------
-           optimized     17.966M (± 1.3%) i/s   (55.66 ns/i) -     91.229M in   5.078693s
+           optimized     18.048M (± 3.0%) i/s   (55.41 ns/i) -     90.398M in   5.013351s
 Comparison:
-  optimized:   17966015.2 i/s
-  plain:   17851529.0 i/s - 1.01x  slower
+  plain:   18197883.3 i/s
+  optimized:   18048060.3 i/s - 1.01x  slower
 ```
