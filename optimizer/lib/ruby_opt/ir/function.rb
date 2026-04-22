@@ -141,6 +141,27 @@ module RubyOpt
           end
         end
 
+        # Fix up line_entries: any entry whose `inst` is being spliced away
+        # holds a dangling reference. If we shrink away to nothing, drop
+        # those entries; otherwise repoint each stale ref to the first
+        # replacement instruction so the encoder doesn't filter them out
+        # during LineInfo.encode. Without this, a same-byte-size splice
+        # (e.g. `opt_getconstant_path` → `putobject`) leaves the emitted
+        # `insns_info_size` smaller than the body-record header, tripping
+        # the codec's body-record consistency check.
+        if line_entries
+          spliced_out = {}.compare_by_identity
+          (start..last).each { |idx| spliced_out[insts[idx]] = true }
+          anchor = replacement.first
+          if anchor
+            line_entries.each do |le|
+              le.inst = anchor if spliced_out.key?(le.inst)
+            end
+          else
+            line_entries.reject! { |le| spliced_out.key?(le.inst) }
+          end
+        end
+
         insts[start..last] = replacement
         invalidate_cfg
       end

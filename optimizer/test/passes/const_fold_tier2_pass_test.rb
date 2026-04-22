@@ -103,6 +103,22 @@ class ConstFoldTier2PassTest < Minitest::Test
     assert_equal 43, ir.misc[:object_table].objects[putobj.operands[0]]
   end
 
+  def test_roundtrips_through_codec_encode_after_fold
+    # Regression: Tier 2 replaces `opt_getconstant_path` (1 operand)
+    # with `putobject` (1 operand), leaving the bytecode byte-size
+    # unchanged. The codec's body-record identity check then fires and
+    # compares `insns_info_size`. If splice_instructions! leaves stale
+    # `line_entries.inst` references, LineInfo.encode filters those
+    # entries out and the emitted count is smaller than the original
+    # header's stored value — raising a body-record field mismatch.
+    src = 'FOO = 7; FOO + 1'
+    ir = decode(src)
+    ot = ir.misc[:object_table]
+    run_pass(ir, ot)
+    # Must not raise.
+    RubyOpt::Codec.encode(ir)
+  end
+
   def test_logs_folded_for_each_rewrite
     src = 'FOO = 7; def a; FOO; end; def b; FOO; end'
     ir = decode(src)
