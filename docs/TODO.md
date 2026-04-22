@@ -67,6 +67,11 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
   + encoder guard for body-record drift); v3 just needs a more general
   LINDEX-remap pass (shift by N, and merge callee-side slot indices
   past v2's "single local at EP 3" invariant).
+- **Extract v2's LINDEX-shift loop into `LocalTable`.** Currently
+  inlined in `InliningPass#try_inline_one_arg`; belongs next to
+  `grow!` since the "local_table_size grew by 1 so EP offsets shift"
+  reasoning lives in that module. Good first step into v3 — the
+  extracted helper generalises to `shift_level0_lindex!(fn, by: N)`.
 
 ## Known bugs / blockers
 
