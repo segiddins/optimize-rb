@@ -3,6 +3,7 @@ require "test_helper"
 require "ruby_opt/codec"
 require "ruby_opt/log"
 require "ruby_opt/passes/const_fold_tier2_pass"
+require "ruby_opt/pipeline"
 
 class ConstFoldTier2PassTest < Minitest::Test
   def test_folds_bare_integer_constant_reference

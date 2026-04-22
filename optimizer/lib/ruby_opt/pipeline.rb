@@ -2,6 +2,7 @@
 require "ruby_opt/log"
 require "ruby_opt/passes/inlining_pass"
 require "ruby_opt/passes/arith_reassoc_pass"
+require "ruby_opt/passes/const_fold_tier2_pass"
 require "ruby_opt/passes/const_fold_env_pass"
 require "ruby_opt/passes/const_fold_pass"
 require "ruby_opt/passes/identity_elim_pass"
@@ -12,6 +13,10 @@ module RubyOpt
       new([
         Passes::InliningPass.new,
         Passes::ArithReassocPass.new,
+        # ConstFoldTier2Pass rewrites frozen top-level constant references
+        # to their literal values. Runs before the other const-folders so
+        # `FOO + 1` → `42 + 1` → `43` cascades in one pipeline run.
+        Passes::ConstFoldTier2Pass.new,
         # ConstFoldEnvPass runs BEFORE ConstFoldPass so `ENV["FLAG"] == "true"`
         # can cascade through string-eq folding in a single pipeline run.
         Passes::ConstFoldEnvPass.new,
