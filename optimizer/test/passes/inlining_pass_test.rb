@@ -565,4 +565,70 @@ class InliningPassTest < Minitest::Test
     end
     nil
   end
+
+  def test_opt_send_in_block_iseq_reads_parent_slot_type
+    # @rbs (Box, Box) -> Integer on the caller means slot 0 (p) is typed "Box".
+    # Inside the block body `p.diff(q)`, the call site reads `p` via
+    # getlocal_WC_1 (level 1). decode_getlocal must consult the parent
+    # frame's local_table_size, and slot_table.lookup(slot, 1) must find
+    # the type in the parent SlotTypeTable.
+    src = <<~RUBY
+      class InliningT11Box
+        attr_reader :v
+        def initialize(v); @v = v; end
+        # @rbs (InliningT11Box) -> Integer
+        def diff(other); v; end
+      end
+      # @rbs (InliningT11Box, InliningT11Box) -> Integer
+      def driver(p, q)
+        1.times { p.diff(q) }
+        p.diff(q)   # also assert the non-block path still works
+      end
+      driver(InliningT11Box.new(11), InliningT11Box.new(5))
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    driver = find_iseq(ir, "driver")
+    callee = find_iseq(ir, "diff")
+    refute_nil driver
+    refute_nil callee
+
+    # The block iseq lives inside driver.children. find its iseq — its type
+    # should be :block and its parent is driver.
+    block_iseq = driver.children.find { |c| c.type == :block }
+    refute_nil block_iseq, "driver should have a block child for `1.times { ... }`"
+
+    # Build slot_type_map the same way Pipeline does: walk with parent chain.
+    driver_sig   = type_env.signature_for_function(driver, class_context: nil)
+    driver_table = RubyOpt::IR::SlotTypeTable.build(driver, driver_sig, nil, object_table: ot)
+    block_table  = RubyOpt::IR::SlotTypeTable.build(block_iseq, nil, driver_table, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[driver]     = driver_table
+    slot_type_map[block_iseq] = block_table
+
+    callee_map = { ["InliningT11Box", :diff] => callee }
+
+    pass = RubyOpt::Passes::InliningPass.new
+    log = RubyOpt::Log.new
+    # Apply to driver first, then block (order mirrors Pipeline's walk).
+    pass.apply(driver,     type_env: type_env, log: log, object_table: ot,
+                            callee_map: callee_map, slot_type_map: slot_type_map)
+    pass.apply(block_iseq, type_env: type_env, log: log, object_table: ot,
+                            callee_map: callee_map, slot_type_map: slot_type_map)
+
+    inlined_in_block = log.entries.count { |e|
+      e.reason == :inlined && (e.respond_to?(:file) ? true : false)
+    }
+    # Expect at least 2 inlines: one in driver (non-block), one in block.
+    assert(log.entries.count { |e| e.reason == :inlined } >= 2,
+           "expected at least 2 :inlined entries, got log: #{log.entries.inspect}")
+
+    # Block iseq now has no opt_send_without_block for :diff.
+    diff_sym = :diff
+    refute block_iseq.instructions.any? { |i|
+      i.opcode == :opt_send_without_block &&
+        i.operands[0].mid_symbol(ot) == diff_sym
+    }, "block's diff call should be inlined"
+  end
 end
