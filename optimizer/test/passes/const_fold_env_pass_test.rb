@@ -220,6 +220,47 @@ class ConstFoldEnvPassTest < Minitest::Test
     assert_operator folded.size, :>=, 1
   end
 
+  def test_folds_env_fetch_with_present_literal_key
+    src = 'def r; ENV.fetch("A"); end; r'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    snap = { "A" => "1" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = r.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_send_without_block, "fetch send should be folded away"
+    refute_includes opcodes, :opt_getconstant_path, "ENV producer should be gone"
+    assert_includes opcodes, :putobject
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_operator folded, :>=, 1
+  end
+
+  def test_env_fetch_absent_key_is_not_folded_and_logs
+    src = 'def r; ENV.fetch("MISSING"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    before = r.instructions.map(&:opcode)
+    snap = {}.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    assert_equal before, r.instructions.map(&:opcode),
+      "absent key must preserve the bytecode so KeyError is raised at runtime"
+    absent = log.for_pass(:const_fold_env).count { |e| e.reason == :fetch_key_absent }
+    assert_operator absent, :>=, 1
+  end
+
   private
 
   def each_function(fn, &blk)
