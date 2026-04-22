@@ -428,11 +428,13 @@ module RubyOpt
               operand_idx += 1
             when :OFFSET
               # Convert instruction index to YARV relative slot offset.
-              # OFFSET_raw = target_slot - next_insn_slot
+              # OFFSET_raw = target_slot - next_insn_slot, taken as a signed
+              # i64 and re-interpreted as u64 (CRuby's implicit long<->VALUE
+              # pun). Negative values always land in the 9-byte small_value form.
               target_insn_idx = insn.operands[operand_idx]
               target_slot = insn_to_slot[target_insn_idx]
               raise "OFFSET operand #{target_insn_idx} has no corresponding slot (out of range?)" unless target_slot
-              writer.write_small_value(target_slot - next_insn_slot)
+              writer.write_small_value(i64_to_u64(target_slot - next_insn_slot))
               operand_idx += 1
             when :CALLDATA
               # TS_CALLDATA: write nothing in the bytecode stream; harvest the

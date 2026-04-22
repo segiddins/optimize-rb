@@ -157,4 +157,25 @@ class RoundTripTest < Minitest::Test
         "round-trip failed for i=#{i} via u=#{u}"
     end
   end
+
+  def test_encode_backward_branch_byte_identity
+    src = "def loop_me(n); i = 0; while i < n; i += 1; end; i; end"
+    original = RubyVM::InstructionSequence.compile(src).to_binary
+
+    ir = RubyOpt::Codec.decode(original)
+    re_encoded = RubyOpt::Codec.encode(ir)
+    assert_equal original, re_encoded,
+      "round-trip byte mismatch for while-loop iseq"
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
+    assert_kind_of RubyVM::InstructionSequence, loaded
+  end
+
+  def test_encode_rejects_out_of_range_offset
+    # Computed offsets wider than INT64_MAX are rejected by the helper, not
+    # deep in write_small_value with a misleading "must be non-negative" message.
+    assert_raises(ArgumentError) do
+      RubyOpt::Codec::InstructionStream.i64_to_u64((1 << 63))
+    end
+  end
 end
