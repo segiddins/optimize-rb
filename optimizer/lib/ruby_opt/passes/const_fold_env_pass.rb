@@ -35,6 +35,14 @@ module RubyOpt
         inspect to_s hash ==
       ].to_set.freeze
 
+      # Default-producer opcodes that are safe to drop when folding
+      # `ENV.fetch(LIT, default)` on a key hit: each is a single-instruction
+      # side-effect-free producer. Extending this set requires the producer
+      # to be observably pure (no autoload, no side effects, no raises).
+      PURE_DEFAULT_OPCODES = %i[
+        putnil putobject putstring putchilledstring putself
+      ].to_set.freeze
+
       def name = :const_fold_env
 
       def apply(function, type_env:, log:, object_table: nil, env_snapshot: nil, **_extras)
@@ -65,6 +73,33 @@ module RubyOpt
           op = insts[i + 2]
 
           unless env_producer?(a, object_table) && literal_string?(b, object_table)
+            i += 1
+            next
+          end
+
+          d   = insts[i + 2]
+          op4 = insts[i + 3]
+          if d && op4 && op4.opcode == :opt_send_without_block &&
+             fetch_send_argc2?(op4, object_table) && pure_default?(d)
+            key = LiteralValue.read(b, object_table: object_table)
+            if env_snapshot.key?(key)
+              value = env_snapshot[key]
+              if value.is_a?(String)
+                idx = object_table.intern(value)
+                replacement = IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
+                function.splice_instructions!(i..(i + 3), [replacement])
+                log.skip(pass: :const_fold_env, reason: :folded,
+                         file: function.path, line: (a.line || function.first_lineno || 0))
+              else
+                log.skip(pass: :const_fold_env, reason: :env_value_not_string,
+                         file: function.path, line: (a.line || function.first_lineno || 0))
+              end
+            else
+              # Key absent: return the default. Keep `d` as the sole instruction.
+              function.splice_instructions!(i..(i + 3), [d])
+              log.skip(pass: :const_fold_env, reason: :folded,
+                       file: function.path, line: (a.line || function.first_lineno || 0))
+            end
             i += 1
             next
           end
@@ -195,6 +230,18 @@ module RubyOpt
         return false unless cd.argc == 1
         return false if cd.has_kwargs? || cd.has_splat? || cd.blockarg?
         cd.mid_symbol(object_table) == :fetch
+      end
+
+      def fetch_send_argc2?(inst, object_table)
+        cd = inst.operands[0]
+        return false unless cd.is_a?(IR::CallData)
+        return false unless cd.argc == 2
+        return false if cd.has_kwargs? || cd.has_splat? || cd.blockarg?
+        cd.mid_symbol(object_table) == :fetch
+      end
+
+      def pure_default?(inst)
+        inst && PURE_DEFAULT_OPCODES.include?(inst.opcode)
       end
 
       def safe_send?(inst, object_table, expected_argc:)
