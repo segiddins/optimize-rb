@@ -4,7 +4,7 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-27 (after ConstFoldEnvPass — ENV.fetch literal-key fold).
+Last updated: 2026-04-28 (after ConstFoldEnvPass — taint classifier v2, argc-generic safe sends).
 
 ## Three-pass plan: status
 
@@ -12,7 +12,7 @@ Last updated: 2026-04-27 (after ConstFoldEnvPass — ENV.fetch literal-key fold)
 |---|---|---|---|
 | Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2: zero-arg and one-arg FCALL inline (constant-body, single-local callees) with local-table growth + level-0 LINDEX shift | multi-arg, kwargs, blocks, receivers via RBS, CFG splicing across BBs |
 | Arithmetic specialization | Reassoc of `+ - * / %` chains under "no BOP redef"; RBS-typed operands; sub-chain folding; post-inlining collapse | ArithReassoc v1–v4 (`opt_plus`, `opt_mult`, `opt_minus`, `opt_div`) + IdentityElim v1. **Literal-only operands, no RBS typing.** | `opt_mod`; true Integer-typed operand proofs; post-inlining demo |
-| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 2 (ConstFoldTier2Pass): top-level frozen constants with literal RHS — Integer/String/true/false/nil — whole-tree pre-scan; reassigned or non-top-level names are tainted. Cascades through Tier 1 (e.g. `FOO + 1 → 43`). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint pre-scan; String snapshot values interned on-the-fly (no skip); read-only sends (`fetch`, `to_h`, `key?`, …) no longer taint the tree (argc≤1); `ENV.fetch("LIT")` argc=1 is now folded when snapshot carries the key (snapshot-presence check preserves runtime KeyError semantics; `:fetch_key_absent` log on miss). | Tier 3 proper (RBS-typed identities). Tier 2 follow-ups: Symbols, nested `M::FOO`, frozen Array/Hash literals. Tier 4 follow-ups: argc≥2 safe sends, block-passing sends, `ENV.fetch(LIT, default)`, generic `send` opcode. |
+| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 2 (ConstFoldTier2Pass): top-level frozen constants with literal RHS — Integer/String/true/false/nil — whole-tree pre-scan; reassigned or non-top-level names are tainted. Cascades through Tier 1 (e.g. `FOO + 1 → 43`). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint pre-scan; String snapshot values interned on-the-fly (no skip); read-only sends (`fetch`, `to_h`, `key?`, …) no longer taint the tree (argc≤1); `ENV.fetch("LIT")` argc=1 is now folded when snapshot carries the key (snapshot-presence check preserves runtime KeyError semantics; `:fetch_key_absent` log on miss). Taint classifier v2: read-only sends whitelist is argc-generic via forward-scan (first-send-encountered must match cd.argc and safe mid); `ENV.values_at("A","B","C")` siblings no longer taint. | Tier 3 proper (RBS-typed identities). Tier 2 follow-ups: Symbols, nested `M::FOO`, frozen Array/Hash literals. Tier 4 follow-ups: argc≥2 safe sends, block-passing sends, `ENV.fetch(LIT, default)`, generic `send` opcode. |
 
 ## Cross-cutting infrastructure not yet built
 
@@ -53,12 +53,13 @@ Last updated: 2026-04-27 (after ConstFoldEnvPass — ENV.fetch literal-key fold)
 4. **`opt_mod`** in the arith family. Non-commutative/associative —
    skip-heavy, small fold set. May not justify its own slide.
 5. **Claude Code gag pass.** §7 close. Scripted output is fine.
-6. **Tier 4 classifier v2 — argc-generic safe sends.** Extend
+6. ~~**Tier 4 classifier v2 — argc-generic safe sends.** Extend
    `ConstFoldEnvPass#consumer_safe?` to look at `insts[i + 1 + argc]`
    for argc 0..MAX_SAFE_ARGC (3 is plenty). Unlocks
    `ENV.values_at("A","B","C")` without tainting. Half-session slice.
    Validate by flipping `test_env_values_at_two_args_still_taints_v1`
-   to "does not taint" and adding an argc=3 companion.
+   to "does not taint" and adding an argc=3 companion.~~
+   **Shipped 2026-04-28.** Plan: `docs/superpowers/plans/2026-04-28-env-taint-classifier-v2.md`.
 7. ~~**Tier 4 fold — `ENV.fetch("LIT")` with literal key.**~~
    **Shipped 2026-04-27.** Plan: `docs/superpowers/plans/2026-04-27-env-fetch-literal-key.md`.
 8. **IdentityElim v2 — absorbing zero.** `x*0 → 0`, `0*x → 0`,

@@ -159,28 +159,34 @@ module RubyOpt
       # For an ENV producer at `insts[i]`, return [safe?, consumer_line].
       # Safe if the consumer is:
       #   - opt_aref at i+2 (bare ENV[KEY]; consumes ENV+key), OR
-      #   - opt_send_without_block at i+1 with argc=0 and a safe mid, OR
-      #   - opt_send_without_block at i+2 with argc=1 and a safe mid.
-      # All other consumer shapes taint.
+      #   - the first opt_send_without_block encountered at insts[i + 1 + j]
+      #     with cd.argc == j, mid ∈ SAFE_ENV_READ_METHODS, and no
+      #     kwargs/splat/block.
+      # Stops at the first send encountered: if that send doesn't match,
+      # taints. Walking off the end without a send also taints.
       def consumer_safe?(insts, i, object_table)
-        at_i_plus_1 = insts[i + 1]
         at_i_plus_2 = insts[i + 2]
-
         if at_i_plus_2 && at_i_plus_2.opcode == :opt_aref
           return [true, at_i_plus_2.line]
         end
 
-        if at_i_plus_1 && at_i_plus_1.opcode == :opt_send_without_block &&
-           safe_send?(at_i_plus_1, object_table, expected_argc: 0)
-          return [true, at_i_plus_1.line]
+        j = 0
+        last_seen_line = nil
+        loop do
+          cand = insts[i + 1 + j]
+          break unless cand
+          last_seen_line = cand.line || last_seen_line
+          if cand.opcode == :opt_send_without_block
+            if safe_send?(cand, object_table, expected_argc: j)
+              return [true, cand.line]
+            else
+              return [false, cand.line]
+            end
+          end
+          j += 1
         end
 
-        if at_i_plus_2 && at_i_plus_2.opcode == :opt_send_without_block &&
-           safe_send?(at_i_plus_2, object_table, expected_argc: 1)
-          return [true, at_i_plus_2.line]
-        end
-
-        [false, (at_i_plus_2 && at_i_plus_2.line) || (at_i_plus_1 && at_i_plus_1.line)]
+        [false, last_seen_line]
       end
 
       def fetch_send?(inst, object_table)
