@@ -73,4 +73,41 @@ class ObjectTableInternTest < Minitest::Test
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
   end
+
+  def test_intern_appends_string_and_round_trips
+    src = "def f; 2 + 3; end; f"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    before_size = ot.objects.size
+
+    idx = ot.intern("hello")
+    assert_equal before_size, idx, "new index should be end-of-table"
+    assert_equal "hello", ot.objects[idx]
+    assert_predicate ot.objects[idx], :frozen?
+
+    modified = RubyOpt::Codec.encode(ir)
+    reloaded = RubyOpt::Codec.decode(modified)
+    assert_equal "hello", reloaded.misc[:object_table].objects[idx]
+    loaded = RubyVM::InstructionSequence.load_from_binary(modified)
+    assert_kind_of RubyVM::InstructionSequence, loaded
+    assert_equal 5, loaded.eval
+  end
+
+  def test_intern_string_returns_existing_index_when_literal_present
+    src = 'def f; "already_here"; end; f'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    existing = ot.index_for("already_here")
+    refute_nil existing, "literal must exist in the table"
+    before_size = ot.objects.size
+    assert_equal existing, ot.intern("already_here")
+    assert_equal before_size, ot.objects.size
+  end
+
+  def test_intern_still_rejects_arrays_and_hashes
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile("def f; 1; end; f").to_binary)
+    ot = ir.misc[:object_table]
+    assert_raises(ArgumentError) { ot.intern([1, 2]) }
+    assert_raises(ArgumentError) { ot.intern({ a: 1 }) }
+  end
 end
