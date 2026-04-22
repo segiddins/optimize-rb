@@ -1,7 +1,9 @@
 # frozen_string_literal: true
+require "set"
 require "ruby_opt/pass"
 require "ruby_opt/passes/literal_value"
 require "ruby_opt/ir/instruction"
+require "ruby_opt/ir/call_data"
 
 module RubyOpt
   module Passes
@@ -23,6 +25,15 @@ module RubyOpt
     #   resolved elements are the constant-path symbols, e.g. [:ENV].
     class ConstFoldEnvPass < RubyOpt::Pass
       TAINT_FLAG_KEY = :const_fold_env_tree_tainted
+
+      # Read-only ENV methods that cannot mutate ENV. A send on ENV with
+      # one of these mids does NOT taint the tree. v1: argc 0 and 1 only.
+      # Expanding this set is safe iff the method is guaranteed non-mutating.
+      SAFE_ENV_READ_METHODS = %i[
+        fetch to_h to_hash key? has_key? include? member?
+        values_at assoc size length empty? keys values
+        inspect to_s hash ==
+      ].to_set.freeze
 
       def name = :const_fold_env
 
@@ -107,24 +118,57 @@ module RubyOpt
         fn.children&.each { |c| scan_tree_for_taint(c, object_table, log) }
       end
 
-      # Walk `insts`. For every ENV producer, the stack consumer is
-      # `insts[i+2]` (the key producer sits at i+1). Safe iff the
-      # consumer is `opt_aref`. Returns [tainted?, first_taint_line].
+      # Walk `insts`. For every ENV producer, ask consumer_safe? whether
+      # the consumer pattern at that producer site is an allowed read-only
+      # shape. Returns [tainted?, first_taint_line].
       def classify(insts, object_table)
-        first_taint_line = nil
         i = 0
         while i < insts.size
           inst = insts[i]
           if env_producer?(inst, object_table)
-            consumer = insts[i + 2]
-            unless consumer && consumer.opcode == :opt_aref
-              first_taint_line ||= (consumer&.line || inst.line)
-              return [true, first_taint_line]
+            safe, line = consumer_safe?(insts, i, object_table)
+            unless safe
+              return [true, line || inst.line]
             end
           end
           i += 1
         end
         [false, nil]
+      end
+
+      # For an ENV producer at `insts[i]`, return [safe?, consumer_line].
+      # Safe if the consumer is:
+      #   - opt_aref at i+2 (bare ENV[KEY]; consumes ENV+key), OR
+      #   - opt_send_without_block at i+1 with argc=0 and a safe mid, OR
+      #   - opt_send_without_block at i+2 with argc=1 and a safe mid.
+      # All other consumer shapes taint.
+      def consumer_safe?(insts, i, object_table)
+        at_i_plus_1 = insts[i + 1]
+        at_i_plus_2 = insts[i + 2]
+
+        if at_i_plus_2 && at_i_plus_2.opcode == :opt_aref
+          return [true, at_i_plus_2.line]
+        end
+
+        if at_i_plus_1 && at_i_plus_1.opcode == :opt_send_without_block &&
+           safe_send?(at_i_plus_1, object_table, expected_argc: 0)
+          return [true, at_i_plus_1.line]
+        end
+
+        if at_i_plus_2 && at_i_plus_2.opcode == :opt_send_without_block &&
+           safe_send?(at_i_plus_2, object_table, expected_argc: 1)
+          return [true, at_i_plus_2.line]
+        end
+
+        [false, (at_i_plus_2 && at_i_plus_2.line) || (at_i_plus_1 && at_i_plus_1.line)]
+      end
+
+      def safe_send?(inst, object_table, expected_argc:)
+        cd = inst.operands[0]
+        return false unless cd.is_a?(IR::CallData)
+        return false unless cd.argc == expected_argc
+        return false if cd.has_kwargs? || cd.has_splat? || cd.blockarg?
+        SAFE_ENV_READ_METHODS.include?(cd.mid_symbol(object_table))
       end
 
       # Returns true if +inst+ is an ENV constant producer.
