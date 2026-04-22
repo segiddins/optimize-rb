@@ -124,6 +124,23 @@ module RubyOpt
           end
         end
 
+        # A replacement entry that is itself a branch/jump carries a target
+        # expressed against the PRE-splice array. Patch it the same way we
+        # patch targets on surviving instructions so the post-splice array
+        # is self-consistent.
+        replacement.each do |inst|
+          case inst.opcode
+          when :branchif, :branchunless, :branchnil, :jump
+            t = inst.operands[0]
+            next unless t.is_a?(Integer)
+            if t > start && t <= last
+              raise "splice_instructions!: replacement branch targets #{t}, which is inside the spliced range #{range}"
+            elsif t > last
+              inst.operands[0] = t - delta
+            end
+          end
+        end
+
         insts[start..last] = replacement
         invalidate_cfg
       end
