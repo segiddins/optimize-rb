@@ -22,7 +22,7 @@ module RubyOpt
 
     # Run all passes over every Function in the IR tree.
     # Returns the RubyOpt::Log accumulated during the run.
-    def run(ir, type_env:)
+    def run(ir, type_env:, env_snapshot: nil)
       log = Log.new
       object_table = ir.misc && ir.misc[:object_table]
       callee_map = build_callee_map(ir)
@@ -33,6 +33,7 @@ module RubyOpt
               function,
               type_env: type_env, log: log,
               object_table: object_table, callee_map: callee_map,
+              env_snapshot: env_snapshot,
             )
           rescue => e
             log.skip(

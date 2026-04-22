@@ -110,4 +110,23 @@ class PipelineTest < Minitest::Test
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal 14, loaded.eval
   end
+
+  def test_pipeline_threads_env_snapshot_to_passes
+    captured = []
+    recorder = Class.new(RubyOpt::Pass) do
+      define_method(:apply) do |fn, type_env:, log:, object_table: nil, **extras|
+        captured << extras[:env_snapshot]
+      end
+      def name = :recorder
+    end
+
+    ir = RubyOpt::Codec.decode(
+      RubyVM::InstructionSequence.compile("def f; 1; end").to_binary
+    )
+    snap = { "FOO" => "bar" }.freeze
+    RubyOpt::Pipeline.new([recorder.new]).run(ir, type_env: nil, env_snapshot: snap)
+
+    refute_empty captured
+    assert_equal snap, captured.first
+  end
 end
