@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 require "ruby_opt/pass"
 require "ruby_opt/ir/call_data"
+require "ruby_opt/ir/instruction"
 require "ruby_opt/ir/cfg"
+require "ruby_opt/codec/local_table"
 
 module RubyOpt
   module Passes
@@ -17,6 +19,16 @@ module RubyOpt
       ].freeze
 
       CONTROL_FLOW_OPCODES = (IR::CFG::BRANCH_OPCODES + IR::CFG::JUMP_OPCODES + %i[opt_case_dispatch]).freeze
+
+      # Single-instruction arg-push opcodes v2 accepts for the one-arg shape.
+      ARG_PUSH_OPCODES = %i[
+        putobject putnil putstring
+        putobject_INT2FIX_0_ putobject_INT2FIX_1_
+        getlocal_WC_0
+      ].freeze
+
+      # VM_ENV_DATA_SIZE: the last-appended slot's LINDEX is always 3.
+      NEW_SLOT_LINDEX = 3
 
       def name = :inlining
 
@@ -57,8 +69,6 @@ module RubyOpt
 
         return false unless cd.is_a?(IR::CallData)
 
-        # 1. Resolve callee by mid symbol. Do this first so we can report
-        #    callee-level reasons when the call shape is otherwise uninlinable.
         mid = cd.mid_symbol(object_table)
         callee = callee_map[mid]
         unless callee
@@ -67,8 +77,6 @@ module RubyOpt
           return false
         end
 
-        # 2. Callee shape: no args, no locals, no catch, no branches,
-        #    no nested sends, ends in `leave`, under budget.
         reason = disqualify_callee(callee)
         if reason
           log.skip(pass: :inlining, reason: reason,
@@ -76,20 +84,83 @@ module RubyOpt
           return false
         end
 
-        # 3. Call-site shape: FCALL, ARGS_SIMPLE, zero-arg, no kwargs, no splat,
-        #    no blockarg. Also requires an immediately-preceding `putself`.
-        unless cd.fcall? && cd.args_simple? && cd.argc.zero? &&
-               cd.kwlen.zero? && !cd.blockarg? && !cd.has_splat? &&
+        case cd.argc
+        when 0 then try_inline_zero_arg(function, send_idx, cd, callee, log, line)
+        when 1 then try_inline_one_arg(function, send_idx, cd, callee, log, line)
+        else
+          log.skip(pass: :inlining, reason: :unsupported_call_shape,
+                   file: function.path, line: line)
+          false
+        end
+      end
+
+      def try_inline_zero_arg(function, send_idx, cd, callee, log, line)
+        insts = function.instructions
+        unless cd.fcall? && cd.args_simple? && cd.kwlen.zero? &&
+               !cd.blockarg? && !cd.has_splat? &&
                send_idx >= 1 && insts[send_idx - 1].opcode == :putself
           log.skip(pass: :inlining, reason: :unsupported_call_shape,
                    file: function.path, line: line)
           return false
         end
-
-        # Transformation. Splice [putself, opt_send] -> callee body minus trailing leave.
         put_self_idx = send_idx - 1
-        body = callee.instructions[0..-2] # drop trailing `leave`
+        body = callee.instructions[0..-2]
         function.splice_instructions!(put_self_idx..(put_self_idx + 1), body)
+        log.skip(pass: :inlining, reason: :inlined,
+                 file: function.path, line: line)
+        true
+      end
+
+      def try_inline_one_arg(function, send_idx, cd, callee, log, line)
+        insts = function.instructions
+        unless cd.fcall? && cd.args_simple? && cd.kwlen.zero? &&
+               !cd.blockarg? && !cd.has_splat? && send_idx >= 2 &&
+               insts[send_idx - 2].opcode == :putself &&
+               ARG_PUSH_OPCODES.include?(insts[send_idx - 1].opcode)
+          log.skip(pass: :inlining, reason: :unsupported_call_shape,
+                   file: function.path, line: line)
+          return false
+        end
+
+        # 1. The callee's single local-table entry is the arg's Symbol
+        #    object-table index. Reuse it as the new caller slot's name.
+        callee_local_idx = Codec::LocalTable.decode(
+          callee.misc[:local_table_raw] || "".b,
+          callee.misc[:local_table_size] || 0,
+        ).first
+        if callee_local_idx.nil?
+          log.skip(pass: :inlining, reason: :callee_local_table_unreadable,
+                   file: function.path, line: line)
+          return false
+        end
+
+        # 2. Grow the caller's local_table. Every existing level-0 LINDEX
+        #    must shift by +1 since local_table_size grew.
+        Codec::LocalTable.grow!(function, callee_local_idx)
+
+        # 3. Shift every existing caller level-0 LINDEX by +1.
+        function.instructions.each do |inst|
+          case inst.opcode
+          when :getlocal_WC_0, :setlocal_WC_0
+            inst.operands[0] = inst.operands[0] + 1
+          when :getlocal, :setlocal
+            if inst.operands[1] == 0
+              inst.operands[0] = inst.operands[0] + 1
+            end
+          end
+        end
+
+        # 4. Build replacement. Re-read arg_push AFTER the shift so
+        #    a getlocal_WC_0 arg push reflects its new LINDEX.
+        insts    = function.instructions
+        arg_push = insts[send_idx - 1]
+        setlocal = IR::Instruction.new(
+          opcode: :setlocal_WC_0, operands: [NEW_SLOT_LINDEX],
+          line: arg_push.line || line,
+        )
+        body = callee.instructions[0..-2]
+        replacement = [arg_push, setlocal, *body]
+        function.splice_instructions!((send_idx - 2)..send_idx, replacement)
 
         log.skip(pass: :inlining, reason: :inlined,
                  file: function.path, line: line)

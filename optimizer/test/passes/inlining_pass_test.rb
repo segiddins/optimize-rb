@@ -30,20 +30,21 @@ class InliningPassTest < Minitest::Test
     assert_equal 42, loaded.eval
   end
 
-  def test_skips_when_callee_has_args
-    src = "def add_one(x); x + 1; end; def use_it; add_one(5); end; use_it"
+  def test_skips_when_callee_has_two_args
+    # v2 inlines one-arg FCALLs; two-arg callees still reject.
+    src = "def add(a, b); a + b; end; def use_it; add(1, 2); end; use_it"
     ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
-    use_it   = find_iseq(ir, "use_it")
-    add_one  = find_iseq(ir, "add_one")
+    use_it = find_iseq(ir, "use_it")
+    add    = find_iseq(ir, "add")
     log = RubyOpt::Log.new
     RubyOpt::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
-      object_table: ot, callee_map: { add_one: add_one },
+      object_table: ot, callee_map: { add: add },
     )
     assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
     refute log.entries.any? { |e| e.reason == :inlined }
-    assert log.entries.any? { |e| e.reason == :unsupported_call_shape }
+    assert log.entries.any? { |e| e.reason == :callee_has_args }
   end
 
   def test_skips_when_callee_has_branches
@@ -152,6 +153,67 @@ class InliningPassTest < Minitest::Test
     assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
     refute log.entries.any? { |e| e.reason == :inlined }
     assert log.entries.any? { |e| e.reason == :callee_has_args }
+  end
+
+  def test_v2_inlines_one_arg_literal_fcall
+    src = "def double(x); x * 2; end; def use_it; double(3); end; use_it"
+    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot  = ir.misc[:object_table]
+    use_it = find_iseq(ir, "use_it")
+    double = find_iseq(ir, "double")
+
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { double: double },
+    )
+
+    refute use_it.instructions.any? { |i| i.opcode == :opt_send_without_block },
+      "expected the send to `double` to be inlined"
+    assert log.entries.any? { |e| e.reason == :inlined }
+    assert_equal 1, use_it.misc[:local_table_size]
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 6, loaded.eval
+  end
+
+  def test_v2_inlines_one_arg_forwarded_fcall
+    src = "def double(x); x * 2; end; def use_it(n); double(n); end; use_it(7)"
+    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot  = ir.misc[:object_table]
+    use_it = find_iseq(ir, "use_it")
+    double = find_iseq(ir, "double")
+
+    assert_equal 1, use_it.misc[:local_table_size]
+
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { double: double },
+    )
+
+    refute use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e| e.reason == :inlined }
+    assert_equal 2, use_it.misc[:local_table_size]
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 14, loaded.eval
+  end
+
+  def test_v2_skips_arg_with_multi_instruction_push
+    src = "def double(x); x * 2; end; def use_it(n); double(n + 1); end; use_it(1)"
+    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot  = ir.misc[:object_table]
+    use_it = find_iseq(ir, "use_it")
+    double = find_iseq(ir, "double")
+
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { double: double },
+    )
+    assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e| e.reason == :unsupported_call_shape }
   end
 
   private
