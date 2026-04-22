@@ -341,8 +341,99 @@ class ConstFoldEnvPassTest < Minitest::Test
     assert_operator tainted, :>=, 1
   end
 
-  def test_env_fetch_argc_two_is_not_folded
-    src = 'def r; ENV.fetch("A", "def"); end'
+  def test_folds_env_fetch_with_literal_default_when_key_present
+    src = 'def r; ENV.fetch("A", "fallback"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    snap = { "A" => "1" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = r.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_send_without_block, "fetch send should be folded away"
+    refute_includes opcodes, :opt_getconstant_path, "ENV producer should be gone"
+    assert_includes opcodes, :putobject
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_operator folded, :>=, 1
+  end
+
+  def test_folds_env_fetch_with_string_default_when_key_absent
+    src = 'def r; ENV.fetch("MISSING", "fallback"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    snap = {}.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = r.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_send_without_block, "fetch send should be folded away"
+    refute_includes opcodes, :opt_getconstant_path, "ENV producer should be gone"
+    # The default producer survives — either :putstring or :putchilledstring
+    # depending on Ruby's compile-time string handling.
+    assert(opcodes.include?(:putstring) || opcodes.include?(:putchilledstring),
+      "default string producer should be preserved as the fold result")
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_operator folded, :>=, 1
+  end
+
+  def test_folds_env_fetch_with_putnil_default_when_key_absent
+    src = 'def r; ENV.fetch("MISSING", nil); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    snap = {}.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = r.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_send_without_block
+    refute_includes opcodes, :opt_getconstant_path
+    assert_includes opcodes, :putnil
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_operator folded, :>=, 1
+  end
+
+  def test_folds_env_fetch_with_integer_default_when_key_absent
+    src = 'def r; ENV.fetch("MISSING", 42); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    snap = {}.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = r.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_send_without_block
+    refute_includes opcodes, :opt_getconstant_path
+    assert_includes opcodes, :putobject
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_operator folded, :>=, 1
+  end
+
+  def test_does_not_fold_env_fetch_with_impure_default
+    # `other_call` compiles to a send, which is not on PURE_DEFAULT_OPCODES.
+    src = <<~RUBY
+      def other_call; "x"; end
+      def r; ENV.fetch("A", other_call); end
+    RUBY
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
@@ -356,9 +447,11 @@ class ConstFoldEnvPassTest < Minitest::Test
     end
 
     assert_equal before, r.instructions.map(&:opcode),
-      "argc=2 fetch is out of v1 scope — must not fold"
-    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
-    assert_equal 0, folded
+      "impure default must preserve the full ENV.fetch bytecode"
+    # The fetch send is still present, so an argc-match-but-impure-default
+    # must not count as a fold.
+    refute(log.for_pass(:const_fold_env).any? { |e| e.reason == :folded && e.file == r.path },
+      "no :folded log entry should be emitted for r when default is impure")
   end
 
   def test_env_fetch_with_block_does_not_crash
