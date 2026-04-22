@@ -8,3 +8,50 @@ Rake::TestTask.new(:test) do |t|
 end
 
 task default: :test
+
+RAW_BENCH_SECTION_RE = /## Raw benchmark output\n\n```\n.*?```/m
+BENCH_LINE_RE        = /^  (plain|optimized):.*i\/s.*$/
+
+def mask_nondeterministic(md)
+  md
+    .sub(RAW_BENCH_SECTION_RE,
+         "## Raw benchmark output\n\n```\n<benchmark output>\n```")
+    .gsub(BENCH_LINE_RE, '  \1: <ips>')
+end
+
+namespace :demo do
+  desc "Regenerate demo artifacts and diff against the committed versions"
+  task :verify do
+    require "tmpdir"
+    require "fileutils"
+    $LOAD_PATH.unshift(File.expand_path("lib", __dir__))
+    require "ruby_opt/demo/runner"
+    examples_dir  = File.expand_path("examples", __dir__)
+    committed_dir = File.expand_path("../docs/demo_artifacts", __dir__)
+    sidecars = Dir[File.join(examples_dir, "*.walkthrough.yml")]
+    abort "no sidecars found" if sidecars.empty?
+
+    Dir.mktmpdir do |tmp|
+      mismatches = []
+      sidecars.each do |sc|
+        stem = File.basename(sc, ".walkthrough.yml")
+        regenerated = RubyOpt::Demo::Runner.run(sidecar_path: sc, output_dir: tmp)
+        committed = File.join(committed_dir, "#{stem}.md")
+        unless File.exist?(committed)
+          mismatches << "missing committed artifact: #{committed}"
+          next
+        end
+        if mask_nondeterministic(File.read(regenerated)) !=
+           mask_nondeterministic(File.read(committed))
+          mismatches << stem
+        end
+      end
+      if mismatches.empty?
+        puts "demo:verify OK (#{sidecars.size} fixtures)"
+      else
+        abort "demo:verify FAILED for: #{mismatches.join(', ')}. " \
+              "Re-run `bin/demo --all` and commit the regenerated artifacts."
+      end
+    end
+  end
+end
