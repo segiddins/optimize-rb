@@ -9,6 +9,24 @@ module RubyOpt
   module Codec
     module InstructionStream
 
+      # Sign conversion for :OFFSET operands. IBF's small_value primitive is
+      # unsigned; only branch OFFSETs are semantically signed (backward
+      # branches produce a negative relative slot offset). CRuby's
+      # ibf_dump_small_value takes a VALUE (ulong), so a negative C long is
+      # implicitly reinterpreted as (2^64 + n); we do that explicitly.
+      U64_MASK  = (1 << 64) - 1
+      INT64_MIN = -(1 << 63)
+      INT64_MAX =  (1 << 63) - 1
+
+      def self.u64_to_i64(u)
+        u >= (1 << 63) ? u - (1 << 64) : u
+      end
+
+      def self.i64_to_u64(i)
+        raise ArgumentError, "offset out of i64 range: #{i}" if i < INT64_MIN || i > INT64_MAX
+        i & U64_MASK
+      end
+
       # Operand type sentinels used in INSN_TABLE below.
       # Each symbol maps to how many small_values are read/written in the bytecode stream:
       #

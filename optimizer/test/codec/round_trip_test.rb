@@ -107,4 +107,31 @@ class RoundTripTest < Minitest::Test
     header_len = reader.pos
     assert_equal original.byteslice(0, header_len), writer.buffer
   end
+
+  def test_u64_to_i64_boundaries
+    assert_equal 0,                 RubyOpt::Codec::InstructionStream.u64_to_i64(0)
+    assert_equal 1,                 RubyOpt::Codec::InstructionStream.u64_to_i64(1)
+    assert_equal (1 << 63) - 1,     RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 63) - 1)
+    assert_equal(-(1 << 63),        RubyOpt::Codec::InstructionStream.u64_to_i64(1 << 63))
+    assert_equal(-1,                RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 64) - 1))
+    assert_equal(-2,                RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 64) - 2))
+  end
+
+  def test_i64_to_u64_boundaries
+    assert_equal 0,             RubyOpt::Codec::InstructionStream.i64_to_u64(0)
+    assert_equal (1 << 63) - 1, RubyOpt::Codec::InstructionStream.i64_to_u64((1 << 63) - 1)
+    assert_equal (1 << 64) - 1, RubyOpt::Codec::InstructionStream.i64_to_u64(-1)
+    assert_equal (1 << 64) - 2, RubyOpt::Codec::InstructionStream.i64_to_u64(-2)
+    assert_equal 1 << 63,       RubyOpt::Codec::InstructionStream.i64_to_u64(-(1 << 63))
+    assert_raises(ArgumentError) { RubyOpt::Codec::InstructionStream.i64_to_u64(1 << 63) }
+    assert_raises(ArgumentError) { RubyOpt::Codec::InstructionStream.i64_to_u64(-(1 << 63) - 1) }
+  end
+
+  def test_round_trip_helpers_compose
+    [-5, -1, 0, 1, 5, (1 << 62), -(1 << 62)].each do |i|
+      u = RubyOpt::Codec::InstructionStream.i64_to_u64(i)
+      assert_equal i, RubyOpt::Codec::InstructionStream.u64_to_i64(u),
+        "round-trip failed for i=#{i} via u=#{u}"
+    end
+  end
 end
