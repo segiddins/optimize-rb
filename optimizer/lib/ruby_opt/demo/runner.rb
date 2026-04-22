@@ -18,6 +18,8 @@ module RubyOpt
         snapshots = IseqSnapshots.generate(
           fixture_path: wt.fixture_path,
           walkthrough: wt.walkthrough,
+          entry_setup: wt.entry_setup,
+          entry_call: wt.entry_call,
         )
         bench = Benchmark.compare(
           fixture_path: wt.fixture_path,

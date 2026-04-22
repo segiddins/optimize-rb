@@ -11,8 +11,8 @@ module RubyOpt
 
       module_function
 
-      def generate(fixture_path:, walkthrough:)
-        source = File.read(fixture_path)
+      def generate(fixture_path:, walkthrough:, entry_setup: "", entry_call: nil)
+        source = build_source(fixture_path, entry_setup, entry_call)
 
         pass_index = Pipeline.default.passes.each_with_object({}) do |p, h|
           h[p.name] = p
@@ -30,6 +30,16 @@ module RubyOpt
         end
 
         Result.new(before: before, after_full: after_full, per_pass: per_pass)
+      end
+
+      # Compose a synthetic program: the fixture source followed by the
+      # walkthrough's entry_setup + entry_call. Without the call site,
+      # most passes see no-op iseqs (inlining needs a caller, const_fold
+      # needs literals at a call).
+      def build_source(fixture_path, entry_setup, entry_call)
+        fixture_source = File.read(fixture_path)
+        return fixture_source if entry_call.to_s.empty?
+        "#{fixture_source.chomp}\n\n#{entry_setup}\n#{entry_call}\n"
       end
 
       def compile_raw(source, path)

@@ -52,6 +52,20 @@ class IseqSnapshotsTest < Minitest::Test
     end
   end
 
+  def test_entry_call_included_in_snapshotted_iseq
+    with_fixture do |path|
+      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+        fixture_path: path, walkthrough: [],
+        entry_setup: "x = 5", entry_call: "add_one(x)",
+      )
+      # Without the entry, the snapshotted iseq has no call site for
+      # :add_one; with it, the main iseq must reference it so passes
+      # can rewrite it.
+      assert_match(/add_one/, snaps.before)
+      assert_match(/add_one/, snaps.after_full)
+    end
+  end
+
   def test_unknown_walkthrough_name_raises
     with_fixture do |path|
       assert_raises(ArgumentError) do
