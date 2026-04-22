@@ -291,14 +291,18 @@ class InliningPassTest < Minitest::Test
   end
 
   def test_opt_send_with_typed_receiver_and_constant_body_splices
+    # Note: this test does NOT call .eval, so it does not leak class definitions
+    # into the top-level namespace. The unique class name is used for consistency
+    # with the round-trip test below, which does call .eval and would otherwise
+    # collide with test/codec/corpus/class_with_ivars.rb's `class Point`.
     src = <<~RUBY
-      class Point
-        # @rbs (Point) -> Integer
+      class InliningOptSendT8Point
+        # @rbs (InliningOptSendT8Point) -> Integer
         def distance_to(other); 42; end
       end
-      # @rbs (Point, Point) -> Integer
+      # @rbs (InliningOptSendT8Point, InliningOptSendT8Point) -> Integer
       def distance(p, q); p.distance_to(q); end
-      distance(Point.new, Point.new)
+      distance(InliningOptSendT8Point.new, InliningOptSendT8Point.new)
     RUBY
     ir       = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot       = ir.misc[:object_table]
@@ -320,7 +324,7 @@ class InliningPassTest < Minitest::Test
       caller,
       type_env: type_env, log: log,
       object_table: ot,
-      callee_map: { ["Point", :distance_to] => callee },
+      callee_map: { ["InliningOptSendT8Point", :distance_to] => callee },
       slot_type_map: slot_type_map,
     )
 
@@ -333,14 +337,18 @@ class InliningPassTest < Minitest::Test
   end
 
   def test_opt_send_with_typed_receiver_roundtrips_through_vm
+    # Uses a unique class name (InliningOptSendT8Point instead of Point) to
+    # avoid top-level namespace collision with test/codec/corpus/class_with_ivars.rb
+    # which also defines `class Point`. The .eval call leaks the class definition
+    # into the process namespace, causing ordering-dependent flakes.
     src = <<~RUBY
-      class Point
-        # @rbs (Point) -> Integer
+      class InliningOptSendT8Point
+        # @rbs (InliningOptSendT8Point) -> Integer
         def distance_to(other); 42; end
       end
-      # @rbs (Point, Point) -> Integer
+      # @rbs (InliningOptSendT8Point, InliningOptSendT8Point) -> Integer
       def distance(p, q); p.distance_to(q); end
-      distance(Point.new, Point.new)
+      distance(InliningOptSendT8Point.new, InliningOptSendT8Point.new)
     RUBY
     ir       = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot       = ir.misc[:object_table]
@@ -358,7 +366,7 @@ class InliningPassTest < Minitest::Test
       caller,
       type_env: type_env, log: log,
       object_table: ot,
-      callee_map: { ["Point", :distance_to] => callee },
+      callee_map: { ["InliningOptSendT8Point", :distance_to] => callee },
       slot_type_map: slot_type_map,
     )
     # Sanity: confirm the inline actually happened before we trust the eval.
@@ -366,6 +374,57 @@ class InliningPassTest < Minitest::Test
 
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal 42, loaded.eval
+  end
+
+  def test_opt_send_body_with_putself_is_rewritten_to_self_stash
+    # Uses a unique class name (InliningOptSendT9Box instead of Box) to avoid
+    # top-level namespace pollution via .eval — any other test defining `class Box`
+    # would cause ordering-dependent flakes under different seeds.
+    src = <<~RUBY
+      class InliningOptSendT9Box
+        attr_reader :v
+        def initialize(v); @v = v; end
+        # @rbs (InliningOptSendT9Box) -> Integer
+        def diff(other); v; end
+      end
+      # @rbs (InliningOptSendT9Box, InliningOptSendT9Box) -> Integer
+      def driver(p, q); p.diff(q); end
+      driver(InliningOptSendT9Box.new(7), InliningOptSendT9Box.new(3))
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    caller = find_iseq(ir, "driver")
+    callee = find_iseq(ir, "diff")
+
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    original_locals = caller.misc[:local_table_size]
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: { ["InliningOptSendT9Box", :diff] => callee },
+      slot_type_map: slot_type_map,
+    )
+
+    # Inline happened.
+    assert log.entries.any? { |e| e.reason == :inlined }
+    # Two stash slots grown (self-stash + arg-stash).
+    assert_equal original_locals + 2, caller.misc[:local_table_size]
+    # No putself remains — all rewritten to getlocal_WC_0.
+    refute caller.instructions.any? { |i| i.opcode == :putself },
+      "all putself in spliced body should be rewritten to self-stash reads"
+    # The call site is gone.
+    refute caller.instructions.any? { |i| i.opcode == :opt_send_without_block && i.operands[0].mid_symbol(ot) == :diff }
+
+    # Round-trip through VM: driver(Box.new(7), Box.new(3)) returns p.v == 7.
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 7, loaded.eval
   end
 
   private

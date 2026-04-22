@@ -219,11 +219,7 @@ module RubyOpt
         end
 
         body = callee.instructions[0..-2]
-        if body.any? { |inst| inst.opcode == :putself }
-          log.skip(pass: :inlining, reason: :opt_send_needs_self_rewrite,
-                   file: function.path, line: line)
-          return false
-        end
+        body_uses_self = body.any? { |inst| inst.opcode == :putself }
 
         callee_arg_obj_idx = Codec::LocalTable.decode(
           callee.misc[:local_table_raw] || "".b,
@@ -235,21 +231,62 @@ module RubyOpt
           return false
         end
 
-        Codec::LocalTable.grow!(function, callee_arg_obj_idx)
-        shift_level0_lindex_by_1(function)
-        # Keep slot_table's cached local_table_size in sync with the caller.
-        slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
+        if body_uses_self
+          # Grow self-stash first, then arg-stash, so arg-stash ends up at
+          # LINDEX 3 (matching callee's arg LINDEX — no body rewrite for
+          # arg refs) and self-stash at LINDEX 4.
+          Codec::LocalTable.grow!(function, callee_arg_obj_idx)
+          shift_level0_lindex_by_1(function)
+          Codec::LocalTable.grow!(function, callee_arg_obj_idx)
+          shift_level0_lindex_by_1(function)
+          slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
 
-        insts = function.instructions
-        arg_push = insts[send_idx - 1]
-        setlocal_arg = IR::Instruction.new(
-          opcode: :setlocal_WC_0,
-          operands: [NEW_SLOT_LINDEX],
-          line: arg_push.line || line,
-        )
-        # Drop the receiver producer; its value is unused in Task 8.
-        replacement = [arg_push, setlocal_arg, *body]
-        function.splice_instructions!((send_idx - 2)..send_idx, replacement)
+          self_stash_lindex = NEW_SLOT_LINDEX + 1  # 4
+          arg_stash_lindex  = NEW_SLOT_LINDEX      # 3
+
+          rewritten_body = body.map do |inst|
+            if inst.opcode == :putself
+              IR::Instruction.new(
+                opcode: :getlocal_WC_0,
+                operands: [self_stash_lindex],
+                line: inst.line,
+              )
+            else
+              inst
+            end
+          end
+
+          insts   = function.instructions
+          recv_in = insts[send_idx - 2]
+          arg_in  = insts[send_idx - 1]
+          consume_arg = IR::Instruction.new(
+            opcode: :setlocal_WC_0,
+            operands: [arg_stash_lindex],
+            line: arg_in.line || line,
+          )
+          consume_recv = IR::Instruction.new(
+            opcode: :setlocal_WC_0,
+            operands: [self_stash_lindex],
+            line: recv_in.line || line,
+          )
+          replacement = [recv_in, arg_in, consume_arg, consume_recv, *rewritten_body]
+          function.splice_instructions!((send_idx - 2)..send_idx, replacement)
+        else
+          Codec::LocalTable.grow!(function, callee_arg_obj_idx)
+          shift_level0_lindex_by_1(function)
+          slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
+
+          insts = function.instructions
+          arg_push = insts[send_idx - 1]
+          setlocal_arg = IR::Instruction.new(
+            opcode: :setlocal_WC_0,
+            operands: [NEW_SLOT_LINDEX],
+            line: arg_push.line || line,
+          )
+          # Drop the receiver producer; its value is unused in Task 8.
+          replacement = [arg_push, setlocal_arg, *body]
+          function.splice_instructions!((send_idx - 2)..send_idx, replacement)
+        end
 
         log.skip(pass: :inlining, reason: :inlined, file: function.path, line: line)
         true
@@ -298,6 +335,8 @@ module RubyOpt
       # branches, catch tables, block setup, ivar ops, mid-body leaves,
       # throw, and block-carrying sends.
       def disqualify_callee_for_opt_send(callee)
+        lt_size = (callee.misc && callee.misc[:local_table_size]) || 0
+        return :callee_multi_local if lt_size > 1
         return :callee_has_catch if callee.catch_entries && !callee.catch_entries.empty?
         insts = callee.instructions || []
         return :callee_empty if insts.empty?
