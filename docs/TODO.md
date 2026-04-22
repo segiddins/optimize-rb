@@ -41,15 +41,28 @@ Last updated: 2026-04-22 (after RBS type env v1 — receiver-resolving inlining 
    with self-stash). Follow-ups: RBS-typed IdentityElim/ArithReassoc
    (upgrades those passes from "sound in practice" to "sound in
    principle"); multi-arg OPT_SEND; subtype matching.
-2. **Demo programs wired end-to-end** with benchmark harness output.
-   Open questions before building: (a) talk-time output shape — static
-   iseq dump slide, live `benchmark_ips`, or both? (b) fixture
-   location — probably `optimizer/examples/`? (c) does it round-trip
-   through full `Pipeline.default` or a named subset? (d) what's the
-   "before" baseline — unoptimized iseq, or a `-O0` variant? v1 pick is
-   `sum_of_squares` (likely `def sum_of_squares(n); (1..n).sum { |x| x*x }; end`);
-   `Point#distance_to` blocks on RBS. Confirm exact shape against
-   `docs/superpowers/specs/2026-04-19-talk-structure-design.md`.
+2. ~~**Demo programs wired end-to-end** with benchmark harness output.~~
+   **Partially shipped 2026-04-22** (one fixture). Spec:
+   `docs/superpowers/specs/2026-04-22-demo-programs-benchmark-harness-design.md`.
+   Plan: `docs/superpowers/plans/2026-04-22-demo-programs-benchmark-harness.md`.
+   Shipped: `RubyOpt::Demo::{Walkthrough,DisasmNormalizer,IseqSnapshots,Benchmark,MarkdownRenderer,Runner}`
+   + `bin/demo` driver + YAML sidecars + `rake demo:verify` freshness
+   check. `docs/demo_artifacts/point_distance.md` committed — shows a
+   visible inlining diff at the `p.distance_to(q)` call site under
+   `Pipeline.default`. Benchmark number (~1.01x) is honest: inlining
+   shifts work from call-and-return to inline instructions without
+   shrinking the receiver-method sequence. Follow-ups:
+   - **`sum_of_squares` fixture blocked.** The Codec can't decode
+     *any* `while` loop: `OFFSET raw=(2**64 - n) in branchif targets
+     slot ... with no corresponding instruction`. Negative branch
+     offsets aren't sign-extended in `codec/instruction_stream.rb:360`.
+     File as a separate codec fix; once green, restore
+     `examples/sum_of_squares.{rb,walkthrough.yml}` (they were
+     reverted in `revert(examples): drop sum_of_squares …`) and
+     regenerate `docs/demo_artifacts/sum_of_squares.md`.
+   - `const_fold` + `dead_branch_fold` slides show `(no change)` for
+     `point_distance`. Once post-inlining folds fire on the inlined
+     body, expect cascading diffs there.
 3. ~~**Const-fold Tier 2 (frozen constants).** Needs the
    constant-assignment scanner but is otherwise self-contained.~~
    **Shipped 2026-04-26.** Plan: `docs/superpowers/plans/2026-04-26-const-fold-tier2.md`.
@@ -123,6 +136,13 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
   `write_u64`/`read_u64`). Blocks the overflow-boundary test and any
   widening of `INTERN_BIT_LENGTH_LIMIT` (currently 62; effective safe
   limit is smaller because of this).
+- **Codec fails to decode backward branches (`while` loops).**
+  `codec/instruction_stream.rb:360` interprets a negative branch
+  offset as a huge unsigned integer and aborts with
+  `OFFSET raw=<2^64 - n> in branchif targets slot <2^64 - m> with
+  no corresponding instruction`. Reproduces on any trivial loop,
+  e.g. `def f(n); i=0; while i<n; i+=1; end; end`. Blocks the
+  `sum_of_squares` demo fixture and any future loop-based demo.
 
 ## Explicitly out of scope (original talk-structure spec)
 
