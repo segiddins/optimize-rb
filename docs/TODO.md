@@ -4,7 +4,7 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-22 (after InliningPass v2).
+Last updated: 2026-04-23 (after ConstFoldEnvPass Tier 4).
 
 ## Three-pass plan: status
 
@@ -12,7 +12,7 @@ Last updated: 2026-04-22 (after InliningPass v2).
 |---|---|---|---|
 | Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2: zero-arg and one-arg FCALL inline (constant-body, single-local callees) with local-table growth + level-0 LINDEX shift | multi-arg, kwargs, blocks, receivers via RBS, CFG splicing across BBs |
 | Arithmetic specialization | Reassoc of `+ - * / %` chains under "no BOP redef"; RBS-typed operands; sub-chain folding; post-inlining collapse | ArithReassoc v1–v4 (`opt_plus`, `opt_mult`, `opt_minus`, `opt_div`) + IdentityElim v1. **Literal-only operands, no RBS typing.** | `opt_mod`; true Integer-typed operand proofs; post-inlining demo |
-| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). | Tier 2 (frozen top-level constants), Tier 3 proper (RBS-typed identities), Tier 4 (ENV folding) |
+| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint gate. | Tier 2 (frozen top-level constants), Tier 3 proper (RBS-typed identities) |
 
 ## Cross-cutting infrastructure not yet built
 
@@ -35,14 +35,12 @@ Last updated: 2026-04-22 (after InliningPass v2).
    Big spec on its own (~option F in the session-ladder history). v2
    inlining shipped, so the next narrative beat is receiver-resolution
    which this unblocks.
-2. **Const-fold Tier 4 (ENV).** Contract-slide showpiece. Small, doesn't
-   need RBS. High narrative ROI per unit effort.
-3. **Demo programs wired end-to-end** with benchmark harness output.
-4. **Const-fold Tier 2 (frozen constants).** Needs the
+2. **Demo programs wired end-to-end** with benchmark harness output.
+3. **Const-fold Tier 2 (frozen constants).** Needs the
    constant-assignment scanner but is otherwise self-contained.
-5. **`opt_mod`** in the arith family. Non-commutative/associative —
+4. **`opt_mod`** in the arith family. Non-commutative/associative —
    skip-heavy, small fold set. May not justify its own slide.
-6. **Claude Code gag pass.** §7 close. Scripted output is fine.
+5. **Claude Code gag pass.** §7 close. Scripted output is fine.
 
 ## Refinements of shipped work (not roadmap progress, but talk-adjacent)
 
@@ -67,6 +65,20 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
   + encoder guard for body-record drift); v3 just needs a more general
   LINDEX-remap pass (shift by N, and merge callee-side slot indices
   past v2's "single local at EP 3" invariant).
+- **`ObjectTable#intern` for frozen strings.** Unblocks unconditional
+  `ConstFoldEnvPass` folding. Today, a fold is skipped (logged as
+  `:env_value_not_interned`) when the snapshot value isn't already in
+  the object table. The decoder already handles `T_STRING`; this is a
+  small branch in `write_special_const` plus relaxing the
+  "special-const only" guard in `intern`. Log reason disappears once
+  shipped; canonical case `ENV["FLAG"] == "true"` already works today
+  because `"true"` is interned as the comparison RHS.
+- **`ConstFoldEnvPass` narrowing of taint classifier.** Currently any
+  send on ENV (including read-only `fetch`/`to_h`/`key?`) taints the
+  whole IR tree. Add a whitelist of read-only method names read from
+  the `opt_send_without_block` calldata mid to fold past them. Needs
+  string-intern first to be worth it (or fetch returns nil → putnil
+  path works without intern).
 - **Extract v2's LINDEX-shift loop into `LocalTable`.** Currently
   inlined in `InliningPass#try_inline_one_arg`; belongs next to
   `grow!` since the "local_table_size grew by 1 so EP offsets shift"
