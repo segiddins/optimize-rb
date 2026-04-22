@@ -10,12 +10,6 @@ module RubyOpt
     class InliningPass < RubyOpt::Pass
       INLINE_BUDGET = 8  # max callee instructions INCLUDING the trailing leave
 
-      LOCAL_OPCODES = %i[
-        getlocal setlocal
-        getlocal_WC_0 setlocal_WC_0
-        getlocal_WC_1 setlocal_WC_1
-      ].freeze
-
       SEND_OPCODES = %i[
         send opt_send_without_block
         invokesuper invokesuperforward invokeblock
@@ -103,11 +97,10 @@ module RubyOpt
       end
 
       def disqualify_callee(callee)
-        # arg_spec: v1 requires lead_num=0, opt_num=0, rest_start absent,
-        # post_num=0, block_start absent, no kwargs.
         as = callee.arg_spec || {}
-        return :callee_has_args if (as[:lead_num] || 0).positive?
-        return :callee_has_args if (as[:opt_num] || 0).positive?
+        # v2: lead_num may be 0 or 1. Anything else (2+) still rejects as args.
+        return :callee_has_args if (as[:lead_num] || 0) > 1
+        return :callee_has_args if (as[:opt_num]  || 0).positive?
         return :callee_has_args if (as[:post_num] || 0).positive?
         return :callee_has_args if as[:has_rest]
         return :callee_has_args if as[:has_block]
@@ -115,7 +108,10 @@ module RubyOpt
         return :callee_has_args if as[:has_kwrest]
 
         lt_size = (callee.misc && callee.misc[:local_table_size]) || 0
-        return :callee_has_locals if lt_size.positive?
+        return :callee_multi_local if lt_size > 1
+        if (as[:lead_num] || 0) == 1 && lt_size != 1
+          return :callee_multi_local
+        end
 
         return :callee_has_catch if callee.catch_entries && !callee.catch_entries.empty?
 
@@ -124,13 +120,22 @@ module RubyOpt
         return :callee_over_budget if insts.size > INLINE_BUDGET
         return :callee_no_trailing_leave unless insts.last.opcode == :leave
 
-        # Scan the body (everything except the trailing leave).
-        insts[0..-2].each do |inst|
+        body = insts[0..-2]
+        body.each do |inst|
           return :callee_has_branches if CONTROL_FLOW_OPCODES.include?(inst.opcode)
-          return :callee_has_locals   if LOCAL_OPCODES.include?(inst.opcode)
           return :callee_makes_call   if SEND_OPCODES.include?(inst.opcode)
           return :callee_has_leave_midway if inst.opcode == :leave
           return :callee_has_throw if inst.opcode == :throw
+          case inst.opcode
+          when :setlocal, :setlocal_WC_0, :setlocal_WC_1
+            return :callee_writes_local
+          when :getlocal_WC_1
+            return :callee_reads_outer_scope
+          when :getlocal, :getlocal_WC_0
+            idx = inst.operands[0]
+            # Slot 1 is the single arg. Anything else rejects.
+            return :callee_reads_unknown_slot unless idx == 1
+          end
         end
         nil
       end

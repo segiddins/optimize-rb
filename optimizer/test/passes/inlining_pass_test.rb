@@ -42,7 +42,7 @@ class InliningPassTest < Minitest::Test
       object_table: ot, callee_map: { add_one: add_one },
     )
     assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
-    assert log.entries.any? { |e| e.reason == :callee_has_args }
+    refute log.entries.any? { |e| e.reason == :inlined }
   end
 
   def test_skips_when_callee_has_branches
@@ -72,7 +72,7 @@ class InliningPassTest < Minitest::Test
       object_table: ot, callee_map: { local_y: local_y },
     )
     assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
-    assert log.entries.any? { |e| e.reason == :callee_has_locals }
+    refute log.entries.any? { |e| e.reason == :inlined }
   end
 
   def test_skips_when_callee_makes_nested_call
@@ -102,6 +102,54 @@ class InliningPassTest < Minitest::Test
       object_table: ot, callee_map: {},
     )
     assert log.entries.any? { |e| e.reason == :callee_unresolved }
+  end
+
+  def test_v2_skips_callee_with_multi_local
+    src = "def wrap(x); y = x + 1; y; end; def use_it; wrap(3); end; use_it"
+    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot  = ir.misc[:object_table]
+    use_it = find_iseq(ir, "use_it")
+    wrap   = find_iseq(ir, "wrap")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { wrap: wrap },
+    )
+    assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    refute log.entries.any? { |e| e.reason == :inlined }
+    assert log.entries.any? { |e| e.reason == :callee_multi_local }
+  end
+
+  def test_v2_skips_callee_that_writes_its_arg
+    src = "def reassign(x); x = 5; x; end; def use_it; reassign(1); end; use_it"
+    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot  = ir.misc[:object_table]
+    use_it   = find_iseq(ir, "use_it")
+    reassign = find_iseq(ir, "reassign")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { reassign: reassign },
+    )
+    assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    refute log.entries.any? { |e| e.reason == :inlined }
+    assert log.entries.any? { |e| e.reason == :callee_writes_local }
+  end
+
+  def test_v2_skips_callee_with_two_args
+    src = "def add(a, b); a + b; end; def use_it; add(1, 2); end; use_it"
+    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot  = ir.misc[:object_table]
+    use_it = find_iseq(ir, "use_it")
+    add    = find_iseq(ir, "add")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { add: add },
+    )
+    assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    refute log.entries.any? { |e| e.reason == :inlined }
+    assert log.entries.any? { |e| e.reason == :callee_has_args }
   end
 
   private
