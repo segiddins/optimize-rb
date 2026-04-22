@@ -196,6 +196,48 @@ class PipelineTest < Minitest::Test
     assert_kind_of RubyOpt::IR::SlotTypeTable, spy.seen_slot_map[ir]
   end
 
+  class CalleeMapSpyPass < RubyOpt::Pass
+    attr_reader :seen_callee_map
+    def name = :callee_map_spy
+    def apply(function, type_env:, log:, callee_map: {}, **_extras)
+      @seen_callee_map = callee_map if function.type == :top
+    end
+  end
+
+  def test_callee_map_keys_instance_methods_by_class_and_method
+    method_fn = RubyOpt::IR::Function.new(
+      name: "distance_to", type: :method, path: "t.rb", first_lineno: 3, misc: {},
+      instructions: [], children: [],
+    )
+    class_fn = RubyOpt::IR::Function.new(
+      name: "Point", type: :class, path: "t.rb", first_lineno: 1, misc: {},
+      instructions: [], children: [method_fn],
+    )
+    top_fn = RubyOpt::IR::Function.new(
+      name: "<main>", type: :top, path: "t.rb", first_lineno: 1, misc: {},
+      instructions: [], children: [class_fn],
+    )
+    spy = CalleeMapSpyPass.new
+    RubyOpt::Pipeline.new([spy]).run(top_fn, type_env: nil)
+
+    assert_same method_fn, spy.seen_callee_map[["Point", :distance_to]]
+  end
+
+  def test_callee_map_still_keys_top_level_def_by_symbol
+    top_level_method = RubyOpt::IR::Function.new(
+      name: "inc", type: :method, path: "t.rb", first_lineno: 1, misc: {},
+      instructions: [], children: [],
+    )
+    top_fn = RubyOpt::IR::Function.new(
+      name: "<main>", type: :top, path: "t.rb", first_lineno: 1, misc: {},
+      instructions: [], children: [top_level_method],
+    )
+    spy = CalleeMapSpyPass.new
+    RubyOpt::Pipeline.new([spy]).run(top_fn, type_env: nil)
+
+    assert_same top_level_method, spy.seen_callee_map[:inc]
+  end
+
   private
 
   def find_iseq(ir, name)

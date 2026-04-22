@@ -75,12 +75,23 @@ module RubyOpt
 
     def build_callee_map(ir)
       map = {}
-      each_function(ir) do |fn|
-        next unless fn.type == :method
-        next unless fn.name
-        map[fn.name.to_sym] = fn
+      walk_with_class_context(ir, nil) do |fn, class_context|
+        next unless fn.type == :method && fn.name
+        if class_context
+          map[[class_context, fn.name.to_sym]] = fn
+        else
+          map[fn.name.to_sym] = fn
+        end
       end
       map
+    end
+
+    def walk_with_class_context(fn, class_context, &block)
+      yield fn, class_context
+      next_ctx = fn.type == :class ? fn.name : class_context
+      (fn.children || []).each do |child|
+        walk_with_class_context(child, next_ctx, &block)
+      end
     end
 
     def build_type_maps(ir, type_env, object_table)
