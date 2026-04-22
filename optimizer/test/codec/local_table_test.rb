@@ -36,6 +36,60 @@ class LocalTableCodecTest < Minitest::Test
     assert_raises(ArgumentError) { RubyOpt::Codec::LocalTable.decode("\x00".b, 1) }
   end
 
+  def test_grow_appends_entry_and_increments_size
+    src = "def take(x); x; end; take(1)"
+    bin = RubyVM::InstructionSequence.compile(src).to_binary
+    ir  = RubyOpt::Codec.decode(bin)
+    take = find_iseq_named(ir, "take")
+    refute_nil take
+    old_size = take.misc[:local_table_size]
+    old_raw  = take.misc[:local_table_raw]
+    original_entries = RubyOpt::Codec::LocalTable.decode(old_raw, old_size)
+    sentinel = original_entries[0]
+
+    returned = RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+
+    assert_equal old_size, returned
+    assert_equal old_size + 1, take.misc[:local_table_size]
+    new_entries = RubyOpt::Codec::LocalTable.decode(
+      take.misc[:local_table_raw], take.misc[:local_table_size]
+    )
+    assert_equal original_entries + [sentinel], new_entries
+  end
+
+  def test_grow_preserves_encoder_round_trip
+    src = "def take(x); x; end; take(1)"
+    bin = RubyVM::InstructionSequence.compile(src).to_binary
+    ir  = RubyOpt::Codec.decode(bin)
+    take = find_iseq_named(ir, "take")
+    refute_nil take
+    sentinel = RubyOpt::Codec::LocalTable.decode(
+      take.misc[:local_table_raw], take.misc[:local_table_size]
+    )[0]
+
+    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+    re_encoded = RubyOpt::Codec.encode(ir)
+    # Loading alone proves layout integrity; LINDEX rewrites aren't our job.
+    RubyVM::InstructionSequence.load_from_binary(re_encoded)
+  end
+
+  def test_grow_preserves_trailing_alignment_pad
+    src = "def take(x); x; end; take(1)"
+    bin = RubyVM::InstructionSequence.compile(src).to_binary
+    ir  = RubyOpt::Codec.decode(bin)
+    take = find_iseq_named(ir, "take")
+    refute_nil take
+    old_bytesize = take.misc[:local_table_raw].bytesize
+    sentinel = RubyOpt::Codec::LocalTable.decode(
+      take.misc[:local_table_raw], take.misc[:local_table_size]
+    )[0]
+
+    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+
+    assert_equal old_bytesize + RubyOpt::Codec::LocalTable::ID_SIZE,
+                 take.misc[:local_table_raw].bytesize
+  end
+
   private
 
   def find_iseq_named(fn, name)

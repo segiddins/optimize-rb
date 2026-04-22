@@ -491,7 +491,14 @@ module RubyOpt
           # bytes happen to be equal length. Treat that as a legitimate change too.
           iseq_size_changed = fn.instructions &&
             InstructionStream.total_slots(fn.instructions) != misc[:iseq_size]
-          unless bytecode_size_changed || iseq_size_changed
+          # local_table growth (LocalTable.grow!) shifts all sections after
+          # local_table forward, so the body record's relative-offset fields
+          # (and local_table_size itself) legitimately change even when
+          # bytecode/iseq size is unchanged. grow! stashes the pre-growth size
+          # in misc[:local_table_size_original] so we can detect this here.
+          local_table_size_changed = misc[:local_table_size_original] &&
+            misc[:local_table_size_original] != misc[:local_table_size]
+          unless bytecode_size_changed || iseq_size_changed || local_table_size_changed
             if emitted_body.bytesize != original_body.bytesize
               raise RuntimeError,
                 "body record size mismatch: iseq=#{fn.name} was=#{original_body.bytesize} got=#{emitted_body.bytesize}"

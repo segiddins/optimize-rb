@@ -41,6 +41,39 @@ module RubyOpt
         entries.each { |idx| writer.write_u64(idx) }
         writer.buffer
       end
+
+      # Append a new local slot to `fn`'s local table.
+      #
+      # Mutates `fn.misc[:local_table_size]` (+1) and `fn.misc[:local_table_raw]`
+      # (re-encoded content followed by the same number of trailing alignment
+      # pad bytes that the original raw carried — the iseq_list encoder uses
+      # `raw.bytesize` for downstream section positioning).
+      #
+      # Does NOT mutate getlocal/setlocal LINDEX operands in `fn.instructions`;
+      # that rewrite is the inlining pass's responsibility.
+      #
+      # @param fn [Object] function/iseq IR node with a `misc` Hash
+      # @param object_table_index [Integer] index into the object table
+      #   naming the new local's Symbol
+      # @return [Integer] the new entry's local-table index
+      #   (post-growth `local_table_size - 1`, i.e. the prior size)
+      def grow!(fn, object_table_index)
+        misc = fn.misc
+        old_size = (misc[:local_table_size] || 0)
+        old_raw  = (misc[:local_table_raw]  || "".b)
+        entries  = decode(old_raw, old_size)
+        entries << object_table_index
+        new_content = encode(entries)
+        old_content_size = old_size * ID_SIZE
+        pad_bytes = [old_raw.bytesize - old_content_size, 0].max
+        # Preserve the original size once, so the iseq_list encoder can detect
+        # that the body record's local_table_size / relative offsets have
+        # legitimately changed and skip byte-identity assertions.
+        misc[:local_table_size_original] ||= old_size
+        misc[:local_table_raw]  = new_content + ("\x00".b * pad_bytes)
+        misc[:local_table_size] = old_size + 1
+        old_size
+      end
     end
   end
 end
