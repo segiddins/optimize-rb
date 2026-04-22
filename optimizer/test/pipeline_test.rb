@@ -239,7 +239,11 @@ class PipelineTest < Minitest::Test
   end
 
   def test_point_distance_fixture_roundtrips_through_pipeline
-    source = File.read(File.expand_path("../examples/point_distance.rb", __dir__))
+    fixture = File.read(File.expand_path("../examples/point_distance.rb", __dir__))
+    # Append a call site so the inliner has something to resolve. The
+    # fixture file itself only defines the class; call sites live in
+    # the walkthrough sidecar's entry_call.
+    source = "#{fixture.chomp}\n\np = Point.new(1, 2)\nq = Point.new(4, 6)\np.distance_to(q)\n"
     iseq = RubyVM::InstructionSequence.compile(source, "point_distance.rb", "point_distance.rb")
     ir = RubyOpt::Codec.decode(iseq.to_binary)
     type_env = RubyOpt::TypeEnv.from_source(source, "point_distance.rb")
