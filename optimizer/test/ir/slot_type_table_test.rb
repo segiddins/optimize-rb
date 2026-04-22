@@ -31,4 +31,53 @@ class SlotTypeTableTest < Minitest::Test
 
     assert_nil table.lookup(0, 0)
   end
+
+  InstStub = Struct.new(:opcode, :operands, keyword_init: true)
+
+  # Minimal fake CallData: SlotTypeTable only reads .argc and .mid_symbol.
+  FakeCD = Struct.new(:mid_sym, :argc) do
+    def mid_symbol(_object_table) = mid_sym
+  end
+
+  def test_new_pattern_types_destination_slot
+    # Caller bytecode for: p = Point.new(1, 2)   (size-1 local table, p is slot 0)
+    # LINDEX 3 corresponds to slot 0 when size == 1.
+    insts = [
+      InstStub.new(opcode: :opt_getconstant_path, operands: [[:Point]]),
+      InstStub.new(opcode: :putobject_INT2FIX_1_, operands: []),
+      InstStub.new(opcode: :putobject_INT2FIX_1_, operands: []),
+      InstStub.new(opcode: :opt_send_without_block, operands: [FakeCD.new(:new, 2)]),
+      InstStub.new(opcode: :setlocal_WC_0,         operands: [3]),
+    ]
+    fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
+    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    assert_equal "Point", table.lookup(0, 0)
+  end
+
+  def test_setlocal_from_unrelated_producer_leaves_slot_nil
+    insts = [
+      InstStub.new(opcode: :putobject,    operands: [42]),
+      InstStub.new(opcode: :setlocal_WC_0, operands: [3]),
+    ]
+    fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
+    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    assert_nil table.lookup(0, 0)
+  end
+
+  def test_unrelated_setlocal_clears_a_previously_typed_slot
+    # Seed slot 0 as "Point" via signature, then a plain setlocal in the
+    # instruction stream should taint it back to nil.
+    insts = [
+      InstStub.new(opcode: :putobject,    operands: [42]),
+      InstStub.new(opcode: :setlocal_WC_0, operands: [3]),
+    ]
+    fn = FnStub.new(
+      arg_spec: { lead_num: 1 },
+      instructions: insts,
+      misc: { local_table_size: 1 },
+    )
+    sig = SigStub.new(arg_types: ["Point"])
+    table = RubyOpt::IR::SlotTypeTable.build(fn, sig, nil)
+    assert_nil table.lookup(0, 0)
+  end
 end
