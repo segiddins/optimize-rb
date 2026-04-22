@@ -93,4 +93,21 @@ class PipelineTest < Minitest::Test
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
+
+  def test_inlining_v2_end_to_end
+    src = File.read(File.expand_path("codec/corpus/inlining_one_arg.rb", __dir__))
+    bin = RubyVM::InstructionSequence.compile(src).to_binary
+    ir  = RubyOpt::Codec.decode(bin)
+
+    log = RubyOpt::Pipeline.default.run(ir, type_env: nil)
+
+    use_it = ir.children.find { |c| c.name == "use_it" }
+    refute_nil use_it
+    refute use_it.instructions.any? { |i| i.opcode == :opt_send_without_block },
+      "expected `use_it` to have its call to `double` inlined"
+    assert log.entries.any? { |e| e.pass == :inlining && e.reason == :inlined }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 14, loaded.eval
+  end
 end

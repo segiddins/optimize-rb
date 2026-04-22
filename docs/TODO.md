@@ -4,13 +4,13 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-21 (after InliningPass v1).
+Last updated: 2026-04-22 (after InliningPass v2).
 
 ## Three-pass plan: status
 
 | Pass | Original scope | Shipped | Remaining |
 |---|---|---|---|
-| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1: zero-arg FCALL inline of constant-body callees (no locals, no branches, no catch, no nested sends) | args, receivers via RBS, wrapper flattening, CFG splicing |
+| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2: zero-arg and one-arg FCALL inline (constant-body, single-local callees) with local-table growth + level-0 LINDEX shift | multi-arg, kwargs, blocks, receivers via RBS, CFG splicing across BBs |
 | Arithmetic specialization | Reassoc of `+ - * / %` chains under "no BOP redef"; RBS-typed operands; sub-chain folding; post-inlining collapse | ArithReassoc v1–v4 (`opt_plus`, `opt_mult`, `opt_minus`, `opt_div`) + IdentityElim v1. **Literal-only operands, no RBS typing.** | `opt_mod`; true Integer-typed operand proofs; post-inlining demo |
 | Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). | Tier 2 (frozen top-level constants), Tier 3 proper (RBS-typed identities), Tier 4 (ENV folding) |
 
@@ -30,22 +30,19 @@ Last updated: 2026-04-21 (after InliningPass v1).
 
 ## Roadmap gap, ranked by talk-ROI
 
-1. **Inlining v2 — one-arg FCALL with local-table growth.** v1 shipped
-   (zero-arg, constant-body). v2 unblocks the wrapper-flattening demo
-   and requires `local_table` codec extension to allocate a caller-side
-   slot for the passed arg. The "often only exposed *after* inlining"
-   const-fold slide still wants v2 to fully land.
-2. **RBS type environment.** Prerequisite for "sound in principle"
-   across every pass and for the object-y demo. Big spec on its own
-   (~option F in the session-ladder history).
-3. **Const-fold Tier 4 (ENV).** Contract-slide showpiece. Small, doesn't
+1. **RBS type environment.** Prerequisite for "sound in principle"
+   across every pass and for the object-y `Point#distance_to` demo.
+   Big spec on its own (~option F in the session-ladder history). v2
+   inlining shipped, so the next narrative beat is receiver-resolution
+   which this unblocks.
+2. **Const-fold Tier 4 (ENV).** Contract-slide showpiece. Small, doesn't
    need RBS. High narrative ROI per unit effort.
-4. **Demo programs wired end-to-end** with benchmark harness output.
-5. **Const-fold Tier 2 (frozen constants).** Needs the
+3. **Demo programs wired end-to-end** with benchmark harness output.
+4. **Const-fold Tier 2 (frozen constants).** Needs the
    constant-assignment scanner but is otherwise self-contained.
-6. **`opt_mod`** in the arith family. Non-commutative/associative —
+5. **`opt_mod`** in the arith family. Non-commutative/associative —
    skip-heavy, small fold set. May not justify its own slide.
-7. **Claude Code gag pass.** §7 close. Scripted output is fine.
+6. **Claude Code gag pass.** §7 close. Scripted output is fine.
 
 ## Refinements of shipped work (not roadmap progress, but talk-adjacent)
 
@@ -63,10 +60,13 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
 - **ArithReassocPass helper extraction.** The `:abelian` and `:ordered`
   kind branches duplicate a ~10-line prologue. Worth extracting if a
   third kind lands.
-- **InliningPass v2** — one-arg FCALL inline with caller local-table
-  extension for arg passing; prerequisite for wrapper flattening. Needs
-  codec work: growing `local_table` bytes, updating `local_table_size`
-  in `misc`, stack_max recomputation for the additional setlocal.
+- **InliningPass v3** — multi-arg FCALL inline (merge callee locals
+  into caller table, rewrite all LINDEX refs, not just the +1 shift).
+  Prerequisite for `Point#distance_to`-style demos taking 2+ args.
+  Key codec work already done in v2 (`Codec::LocalTable` with `grow!`
+  + encoder guard for body-record drift); v3 just needs a more general
+  LINDEX-remap pass (shift by N, and merge callee-side slot indices
+  past v2's "single local at EP 3" invariant).
 
 ## Known bugs / blockers
 
