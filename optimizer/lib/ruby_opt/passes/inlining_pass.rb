@@ -110,7 +110,7 @@ module RubyOpt
         lt_size = (callee.misc && callee.misc[:local_table_size]) || 0
         return :callee_multi_local if lt_size > 1
         if (as[:lead_num] || 0) == 1 && lt_size != 1
-          return :callee_multi_local
+          return :callee_arg_local_mismatch
         end
 
         return :callee_has_catch if callee.catch_entries && !callee.catch_entries.empty?
@@ -126,6 +126,7 @@ module RubyOpt
           return :callee_makes_call   if SEND_OPCODES.include?(inst.opcode)
           return :callee_has_leave_midway if inst.opcode == :leave
           return :callee_has_throw if inst.opcode == :throw
+          # v2: slot 1 is the sole arg; anything else means a local we can't yet handle.
           case inst.opcode
           when :setlocal, :setlocal_WC_0, :setlocal_WC_1
             return :callee_writes_local

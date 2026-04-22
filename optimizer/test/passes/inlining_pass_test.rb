@@ -43,6 +43,11 @@ class InliningPassTest < Minitest::Test
     )
     assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
     refute log.entries.any? { |e| e.reason == :inlined }
+    # Note: call-site check would say :unsupported_call_shape, but the callee's
+    # body scan rejects first — getlocal reads slot 0 (the codec's local index
+    # for `x`), not slot 1, so :callee_reads_unknown_slot fires before we reach
+    # the shape check.
+    assert log.entries.any? { |e| e.reason == :callee_reads_unknown_slot }
   end
 
   def test_skips_when_callee_has_branches
@@ -73,6 +78,7 @@ class InliningPassTest < Minitest::Test
     )
     assert use_it.instructions.any? { |i| i.opcode == :opt_send_without_block }
     refute log.entries.any? { |e| e.reason == :inlined }
+    assert log.entries.any? { |e| e.reason == :callee_writes_local }
   end
 
   def test_skips_when_callee_makes_nested_call
