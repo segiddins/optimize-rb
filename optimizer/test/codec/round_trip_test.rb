@@ -127,6 +127,29 @@ class RoundTripTest < Minitest::Test
     assert_raises(ArgumentError) { RubyOpt::Codec::InstructionStream.i64_to_u64(-(1 << 63) - 1) }
   end
 
+  def test_decode_backward_branch_in_while_loop
+    # A minimal method with a while loop. The while body loops back via
+    # branchif or branchunless with a NEGATIVE relative slot offset.
+    src = "def loop_me(n); i = 0; while i < n; i += 1; end; i; end"
+    original = RubyVM::InstructionSequence.compile(src).to_binary
+
+    # Before the fix: this decode raises with
+    #   "OFFSET raw=<huge> in branch* targets slot <huge> with no corresponding instruction"
+    ir = RubyOpt::Codec.decode(original)
+    refute_nil ir
+
+    # Sanity: at least one branch instruction must point backward (target index
+    # strictly less than the branch's own index).
+    loop_me = ir.children.find { |f| f.name == "loop_me" }
+    refute_nil loop_me
+    insns = loop_me.instructions
+    has_backward_branch = insns.each_with_index.any? do |insn, idx|
+      %i[branchif branchunless branchnil jump].include?(insn.opcode) &&
+        insn.operands[0].is_a?(Integer) && insn.operands[0] < idx
+    end
+    assert has_backward_branch, "expected at least one backward branch in while loop"
+  end
+
   def test_round_trip_helpers_compose
     [-5, -1, 0, 1, 5, (1 << 62), -(1 << 62)].each do |i|
       u = RubyOpt::Codec::InstructionStream.i64_to_u64(i)

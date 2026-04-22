@@ -339,7 +339,7 @@ module RubyOpt
               reader.read_small_value
             when :OFFSET
               offset_operand_positions << [insn_idx, op_idx]
-              reader.read_small_value  # raw relative offset; converted below
+              u64_to_i64(reader.read_small_value)  # sign-extend: backward branches encode as (2^64 + n)
             when :CALLDATA
               # TS_CALLDATA: nothing in the bytecode stream, but we materialise
               # one IR::CallData record from the per-iseq ci_entries list.
