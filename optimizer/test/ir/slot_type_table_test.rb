@@ -80,4 +80,26 @@ class SlotTypeTableTest < Minitest::Test
     table = RubyOpt::IR::SlotTypeTable.build(fn, sig, nil)
     assert_nil table.lookup(0, 0)
   end
+
+  def test_cross_level_lookup_walks_to_parent
+    parent_fn  = FnStub.new(
+      arg_spec: { lead_num: 1 }, instructions: [], misc: { local_table_size: 1 },
+    )
+    parent_sig = SigStub.new(arg_types: ["Point"])
+    parent = RubyOpt::IR::SlotTypeTable.build(parent_fn, parent_sig, nil)
+
+    child_fn = FnStub.new(
+      arg_spec: {}, instructions: [], misc: { local_table_size: 0 },
+    )
+    child = RubyOpt::IR::SlotTypeTable.build(child_fn, nil, parent)
+
+    assert_nil child.lookup(0, 0)
+    assert_equal "Point", child.lookup(0, 1)
+  end
+
+  def test_lookup_above_root_returns_nil
+    fn = FnStub.new(arg_spec: {}, instructions: [], misc: { local_table_size: 0 })
+    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    assert_nil table.lookup(0, 3)
+  end
 end
