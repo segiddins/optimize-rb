@@ -427,6 +427,134 @@ class InliningPassTest < Minitest::Test
     assert_equal 7, loaded.eval
   end
 
+  # Helper: build a typed caller + slot_type_map for OPT_SEND guard tests.
+  # Returns [caller_fn, callee_fn, slot_type_map, type_env, ot]. The caller's
+  # type_env seeds slot 0 as "GuardClass"; the callee for "GuardClass#mid"
+  # lives inside the compiled source, so tests can synthesize the callee_map
+  # themselves if they want a specific kind of failure.
+  def build_guard_caller(callee_body_src)
+    src = <<~RUBY
+      class GuardClass
+        #{callee_body_src}
+      end
+      # @rbs (GuardClass, GuardClass) -> Integer
+      def driver(p, q); p.mid(q); end
+      driver(GuardClass.new, GuardClass.new)
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    caller   = find_iseq(ir, "driver")
+    callee   = find_iseq(ir, "mid")
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+    [caller, callee, slot_type_map, type_env, ot]
+  end
+
+  def apply_inliner(caller, callee_map, slot_type_map, type_env, ot)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: callee_map,
+      slot_type_map: slot_type_map,
+    )
+    log
+  end
+
+  def test_opt_send_skips_when_receiver_slot_untyped
+    # No @rbs signature on driver → slot_type_map contains a table with
+    # no signature, so slot 0 is untyped.
+    src = <<~RUBY
+      class NoSigClass
+        def mid(other); other; end
+      end
+      def driver(p, q); p.mid(q); end    # intentionally no @rbs
+      driver(NoSigClass.new, NoSigClass.new)
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    caller = find_iseq(ir, "driver")
+    callee = find_iseq(ir, "mid")
+    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, nil, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    log = apply_inliner(caller, { ["NoSigClass", :mid] => callee }, slot_type_map, type_env, ot)
+
+    assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block },
+      "opt_send survives when receiver slot has no type"
+    refute log.entries.any? { |e| e.reason == :inlined },
+      "no inline should have happened"
+  end
+
+  def test_opt_send_skips_when_callee_not_in_map
+    caller, _callee, slot_type_map, type_env, ot =
+      build_guard_caller("def mid(other); other; end")
+    # Empty callee_map.
+    log = apply_inliner(caller, {}, slot_type_map, type_env, ot)
+
+    assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e| e.reason == :callee_unresolved }
+  end
+
+  def test_opt_send_skips_when_callee_has_branches
+    caller, callee, slot_type_map, type_env, ot =
+      build_guard_caller("def mid(other); other ? 1 : 2; end")
+    log = apply_inliner(caller, { ["GuardClass", :mid] => callee }, slot_type_map, type_env, ot)
+
+    assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e| e.reason == :callee_has_branches }
+  end
+
+  def test_opt_send_skips_when_callee_has_catch_entry
+    # Ruby's `rescue` compiles with a catch table.
+    caller, callee, slot_type_map, type_env, ot =
+      build_guard_caller("def mid(other); other; rescue; nil; end")
+    log = apply_inliner(caller, { ["GuardClass", :mid] => callee }, slot_type_map, type_env, ot)
+
+    assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e| e.reason == :callee_has_catch }
+  end
+
+  def test_opt_send_skips_when_callee_has_multi_local
+    caller, callee, slot_type_map, type_env, ot =
+      build_guard_caller("def mid(other); y = other; y; end")
+    log = apply_inliner(caller, { ["GuardClass", :mid] => callee }, slot_type_map, type_env, ot)
+
+    assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e| e.reason == :callee_multi_local }
+  end
+
+  def test_opt_send_skips_when_callee_uses_ivar
+    caller, callee, slot_type_map, type_env, ot =
+      build_guard_caller("def mid(other); @x; end")
+    log = apply_inliner(caller, { ["GuardClass", :mid] => callee }, slot_type_map, type_env, ot)
+
+    assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e| e.reason == :callee_uses_ivar }
+  end
+
+  def test_opt_send_skips_when_callee_uses_block
+    # A callee that yields compiles with invokeblock in the IR body; the
+    # invokeblock instruction is terminal in the IR encoding so the iseq does
+    # not end with :leave — which means :callee_no_trailing_leave fires before
+    # the body-scan loop even checks for :invokeblock.  Both reasons correctly
+    # reject the callee, so we accept any of them.
+    caller, callee, slot_type_map, type_env, ot =
+      build_guard_caller("def mid(other); yield other; end")
+    log = apply_inliner(caller, { ["GuardClass", :mid] => callee }, slot_type_map, type_env, ot)
+
+    assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block }
+    assert log.entries.any? { |e|
+      [:callee_uses_block, :callee_send_has_block, :callee_no_trailing_leave].include?(e.reason)
+    }, "expected block-related or no-trailing-leave rejection, got: #{log.entries.map(&:reason).inspect}"
+  end
+
   private
 
   def find_iseq(fn, name)
