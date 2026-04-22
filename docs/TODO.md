@@ -4,7 +4,7 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-26 (after ConstFoldTier2Pass — frozen top-level constants).
+Last updated: 2026-04-27 (after ConstFoldEnvPass — ENV.fetch literal-key fold).
 
 ## Three-pass plan: status
 
@@ -12,7 +12,7 @@ Last updated: 2026-04-26 (after ConstFoldTier2Pass — frozen top-level constant
 |---|---|---|---|
 | Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2: zero-arg and one-arg FCALL inline (constant-body, single-local callees) with local-table growth + level-0 LINDEX shift | multi-arg, kwargs, blocks, receivers via RBS, CFG splicing across BBs |
 | Arithmetic specialization | Reassoc of `+ - * / %` chains under "no BOP redef"; RBS-typed operands; sub-chain folding; post-inlining collapse | ArithReassoc v1–v4 (`opt_plus`, `opt_mult`, `opt_minus`, `opt_div`) + IdentityElim v1. **Literal-only operands, no RBS typing.** | `opt_mod`; true Integer-typed operand proofs; post-inlining demo |
-| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 2 (ConstFoldTier2Pass): top-level frozen constants with literal RHS — Integer/String/true/false/nil — whole-tree pre-scan; reassigned or non-top-level names are tainted. Cascades through Tier 1 (e.g. `FOO + 1 → 43`). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint pre-scan; String snapshot values interned on-the-fly (no skip); read-only sends (`fetch`, `to_h`, `key?`, …) no longer taint the tree (argc≤1). | Tier 3 proper (RBS-typed identities). Tier 2 follow-ups: Symbols, nested `M::FOO`, frozen Array/Hash literals. Tier 4 follow-ups: argc≥2 safe sends, block-passing sends, `ENV.fetch(LIT)` fold, generic `send` opcode. |
+| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 2 (ConstFoldTier2Pass): top-level frozen constants with literal RHS — Integer/String/true/false/nil — whole-tree pre-scan; reassigned or non-top-level names are tainted. Cascades through Tier 1 (e.g. `FOO + 1 → 43`). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint pre-scan; String snapshot values interned on-the-fly (no skip); read-only sends (`fetch`, `to_h`, `key?`, …) no longer taint the tree (argc≤1); `ENV.fetch("LIT")` argc=1 is now folded when snapshot carries the key (snapshot-presence check preserves runtime KeyError semantics; `:fetch_key_absent` log on miss). | Tier 3 proper (RBS-typed identities). Tier 2 follow-ups: Symbols, nested `M::FOO`, frozen Array/Hash literals. Tier 4 follow-ups: argc≥2 safe sends, block-passing sends, `ENV.fetch(LIT, default)`, generic `send` opcode. |
 
 ## Cross-cutting infrastructure not yet built
 
@@ -59,11 +59,8 @@ Last updated: 2026-04-26 (after ConstFoldTier2Pass — frozen top-level constant
    `ENV.values_at("A","B","C")` without tainting. Half-session slice.
    Validate by flipping `test_env_values_at_two_args_still_taints_v1`
    to "does not taint" and adding an argc=3 companion.
-7. **Tier 4 fold — `ENV.fetch("LIT")` with literal key.** Classifier
-   already treats `fetch` as read-only; the fold loop still only
-   handles the `opt_aref` 3-tuple. Adding a 3-tuple fold for
-   `opt_getconstant_path<ENV>; putstring LIT; opt_send_without_block<fetch,1>`
-   is a quarter-session slice. Talk-worthy (new fold shape).
+7. ~~**Tier 4 fold — `ENV.fetch("LIT")` with literal key.**~~
+   **Shipped 2026-04-27.** Plan: `docs/superpowers/plans/2026-04-27-env-fetch-literal-key.md`.
 8. **IdentityElim v2 — absorbing zero.** `x*0 → 0`, `0*x → 0`,
    `0/x → 0`. Extends v1 cleanly; `SAFE_PRODUCER_OPCODES` earns its
    keep. `0/x` needs the same ZeroDivisionError guard Tier 1 already

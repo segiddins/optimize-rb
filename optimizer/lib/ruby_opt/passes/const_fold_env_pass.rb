@@ -64,31 +64,51 @@ module RubyOpt
           b  = insts[i + 1]
           op = insts[i + 2]
 
-          unless env_producer?(a, object_table) && literal_string?(b, object_table) && op.opcode == :opt_aref
+          unless env_producer?(a, object_table) && literal_string?(b, object_table)
             i += 1
             next
           end
 
-          key = LiteralValue.read(b, object_table: object_table)
-          value = env_snapshot[key]
+          if op.opcode == :opt_aref
+            key = LiteralValue.read(b, object_table: object_table)
+            value = env_snapshot[key]
 
-          replacement =
-            if value.nil?
-              IR::Instruction.new(opcode: :putnil, operands: [], line: a.line)
-            elsif value.is_a?(String)
-              idx = object_table.intern(value)
-              IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
-            else
-              # ENV values are strings or nil by contract. Defensive.
-              log.skip(pass: :const_fold_env, reason: :env_value_not_string,
+            replacement =
+              if value.nil?
+                IR::Instruction.new(opcode: :putnil, operands: [], line: a.line)
+              elsif value.is_a?(String)
+                idx = object_table.intern(value)
+                IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
+              else
+                log.skip(pass: :const_fold_env, reason: :env_value_not_string,
+                         file: function.path, line: (a.line || function.first_lineno || 0))
+                nil
+              end
+
+            if replacement
+              function.splice_instructions!(i..(i + 2), [replacement])
+              log.skip(pass: :const_fold_env, reason: :folded,
                        file: function.path, line: (a.line || function.first_lineno || 0))
-              nil
             end
-
-          if replacement
-            function.splice_instructions!(i..(i + 2), [replacement])
-            log.skip(pass: :const_fold_env, reason: :folded,
-                     file: function.path, line: (a.line || function.first_lineno || 0))
+            i += 1
+          elsif op.opcode == :opt_send_without_block && fetch_send?(op, object_table)
+            key = LiteralValue.read(b, object_table: object_table)
+            if env_snapshot.key?(key)
+              value = env_snapshot[key]
+              if value.is_a?(String)
+                idx = object_table.intern(value)
+                replacement = IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
+                function.splice_instructions!(i..(i + 2), [replacement])
+                log.skip(pass: :const_fold_env, reason: :folded,
+                         file: function.path, line: (a.line || function.first_lineno || 0))
+              else
+                log.skip(pass: :const_fold_env, reason: :env_value_not_string,
+                         file: function.path, line: (a.line || function.first_lineno || 0))
+              end
+            else
+              log.skip(pass: :const_fold_env, reason: :fetch_key_absent,
+                       file: function.path, line: (a.line || function.first_lineno || 0))
+            end
             i += 1
           else
             i += 1
@@ -161,6 +181,14 @@ module RubyOpt
         end
 
         [false, (at_i_plus_2 && at_i_plus_2.line) || (at_i_plus_1 && at_i_plus_1.line)]
+      end
+
+      def fetch_send?(inst, object_table)
+        cd = inst.operands[0]
+        return false unless cd.is_a?(IR::CallData)
+        return false unless cd.argc == 1
+        return false if cd.has_kwargs? || cd.has_splat? || cd.blockarg?
+        cd.mid_symbol(object_table) == :fetch
       end
 
       def safe_send?(inst, object_table, expected_argc:)

@@ -261,6 +261,87 @@ class ConstFoldEnvPassTest < Minitest::Test
     assert_operator absent, :>=, 1
   end
 
+  def test_folds_env_fetch_and_opt_aref_in_same_function
+    src = 'def r; [ENV["A"], ENV.fetch("B")]; end; r'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    snap = { "A" => "1", "B" => "2" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    opcodes = r.instructions.map(&:opcode)
+    refute_includes opcodes, :opt_aref
+    refute_includes opcodes, :opt_send_without_block
+  end
+
+  def test_env_fetch_fold_disabled_by_tree_taint
+    src = <<~RUBY
+      def w; ENV.store("Z", "x"); end
+      def r; ENV.fetch("A"); end
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    before = r.instructions.map(&:opcode)
+    snap = { "A" => "1" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    assert_equal before, r.instructions.map(&:opcode),
+      "tainted tree must preserve fetch bytecode"
+    tainted = log.for_pass(:const_fold_env).count { |e| e.reason == :env_write_observed }
+    assert_operator tainted, :>=, 1
+  end
+
+  def test_env_fetch_argc_two_is_not_folded
+    src = 'def r; ENV.fetch("A", "def"); end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    before = r.instructions.map(&:opcode)
+    snap = { "A" => "1" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    assert_equal before, r.instructions.map(&:opcode),
+      "argc=2 fetch is out of v1 scope — must not fold"
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_equal 0, folded
+  end
+
+  def test_env_fetch_with_block_does_not_crash
+    src = 'def r; ENV.fetch("A") { "x" }; end'
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    r = find_iseq(ir, "r")
+    before = r.instructions.map(&:opcode)
+    snap = { "A" => "1" }.freeze
+    log = RubyOpt::Log.new
+
+    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    each_function(ir) do |fn|
+      pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
+    end
+
+    assert_equal before, r.instructions.map(&:opcode),
+      "block-passing fetch must not fold"
+    folded = log.for_pass(:const_fold_env).count { |e| e.reason == :folded }
+    assert_equal 0, folded
+  end
+
   private
 
   def each_function(fn, &blk)
