@@ -20,12 +20,22 @@ module RubyOpt
       ID_SIZE = 8 # uintptr_t on 64-bit
       module_function
 
+      # @param bytes [String] ASCII-8BIT local_table blob
+      # @param size [Integer] number of entries (from body header)
+      # @return [Array<Integer>] object-table indices, one per local
       def decode(bytes, size)
         return [] if size.nil? || size.zero? || bytes.nil? || bytes.empty?
+        required = size * ID_SIZE
+        if bytes.bytesize < required
+          raise ArgumentError,
+            "local_table buffer too short: got #{bytes.bytesize} bytes, need #{required} (size=#{size})"
+        end
         reader = BinaryReader.new(bytes)
         Array.new(size) { reader.read_u64 }
       end
 
+      # @param entries [Array<Integer>] object-table indices
+      # @return [String] ASCII-8BIT byte string
       def encode(entries)
         writer = BinaryWriter.new
         entries.each { |idx| writer.write_u64(idx) }

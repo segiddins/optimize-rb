@@ -176,8 +176,11 @@ is a field parsed into the body record. v2 needs three new codec
 capabilities, grouped in a new `Codec::LocalTable` module:
 
 - `LocalTable.decode(bytes, size)` → `Array<Integer>` of object-table
-  indices (one per entry). Format per `research/cruby/ibf-format.md`:
-  `local_table_size` small-value entries.
+  indices (one per entry). Format per `research/cruby/ibf-format.md`
+  §4.1: `ID[local_table_size]`, where `ID` is a `uintptr_t` —
+  fixed-width 8-byte little-endian on 64-bit (not small_value-encoded;
+  that's a trap the v1 `ci_entries` format falls into and is easy to
+  mistakenly apply here).
 - `LocalTable.encode(entries)` → bytes.
 - `LocalTable.append!(function, object_table, name)` → `Integer`
   (the new slot's table index). Mutates:

@@ -74,8 +74,10 @@ module RubyOpt
     # Parse and emit the local_table section of an iseq body.
     #
     # On-disk shape (research/cruby/ibf-format.md §4.1):
-    #   local_table_size small-value entries, each an object-table index
-    #   for the Symbol that names the local.
+    #   local_table_size fixed-width 8-byte LE uint64 entries (ID[] —
+    #   CRuby's ibf_dump_local_table emits uintptr_t per entry). NOT
+    #   small-value-encoded; don't confuse with ci_entries' format.
+    #   Each entry is an object-table index naming a local.
     #
     # The raw blob may include trailing alignment zeros that belong to
     # the section *after* this one in the enclosing iseq layout. Decode
@@ -90,14 +92,14 @@ module RubyOpt
       def decode(bytes, size)
         return [] if size.nil? || size.zero? || bytes.nil? || bytes.empty?
         reader = BinaryReader.new(bytes)
-        Array.new(size) { reader.read_small_value }
+        Array.new(size) { reader.read_u64 }
       end
 
       # @param entries [Array<Integer>]
       # @return [String] ASCII-8BIT byte string (content only; no padding)
       def encode(entries)
         writer = BinaryWriter.new
-        entries.each { |idx| writer.write_small_value(idx) }
+        entries.each { |idx| writer.write_u64(idx) }
         writer.buffer
       end
     end

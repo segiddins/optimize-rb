@@ -32,6 +32,10 @@ class LocalTableCodecTest < Minitest::Test
     assert idx >= 0, "expected non-negative object-table index (got #{idx})"
   end
 
+  def test_decode_raises_on_short_buffer
+    assert_raises(ArgumentError) { RubyOpt::Codec::LocalTable.decode("\x00".b, 1) }
+  end
+
   private
 
   def find_iseq_named(fn, name)
