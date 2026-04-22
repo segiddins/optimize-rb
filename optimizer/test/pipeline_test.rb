@@ -238,6 +238,23 @@ class PipelineTest < Minitest::Test
     assert_same top_level_method, spy.seen_callee_map[:inc]
   end
 
+  def test_point_distance_fixture_roundtrips_through_pipeline
+    source = File.read(File.expand_path("../examples/point_distance.rb", __dir__))
+    iseq = RubyVM::InstructionSequence.compile(source, "point_distance.rb", "point_distance.rb")
+    ir = RubyOpt::Codec.decode(iseq.to_binary)
+    type_env = RubyOpt::TypeEnv.from_source(source, "point_distance.rb")
+    log = RubyOpt::Pipeline.default.run(ir, type_env: type_env)
+    modified = RubyOpt::Codec.encode(ir)
+    reloaded = RubyVM::InstructionSequence.load_from_binary(modified)
+    assert_kind_of RubyVM::InstructionSequence, reloaded
+
+    # At least one inlined OPT_SEND is expected.
+    inlined_entries = log.entries.select { |e| e.reason == :inlined && e.pass == :inlining }
+    refute_empty inlined_entries,
+      "expected at least one inlined entry in log; skip reasons were: " \
+      "#{log.entries.map { |e| [e.pass, e.reason] }.tally.inspect}"
+  end
+
   private
 
   def find_iseq(ir, name)
