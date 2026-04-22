@@ -4,15 +4,15 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-28 (after ConstFoldEnvPass — argc=2 ENV.fetch-with-default fold).
+Last updated: 2026-04-22 (after RBS type env v1 — receiver-resolving inlining for Point#distance_to).
 
 ## Three-pass plan: status
 
 | Pass | Original scope | Shipped | Remaining |
 |---|---|---|---|
-| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2: zero-arg and one-arg FCALL inline (constant-body, single-local callees) with local-table growth + level-0 LINDEX shift | multi-arg, kwargs, blocks, receivers via RBS, CFG splicing across BBs |
+| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2+v3: zero-arg and one-arg FCALL inline; typed-receiver argc=1 OPT_SEND inline (self-stash + putself-rewrite; permits nested plain sends in body; multi-local callees rejected). SlotTypeTable seeded from RBS signature params + Ruby 3.x/4.x .new constructor-prop; cross-iseq-level parent chain; Pipeline pre-builds slot_type_map + signature_map; callee_map keyed by [class_name, :mid] with definemethod fallback. INLINE_BUDGET bumped 8→16. End-to-end fixture lands 1 :inlined entry on the 1M.times { p.distance_to(q) } block. | multi-arg OPT_SEND (argc ≥ 2); getinstancevariable/setinstancevariable (VM-level GET_SELF limitation — attr_reader-style method calls work instead); callee-internal locals; kwargs; blocks; forward type-prop through arithmetic/assignment; subtype matching; constructor-prop across branches; CFG splicing across BBs. |
 | Arithmetic specialization | Reassoc of `+ - * / %` chains under "no BOP redef"; RBS-typed operands; sub-chain folding; post-inlining collapse | ArithReassoc v1–v4 (`opt_plus`, `opt_mult`, `opt_minus`, `opt_div`) + IdentityElim v1. **Literal-only operands, no RBS typing.** | `opt_mod`; true Integer-typed operand proofs; post-inlining demo |
-| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 2 (ConstFoldTier2Pass): top-level frozen constants with literal RHS — Integer/String/true/false/nil — whole-tree pre-scan; reassigned or non-top-level names are tainted. Cascades through Tier 1 (e.g. `FOO + 1 → 43`). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint pre-scan; String snapshot values interned on-the-fly (no skip); read-only sends (`fetch`, `to_h`, `key?`, …) no longer taint the tree (argc≤1); `ENV.fetch("LIT")` argc=1 is now folded when snapshot carries the key (snapshot-presence check preserves runtime KeyError semantics; `:fetch_key_absent` log on miss). Taint classifier v2: read-only sends whitelist is argc-generic via forward-scan (first-send-encountered must match cd.argc and safe mid); `ENV.values_at("A","B","C")` siblings no longer taint. argc=2 `ENV.fetch(LIT, pure-default)` now folds — default must be a single pure producer (`putnil`/`putobject`/`put[chilled]string`/`putself`); on key hit the default is dropped, on miss the default becomes the fold result. | Tier 3 proper (RBS-typed identities). Tier 2 follow-ups: Symbols, nested `M::FOO`, frozen Array/Hash literals. Tier 4 follow-ups: block-passing sends, generic `send` opcode, non-String snapshot values. |
+| Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 2 (ConstFoldTier2Pass): top-level frozen constants with literal RHS — Integer/String/true/false/nil — whole-tree pre-scan; reassigned or non-top-level names are tainted. Cascades through Tier 1 (e.g. `FOO + 1 → 43`). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint pre-scan; String snapshot values interned on-the-fly (no skip); read-only sends (`fetch`, `to_h`, `key?`, …) no longer taint the tree (argc≤1); `ENV.fetch("LIT")` argc=1 is now folded when snapshot carries the key (snapshot-presence check preserves runtime KeyError semantics; `:fetch_key_absent` log on miss). Taint classifier v2: read-only sends whitelist is argc-generic via forward-scan (first-send-encountered must match cd.argc and safe mid); `ENV.values_at("A","B","C")` siblings no longer taint. argc=2 `ENV.fetch(LIT, pure-default)` now folds — default must be a single pure producer (`putnil`/`putobject`/`put[chilled]string`/`putself`); on key hit the default is dropped, on miss the default becomes the fold result. Peephole **DeadBranchFoldPass** (2026-04-22) runs last in `Pipeline.default`: collapses `<literal>; branchif\|branchunless\|branchnil` to `jump target` (taken) or drop (not taken), cascading off every const-fold tier. | Tier 3 proper (RBS-typed identities). Tier 2 follow-ups: Symbols, nested `M::FOO`, frozen Array/Hash literals. Tier 4 follow-ups: block-passing sends, generic `send` opcode, non-String snapshot values. Full CFG-level DCE (remove unreachable blocks, patch catch-table). |
 
 ## Cross-cutting infrastructure not yet built
 
@@ -33,11 +33,14 @@ Last updated: 2026-04-28 (after ConstFoldEnvPass — argc=2 ENV.fetch-with-defau
 
 ## Roadmap gap, ranked by talk-ROI
 
-1. **RBS type environment.** Prerequisite for "sound in principle"
-   across every pass and for the object-y `Point#distance_to` demo.
-   Big spec on its own (~option F in the session-ladder history). v2
-   inlining shipped, so the next narrative beat is receiver-resolution
-   which this unblocks.
+1. ~~**RBS type environment.**~~ **Shipped 2026-04-22.** Plan:
+   `docs/superpowers/plans/2026-04-22-rbs-type-env-v1.md`. Spec:
+   `docs/superpowers/specs/2026-04-22-rbs-type-env-v1-design.md`.
+   Delivers receiver-resolving inlining for `Point#distance_to` end-to-end
+   (SlotTypeTable + cross-level lookup + Pipeline wiring + InliningPass v3
+   with self-stash). Follow-ups: RBS-typed IdentityElim/ArithReassoc
+   (upgrades those passes from "sound in practice" to "sound in
+   principle"); multi-arg OPT_SEND; subtype matching.
 2. **Demo programs wired end-to-end** with benchmark harness output.
    Open questions before building: (a) talk-time output shape — static
    iseq dump slide, live `benchmark_ips`, or both? (b) fixture
@@ -75,6 +78,18 @@ Last updated: 2026-04-28 (after ConstFoldEnvPass — argc=2 ENV.fetch-with-defau
 
 Filed in session memory / pass-identity-elim-design but not yet picked up:
 
+- **RBS-typed IdentityElim / ArithReassoc.** Now that `SlotTypeTable`
+  exists, extend IdentityElim's `x*1 → x` and ArithReassoc's literal
+  folds to accept Integer-typed operands (not just literal integer
+  operands). Use `slot_table.lookup(slot, level)` at each operand
+  site to gate the rewrite. Self-contained follow-up; each pass is
+  ~20 LoC. Upgrades both passes from "sound in practice" to "sound
+  in principle" using v1's existing type plumbing.
+- **InliningPass v4 — multi-arg OPT_SEND (argc ≥ 2).** Extends v3 by
+  growing N+1 stash slots (self-stash + one per arg), mirroring the
+  existing one-arg LINDEX math. Unblocks inlining `Point.new(x, y)`
+  and any method with 2+ args. Key codec work already done in v2;
+  v4 just generalizes the shift-by-N LINDEX remap.
 - **IdentityElim v2** — absorbing zero (`x*0→0`, `0*x→0`, `0/x→0`) and
   self-ops (`x-x→0`, `x/x→1`). Extends v1's "sound in practice" story
   cleanly; absorbing zero is where `SAFE_PRODUCER_OPCODES` really earns
@@ -113,9 +128,21 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
 
 Kept here so future sessions don't rediscover these:
 
-- Dead-branch elimination as its own pass (we emit folded branch
+- ~~Dead-branch elimination as its own pass (we emit folded branch
   conditions; if the VM's own optimizer collapses the dead arm, we
-  benefit; otherwise we live with it).
+  benefit; otherwise we live with it).~~ **Peephole variant shipped
+  2026-04-22** as `DeadBranchFoldPass`: folds `<literal>; branchif|
+  branchunless|branchnil` into `jump target` (taken) or a drop (not
+  taken), feeding off whatever ConstFold*/IdentityElim produced.
+  Runs last in `Pipeline.default`. Full CFG-level DCE (removing the
+  now-unreachable basic blocks themselves, patching catch-table
+  ranges) is still out of scope. Short-circuit extension same day:
+  4-instruction window `<literal>; dup; branch*; pop` (the shape
+  Ruby emits for `LIT && rhs` / `LIT || rhs`) folds when the short-
+  circuit is NOT taken, dropping the prefix and leaving rhs intact.
+  The taken case (`false && rhs`, `true || rhs` — rhs becomes dead
+  code) requires deleting rhs up to the branch target, which is
+  CFG-shaped and still out of scope.
 - Non-Integer numerics (`Float`, `Rational`).
 - `InstructionSequence.load_from_binary` / persistence as a *talk
   topic*. (Internally we rely on it and have shipped codec specs for
@@ -140,6 +167,19 @@ Kept here so future sessions don't rediscover these:
   extending `ObjectTable#intern` to accept `Array`/`Hash` (currently
   special-const + String only after 2026-04-24). Talk-adjacent: a
   visible allocation-count delta in `benchmark_ips` / `ObjectSpace`.
+- **Purity / idempotency annotations.** A contract-level marker
+  (`# @pure` or `# @idempotent` on a def, or an allowlist of
+  stdlib methods like `Math.sqrt`, frozen `String#+@`, etc.) that
+  unlocks two new passes: (a) CSE-for-sends — two identical calls
+  with identical args in the same basic block collapse to one
+  compute + reuse; (b) dead-call elimination — a pure call whose
+  result is dropped (`pop` immediately follows) is removed entirely.
+  Under the contract-rule framing, same shape as the "no BOP redef"
+  and "truthful RBS" rules — the programmer promises purity, the
+  optimizer cashes it in. Not shipped; not specced. Worth a slide
+  if the talk has time. Overlaps with the RBS-v1 story since purity
+  could live alongside type annotations in the same rbs-inline
+  comments.
 
 ## Maintenance note
 
