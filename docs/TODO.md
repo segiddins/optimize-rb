@@ -189,6 +189,14 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
   no corresponding instruction`. Reproduces on any trivial loop,
   e.g. `def f(n); i=0; while i<n; i+=1; end; end`. Blocks the
   `sum_of_squares` demo fixture and any future loop-based demo.
+- **Codec encode side of backward branches is unverified.** Once
+  decode is fixed, the mirror question is whether `Codec.encode`
+  emits a correctly-signed negative offset when a pass preserves
+  (or creates) a backward branch. The existing encode tests all
+  use forward-only control flow, so this is untested. Likely a
+  one-line companion fix to the decode patch — emit the offset as
+  a signed small_value rather than unsigned — but confirm with a
+  round-trip test over a decoded-then-re-encoded `while` iseq.
 
 ## Explicitly out of scope (original talk-structure spec)
 
@@ -224,6 +232,35 @@ Kept here so future sessions don't rediscover these:
   than RBS.
 - **Comparison-chain specialization** (`x < 10 && x > 0`). Would be the
   first pass to cross control flow.
+- **Loop-aware passes.** Once the codec round-trips `while` (see
+  "Known bugs / blockers"), nothing in the current pass roster
+  reasons about loops. `DeadBranchFoldPass`'s window is
+  `<literal>; branch*`, which doesn't match the
+  `<comparison>; branchunless <backward>` shape of a `while`. All
+  other passes are peephole over straight-line windows.
+  Candidate passes to unlock:
+  - **Loop-invariant hoisting.** Instructions inside the loop body
+    whose operands are all either loop-invariant or literal can be
+    lifted above the loop header. Needs a tiny CFG analysis —
+    identify the backedge, find the loop's natural header, compute
+    reachability of each instruction from the header — which is
+    strictly more infrastructure than the peephole ceiling §6 of
+    the talk describes. Talk-adjacent: would make the
+    `sum_of_squares` fixture non-trivial post-inlining when/if
+    inlining were applied to a loop-bearing method.
+  - **Zero-trip elimination.** `while 0 < 0 ... end` — the body
+    is unreachable. Peephole-visible shape (`<literal-comparison>;
+    branchunless <backward>`) once const_fold folds the
+    comparison. Could ride on top of `DeadBranchFoldPass` by
+    extending its 2-instruction window to recognise a backward
+    target and drop the entire loop body.
+  - **Infinite-loop detection** (`while true; pure-expr; end`) —
+    spec-out-of-scope for the talk but cute: emit a diagnostic
+    during optimization time.
+  Scope-wise, these are bigger than any single shipped pass —
+  loop-invariant hoisting in particular is the first thing on this
+  list that genuinely crosses into "needs a CFG" territory. Keep
+  as exploratory unless the talk ends up with spare time in §4.
 - **Hoist frozen empty literals** (`[].freeze`, `{}.freeze`). Each call
   allocates a fresh object today; a pass could detect the
   `newarray 0 / newhash 0` + `opt_send_without_block :freeze` shape and
