@@ -171,6 +171,28 @@ class RoundTripTest < Minitest::Test
     assert_kind_of RubyVM::InstructionSequence, loaded
   end
 
+  def test_while_loop_executes_after_round_trip
+    src = <<~RUBY
+      def sum_to(n)
+        s = 0
+        i = 1
+        while i <= n
+          s += i
+          i += 1
+        end
+        s
+      end
+      sum_to(10)
+    RUBY
+    original = RubyVM::InstructionSequence.compile(src).to_binary
+
+    ir = RubyOpt::Codec.decode(original)
+    re_encoded = RubyOpt::Codec.encode(ir)
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
+    assert_equal 55, loaded.eval, "round-tripped while loop must still compute 1+2+...+10"
+  end
+
   def test_encode_rejects_out_of_range_offset
     # Computed offsets wider than INT64_MAX are rejected by the helper, not
     # deep in write_small_value with a misleading "must be non-negative" message.
