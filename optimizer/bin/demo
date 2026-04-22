@@ -1,0 +1,32 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+require "bundler/setup"
+require "fileutils"
+require "ruby_opt/demo/runner"
+
+EXAMPLES_DIR = File.expand_path("../examples", __dir__)
+OUTPUT_DIR   = File.expand_path("../../docs/demo_artifacts", __dir__)
+
+def sidecar_for(stem)
+  File.join(EXAMPLES_DIR, "#{stem}.walkthrough.yml")
+end
+
+def run_stem(stem)
+  sidecar = sidecar_for(stem)
+  raise "sidecar not found: #{sidecar}" unless File.exist?(sidecar)
+  FileUtils.mkdir_p(OUTPUT_DIR)
+  path = RubyOpt::Demo::Runner.run(sidecar_path: sidecar, output_dir: OUTPUT_DIR)
+  puts "wrote #{path}"
+end
+
+case ARGV.first
+when "--all"
+  Dir[File.join(EXAMPLES_DIR, "*.walkthrough.yml")].each do |sc|
+    run_stem(File.basename(sc, ".walkthrough.yml"))
+  end
+when nil, "-h", "--help"
+  warn "usage: bin/demo <stem> | bin/demo --all"
+  exit 1
+else
+  run_stem(ARGV.first)
+end
