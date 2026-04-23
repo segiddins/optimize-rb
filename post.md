@@ -37,7 +37,23 @@ Anyways. This was, more than anything, an excuse to learn more about YARV byteco
 
 ## §2 — The contract
 
-{TBD-§2}
+Every optimizer operates under some contract with the program it's compiling. Ruby's own contract is almost nothing: the language has to assume that any method on any object could be redefined between now and the next call site, and that a constant you read a microsecond ago might point at a different object now. That's a real constraint, and it's visible in the bytecode. `1 + 2` doesn't compile to an integer add; it compiles to `opt_plus`, which checks at runtime whether `Integer#+` is still the original `Integer#+` before taking the fast path. Ruby already has a tiny contract — a handful of "basic operations haven't been redefined" flags — and every `opt_*` instruction is that contract made concrete.
+
+My optimizer's contract is wider. It's five clauses:
+
+- **No BOP redefinition.** `Integer#+`, `String#==`, `Array#[]`, `Hash#[]` — the basic operations mean what MRI shipped them meaning.
+- **No `prepend` after load.** Method tables are stable once the program is loaded; nothing is going to slip a module into the ancestor chain between call sites.
+- **RBS signatures are truthful.** Where an inline RBS annotation says a method returns an `Integer`, it returns an `Integer`.
+- **`ENV` is read-only after load.** `ENV["X"]` resolves to the same thing forever.
+- **No constant reassignment.** Top-level constants are assigned exactly once; no `const_set`, no reopening to reassign.
+
+Stable method tables are what make inlining safe: if nothing can `prepend` into the ancestor chain, a call site bound at compile time stays bound at run time. Constants that don't get reassigned can be folded straight into the instruction stream instead of going through a constant-cache lookup on every iteration. A truthful RBS signature is the difference between "this call returns something" and "this call returns an Integer, so the next `+` can use the unchecked path." A read-only `ENV` lets `ENV["FEATURE_X"]` be read once at load time and folded away like a constant, while still letting the same source file be configured differently across environments.
+
+These are reasonable assumptions for many programs. "Many" is the important word: plenty of real Ruby violates every one of them deliberately and correctly. Every APM gem in wide use — New Relic, Datadog, Skylight — instruments `ActiveRecord`, `Net::HTTP`, and friends by `prepend`ing a module that wraps the original method. That's the entire point; it's also a load-time violation of clause two. Any test suite using RSpec mocks is redefining methods between examples by design — `allow(user).to receive(:name).and_return("Sam")` swaps out a method table entry for the duration of the test, which is exactly what "method tables are stable" rules out. And every Rails developer running `bin/rails server` in development has the framework reloading classes on file changes so you can edit code without restarting the server. Reloading without restart is one of the best things about working in Rails, and it violates clause five every time the file watcher fires.
+
+One more assumption sits underneath these — and it's about how the program gets *used*, not what it does. Nobody is watching through `TracePoint` or `Coverage`. Inlining a call erases the `:call` and `:return` events for the inlined callee; dead-instruction elimination erases the `:line` events for lines that got deleted. The violation isn't a property of the code, it's a property of the environment. That's exactly why the contract module can't express it.
+
+Reasonable isn't good enough for the language itself. For Ruby, not breaking the language has to be the higher priority. A compiler that silently miscompiles `find_by_name_and_email` is worse than a slow one, and it isn't even close. That's why MRI's contract is so thin, and why `opt_plus` has to keep checking. Maybe one day there'll be a way to safely opt into this kind of optimization — a pragma, a sealed module, a `# frozen_methods: true` at the top of a file — and the VM can trust it the way I'm about to. Until then, a weekend project gets to make assumptions a language implementation can't.
 
 ## §3 — YARV, properly
 
