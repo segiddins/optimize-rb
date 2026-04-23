@@ -1,18 +1,18 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/passes/const_fold_env_pass"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/passes/const_fold_env_pass"
 
 class ConstFoldEnvPassTest < Minitest::Test
   def test_no_snapshot_is_noop
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile('def f; ENV["FOO"]; end').to_binary
     )
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    RubyOpt::Passes::ConstFoldEnvPass.new.apply(
-      f, type_env: nil, log: RubyOpt::Log.new,
+    Optimize::Passes::ConstFoldEnvPass.new.apply(
+      f, type_env: nil, log: Optimize::Log.new,
       object_table: ir.misc[:object_table], env_snapshot: nil,
     )
     assert_equal before, f.instructions.map(&:opcode)
@@ -25,16 +25,16 @@ class ConstFoldEnvPassTest < Minitest::Test
       def r; ENV["A"]; end
       def w; ENV.store("B", "x"); end
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
     w = find_iseq(ir, "w")
     before_r = r.instructions.map(&:opcode)
     before_w = w.instructions.map(&:opcode)
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -47,13 +47,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_env_fetch_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.fetch("B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -66,13 +66,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_env_to_h_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.to_h; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -83,13 +83,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_env_key_question_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.key?("B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -100,13 +100,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_env_values_at_two_args_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -119,13 +119,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_env_values_at_three_args_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B", "C"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2", "C" => "3" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -140,14 +140,14 @@ class ConstFoldEnvPassTest < Minitest::Test
     # ENV.store is not in SAFE_ENV_READ_METHODS — v2's argc-generic scan
     # still taints on it (mid check is what gates safety).
     src = 'def r; ENV["A"]; end; def w; ENV.store("B", "x"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
     before_r = r.instructions.map(&:opcode)
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -161,12 +161,12 @@ class ConstFoldEnvPassTest < Minitest::Test
     # ENV[name] — opt_aref with a getlocal key. Safe use (i+2 is opt_aref).
     # Must NOT emit :env_write_observed.
     src = 'def f; x = "FOO"; ENV[x]; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     snap = { "FOO" => "1" }.freeze
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -178,13 +178,13 @@ class ConstFoldEnvPassTest < Minitest::Test
   def test_folds_env_aref_when_value_already_interned
     # "hello" appears as the RHS literal so it's in the object table.
     src = 'def f; ENV["K"] == "hello"; end; f'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     snap = { "K" => "hello" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -196,13 +196,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_folds_missing_key_to_putnil
     src = 'def f; ENV["MISSING"]; end; f'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -211,7 +211,7 @@ class ConstFoldEnvPassTest < Minitest::Test
     refute_includes opcodes, :opt_getconstant_path
     refute_includes opcodes, :opt_aref
     assert_includes opcodes, :putnil
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_nil loaded.eval
   end
 
@@ -220,13 +220,13 @@ class ConstFoldEnvPassTest < Minitest::Test
     # After string-intern support, the pass MUST fold by interning the
     # snapshot value into the object table.
     src = 'def f; ENV["K"]; end; f'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     snap = { "K" => "xyzzy" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -239,18 +239,18 @@ class ConstFoldEnvPassTest < Minitest::Test
     assert_equal 0, not_interned, ":env_value_not_interned should no longer fire for strings"
 
     # End-to-end: the re-encoded binary loads and returns the snapshot value.
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal "xyzzy", loaded.eval
   end
 
   def test_logs_folded_for_each_successful_fold
     src = 'def f; ENV["K"] == "hello"; end; f'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "K" => "hello" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -261,13 +261,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_folds_env_fetch_with_present_literal_key
     src = 'def r; ENV.fetch("A"); end; r'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -282,14 +282,14 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_env_fetch_absent_key_is_not_folded_and_logs
     src = 'def r; ENV.fetch("MISSING"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     before = r.instructions.map(&:opcode)
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -302,13 +302,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_folds_env_fetch_and_opt_aref_in_same_function
     src = 'def r; [ENV["A"], ENV.fetch("B")]; end; r'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -323,14 +323,14 @@ class ConstFoldEnvPassTest < Minitest::Test
       def w; ENV.store("Z", "x"); end
       def r; ENV.fetch("A"); end
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     before = r.instructions.map(&:opcode)
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -343,13 +343,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_folds_env_fetch_with_literal_default_when_key_present
     src = 'def r; ENV.fetch("A", "fallback"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -364,13 +364,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_folds_env_fetch_with_string_default_when_key_absent
     src = 'def r; ENV.fetch("MISSING", "fallback"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -388,13 +388,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_folds_env_fetch_with_putnil_default_when_key_absent
     src = 'def r; ENV.fetch("MISSING", nil); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -409,13 +409,13 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_folds_env_fetch_with_integer_default_when_key_absent
     src = 'def r; ENV.fetch("MISSING", 42); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -434,14 +434,14 @@ class ConstFoldEnvPassTest < Minitest::Test
       def other_call; "x"; end
       def r; ENV.fetch("A", other_call); end
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     before = r.instructions.map(&:opcode)
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -456,14 +456,14 @@ class ConstFoldEnvPassTest < Minitest::Test
 
   def test_env_fetch_with_block_does_not_crash
     src = 'def r; ENV.fetch("A") { "x" }; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     before = r.instructions.map(&:opcode)
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end

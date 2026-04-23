@@ -4,7 +4,7 @@ require "bundler/setup"
 require "fileutils"
 require "yaml"
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
-require "ruby_opt/demo/claude"
+require "optimize/demo/claude"
 
 # usage:
 #   bin/demo-claude                # defaults: claude_gag (reads claude_gag.claude_cases.yml)
@@ -30,7 +30,7 @@ method_name = spec.fetch("method").to_sym
 cases = spec.fetch("cases")
 
 FileUtils.mkdir_p(File.dirname(output))
-outcome = RubyOpt::Demo::Claude.run(
+outcome = Optimize::Demo::Claude.run(
   fixture_path: fixture,
   entry:        method_name,
   cases:        cases,

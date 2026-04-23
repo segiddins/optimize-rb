@@ -14,19 +14,19 @@ Talk-artifact Ruby optimizer. Companion to
   current positions at emit time.
 - **IR**: `IR::Function` (one per iseq), `IR::Instruction` (one per YARV op),
   `IR::BasicBlock` and `IR::CFG` for control-flow analysis.
-- **Passes**: base class (`RubyOpt::Pass`), orchestrator (`RubyOpt::Pipeline`),
-  hardcoded contract (`RubyOpt::Contract`), structured log (`RubyOpt::Log`).
+- **Passes**: base class (`Optimize::Pass`), orchestrator (`Optimize::Pipeline`),
+  hardcoded contract (`Optimize::Contract`), structured log (`Optimize::Log`).
   A `NoopPass` ships as proof-of-life. Real passes come in subsequent plans.
-- **Type env**: `RubyOpt::RbsParser` extracts inline `@rbs` signatures;
-  `RubyOpt::TypeEnv` exposes `#signature_for`.
-- **Harness**: `RubyOpt::Harness::LoadIseqHook` installs a `load_iseq`
+- **Type env**: `Optimize::RbsParser` extracts inline `@rbs` signatures;
+  `Optimize::TypeEnv` exposes `#signature_for`.
+- **Harness**: `Optimize::Harness::LoadIseqHook` installs a `load_iseq`
   override that runs the pipeline on every loaded file. Opt out with
   `# rbs-optimize: false` at the top of the file. Any failure falls back
   to MRI's built-in compilation.
 
 ## Passes
 
-- `RubyOpt::Passes::ArithReassocPass` — arithmetic reassociation driven by
+- `Optimize::Passes::ArithReassocPass` — arithmetic reassociation driven by
   the `REASSOC_GROUPS` table. Two groups today: the additive group
   (`opt_plus` identity 0, `opt_minus` with sign `-`, primary `opt_plus`,
   kind `:abelian`) and the multiplicative group (`opt_mult` identity 1,
@@ -51,7 +51,7 @@ Talk-artifact Ruby optimizer. Companion to
   the per-group inner fixpoints so mult rewrites expose additive chains
   (e.g., `x + 2 * 3 - 4` → `x + 2`). `**` and exact-divisibility folds
   (e.g. `x * 6 / 2 → x * 3`) are out of scope; see follow-up plans.
-- `RubyOpt::Passes::ConstFoldPass` — tier 1 constant folding. Folds
+- `Optimize::Passes::ConstFoldPass` — tier 1 constant folding. Folds
   Integer literal arithmetic (`+ - * / %`) and Integer literal
   comparison (`< <= > >= == !=`) triples within a basic block,
   iterating until no more folds fire. Division/modulo by zero and
@@ -59,7 +59,7 @@ Talk-artifact Ruby optimizer. Companion to
   (`:would_raise`, `:non_integer_literal`). The default pipeline runs
   `ConstFoldPass` only; inlining, arithmetic specialization, and
   higher tiers of const-fold are future plans.
-- `RubyOpt::Passes::IdentityElimPass` — strips arithmetic identities the
+- `Optimize::Passes::IdentityElimPass` — strips arithmetic identities the
   upstream passes leave behind: `x * 1`, `1 * x`, `x + 0`, `0 + x`,
   `x - 0`, `x / 1`. Driven by the `IDENTITY_OPS` table, which encodes
   each operator's identity element and which sides are eligible
@@ -90,15 +90,15 @@ Or, on a host with Ruby 4.0.2 and Docker:
 
 ## Layout
 
-- `lib/ruby_opt/codec/` — YARB binary surgery
-- `lib/ruby_opt/ir/` — `Function`, `Instruction`, `BasicBlock`, `CFG`
-- `lib/ruby_opt/pass.rb` — Pass base class + NoopPass
-- `lib/ruby_opt/pipeline.rb` — pass orchestration
-- `lib/ruby_opt/contract.rb` — the hardcoded ground rules
-- `lib/ruby_opt/log.rb` — structured optimizer log
-- `lib/ruby_opt/rbs_parser.rb` — inline `@rbs` extraction
-- `lib/ruby_opt/type_env.rb` — typed-environment queries
-- `lib/ruby_opt/harness.rb` — `load_iseq` override
+- `lib/optimize/codec/` — YARB binary surgery
+- `lib/optimize/ir/` — `Function`, `Instruction`, `BasicBlock`, `CFG`
+- `lib/optimize/pass.rb` — Pass base class + NoopPass
+- `lib/optimize/pipeline.rb` — pass orchestration
+- `lib/optimize/contract.rb` — the hardcoded ground rules
+- `lib/optimize/log.rb` — structured optimizer log
+- `lib/optimize/rbs_parser.rb` — inline `@rbs` extraction
+- `lib/optimize/type_env.rb` — typed-environment queries
+- `lib/optimize/harness.rb` — `load_iseq` override
 - `test/` — minitest suites, fixtures under `test/harness_fixtures/`
 
 ## The round-trip contract

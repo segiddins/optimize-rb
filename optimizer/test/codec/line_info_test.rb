@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/line_info"
-require "ruby_opt/codec/instruction_stream"
-require "ruby_opt/codec/binary_writer"
-require "ruby_opt/ir/instruction"
-require "ruby_opt/ir/line_entry"
+require "optimize/codec"
+require "optimize/codec/line_info"
+require "optimize/codec/instruction_stream"
+require "optimize/codec/binary_writer"
+require "optimize/ir/instruction"
+require "optimize/ir/line_entry"
 
 class LineInfoTest < Minitest::Test
   def test_multiline_method_has_line_entries_per_instruction_group
@@ -18,7 +18,7 @@ class LineInfoTest < Minitest::Test
       multi
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     m = ir.children.find { |c| c.name == "multi" }
     refute_nil m
@@ -28,7 +28,7 @@ class LineInfoTest < Minitest::Test
     end
     assert_operator m.line_entries.map(&:line_no).uniq.size, :>=, 3
 
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 
   # 5d.i: LineInfo.encode must silently drop line entries whose instruction
@@ -43,7 +43,7 @@ class LineInfoTest < Minitest::Test
       multi
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     m = ir.children.find { |c| c.name == "multi" }
     refute_nil m
@@ -58,15 +58,15 @@ class LineInfoTest < Minitest::Test
     m.instructions.delete(deleted_inst)
 
     # Build the slot map from the REDUCED instruction list.
-    inst_to_slot = RubyOpt::Codec::InstructionStream.inst_to_slot_map(m.instructions)
+    inst_to_slot = Optimize::Codec::InstructionStream.inst_to_slot_map(m.instructions)
 
     # LineInfo.encode must NOT raise KeyError even though some entries
     # reference the deleted instruction.
-    body_writer = RubyOpt::Codec::BinaryWriter.new
-    pos_writer  = RubyOpt::Codec::BinaryWriter.new
+    body_writer = Optimize::Codec::BinaryWriter.new
+    pos_writer  = Optimize::Codec::BinaryWriter.new
     error = nil
     begin
-      RubyOpt::Codec::LineInfo.encode(body_writer, pos_writer, m.line_entries, inst_to_slot)
+      Optimize::Codec::LineInfo.encode(body_writer, pos_writer, m.line_entries, inst_to_slot)
     rescue => e
       error = e
     end
@@ -106,7 +106,7 @@ class LineInfoTest < Minitest::Test
       multi
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     m = ir.children.find { |c| c.name == "multi" }
     refute_nil m
@@ -115,8 +115,8 @@ class LineInfoTest < Minitest::Test
     # Inject a dangling line entry pointing at a phantom instruction that is NOT in
     # m.instructions. This simulates an optimizer removing an instruction while leaving
     # a stale line_entry reference behind.
-    phantom = RubyOpt::IR::Instruction.new(opcode: :nop, operands: [], line: nil)
-    dangling_entry = RubyOpt::IR::LineEntry.new(
+    phantom = Optimize::IR::Instruction.new(opcode: :nop, operands: [], line: nil)
+    dangling_entry = Optimize::IR::LineEntry.new(
       inst:        phantom,
       slot_offset: 0,
       line_no:     m.line_entries.first.line_no,
@@ -128,7 +128,7 @@ class LineInfoTest < Minitest::Test
 
     # Full encode must not raise (the dangling entry is silently dropped),
     # and the result must load cleanly.
-    re_encoded = RubyOpt::Codec.encode(ir)
+    re_encoded = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
     assert_kind_of RubyVM::InstructionSequence, loaded
 

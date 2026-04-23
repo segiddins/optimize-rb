@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/transcript"
+require "optimize/demo/claude/transcript"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class TranscriptTest < Minitest::Test

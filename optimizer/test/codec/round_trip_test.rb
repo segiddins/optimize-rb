@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/header"
-require "ruby_opt/codec/object_table"
-require "ruby_opt/codec/iseq_envelope"
-require "ruby_opt/ir/function"
-require "ruby_opt/ir/instruction"
+require "optimize/codec"
+require "optimize/codec/header"
+require "optimize/codec/object_table"
+require "optimize/codec/iseq_envelope"
+require "optimize/ir/function"
+require "optimize/ir/instruction"
 
 class RoundTripTest < Minitest::Test
   # The core contract: encode(decode(bin)) == bin, for unmodified iseqs.
@@ -22,16 +22,16 @@ class RoundTripTest < Minitest::Test
   EXAMPLES.each_with_index do |src, i|
     define_method(:"test_identity_#{i}_#{src[0,20].gsub(/\W+/,'_')}") do
       original = RubyVM::InstructionSequence.compile(src).to_binary
-      ir = RubyOpt::Codec.decode(original)
-      re_encoded = RubyOpt::Codec.encode(ir)
+      ir = Optimize::Codec.decode(original)
+      re_encoded = Optimize::Codec.encode(ir)
       assert_equal original, re_encoded,
         "round-trip mismatch for #{src.inspect}"
     end
 
     define_method(:"test_executable_#{i}_#{src[0,20].gsub(/\W+/,'_')}") do
       original = RubyVM::InstructionSequence.compile(src).to_binary
-      ir = RubyOpt::Codec.decode(original)
-      re_encoded = RubyOpt::Codec.encode(ir)
+      ir = Optimize::Codec.decode(original)
+      re_encoded = Optimize::Codec.encode(ir)
       # The VM must accept it and running must not raise
       loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
       assert_kind_of RubyVM::InstructionSequence, loaded
@@ -42,7 +42,7 @@ class RoundTripTest < Minitest::Test
   def test_iseq_envelope_round_trip
     src = "def hi(name, times: 1); times.times { puts name }; end"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     # Outer Function has a child for `hi`, which has a child for the block.
     hi = ir.children.find { |f| f.name == "hi" }
@@ -50,7 +50,7 @@ class RoundTripTest < Minitest::Test
     block = hi.children.find { |f| f.type == :block }
     refute_nil block
 
-    re_encoded = RubyOpt::Codec.encode(ir)
+    re_encoded = Optimize::Codec.encode(ir)
     assert_equal original, re_encoded
   end
 
@@ -64,7 +64,7 @@ class RoundTripTest < Minitest::Test
 
     # Decode via full Codec (ObjectTable now only covers its own region; iseq region
     # is handled by IseqList).
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
     table = ir.misc[:object_table]
 
     # Table should contain literals seen in the snippet
@@ -74,13 +74,13 @@ class RoundTripTest < Minitest::Test
     assert_includes table.objects, 4.5
 
     # Full round-trip must be byte-identical
-    re_encoded = RubyOpt::Codec.encode(ir)
+    re_encoded = Optimize::Codec.encode(ir)
     assert_equal original, re_encoded
   end
 
   def test_instruction_stream_decode_shape
     src = "def add(a, b); a + b; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     add = ir.children.find { |f| f.name == "add" }
@@ -94,14 +94,14 @@ class RoundTripTest < Minitest::Test
 
   def test_header_round_trip
     original = RubyVM::InstructionSequence.compile("1 + 2").to_binary
-    reader = RubyOpt::Codec::BinaryReader.new(original)
-    header = RubyOpt::Codec::Header.decode(reader)
+    reader = Optimize::Codec::BinaryReader.new(original)
+    header = Optimize::Codec::Header.decode(reader)
 
     assert_equal "YARB", header.magic
     refute_nil header.major_version
     refute_nil header.platform
 
-    writer = RubyOpt::Codec::BinaryWriter.new
+    writer = Optimize::Codec::BinaryWriter.new
     header.encode(writer)
     # Header section must reproduce its original bytes
     header_len = reader.pos
@@ -109,22 +109,22 @@ class RoundTripTest < Minitest::Test
   end
 
   def test_u64_to_i64_boundaries
-    assert_equal 0,                 RubyOpt::Codec::InstructionStream.u64_to_i64(0)
-    assert_equal 1,                 RubyOpt::Codec::InstructionStream.u64_to_i64(1)
-    assert_equal (1 << 63) - 1,     RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 63) - 1)
-    assert_equal(-(1 << 63),        RubyOpt::Codec::InstructionStream.u64_to_i64(1 << 63))
-    assert_equal(-1,                RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 64) - 1))
-    assert_equal(-2,                RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 64) - 2))
+    assert_equal 0,                 Optimize::Codec::InstructionStream.u64_to_i64(0)
+    assert_equal 1,                 Optimize::Codec::InstructionStream.u64_to_i64(1)
+    assert_equal (1 << 63) - 1,     Optimize::Codec::InstructionStream.u64_to_i64((1 << 63) - 1)
+    assert_equal(-(1 << 63),        Optimize::Codec::InstructionStream.u64_to_i64(1 << 63))
+    assert_equal(-1,                Optimize::Codec::InstructionStream.u64_to_i64((1 << 64) - 1))
+    assert_equal(-2,                Optimize::Codec::InstructionStream.u64_to_i64((1 << 64) - 2))
   end
 
   def test_i64_to_u64_boundaries
-    assert_equal 0,             RubyOpt::Codec::InstructionStream.i64_to_u64(0)
-    assert_equal (1 << 63) - 1, RubyOpt::Codec::InstructionStream.i64_to_u64((1 << 63) - 1)
-    assert_equal (1 << 64) - 1, RubyOpt::Codec::InstructionStream.i64_to_u64(-1)
-    assert_equal (1 << 64) - 2, RubyOpt::Codec::InstructionStream.i64_to_u64(-2)
-    assert_equal 1 << 63,       RubyOpt::Codec::InstructionStream.i64_to_u64(-(1 << 63))
-    assert_raises(ArgumentError) { RubyOpt::Codec::InstructionStream.i64_to_u64(1 << 63) }
-    assert_raises(ArgumentError) { RubyOpt::Codec::InstructionStream.i64_to_u64(-(1 << 63) - 1) }
+    assert_equal 0,             Optimize::Codec::InstructionStream.i64_to_u64(0)
+    assert_equal (1 << 63) - 1, Optimize::Codec::InstructionStream.i64_to_u64((1 << 63) - 1)
+    assert_equal (1 << 64) - 1, Optimize::Codec::InstructionStream.i64_to_u64(-1)
+    assert_equal (1 << 64) - 2, Optimize::Codec::InstructionStream.i64_to_u64(-2)
+    assert_equal 1 << 63,       Optimize::Codec::InstructionStream.i64_to_u64(-(1 << 63))
+    assert_raises(ArgumentError) { Optimize::Codec::InstructionStream.i64_to_u64(1 << 63) }
+    assert_raises(ArgumentError) { Optimize::Codec::InstructionStream.i64_to_u64(-(1 << 63) - 1) }
   end
 
   def test_decode_backward_branch_in_while_loop
@@ -135,7 +135,7 @@ class RoundTripTest < Minitest::Test
 
     # Before the fix: this decode raises with
     #   "OFFSET raw=<huge> in branch* targets slot <huge> with no corresponding instruction"
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
     refute_nil ir
 
     # Sanity: at least one branch instruction must point backward (target index
@@ -152,8 +152,8 @@ class RoundTripTest < Minitest::Test
 
   def test_round_trip_helpers_compose
     [-5, -1, 0, 1, 5, (1 << 62), -(1 << 62)].each do |i|
-      u = RubyOpt::Codec::InstructionStream.i64_to_u64(i)
-      assert_equal i, RubyOpt::Codec::InstructionStream.u64_to_i64(u),
+      u = Optimize::Codec::InstructionStream.i64_to_u64(i)
+      assert_equal i, Optimize::Codec::InstructionStream.u64_to_i64(u),
         "round-trip failed for i=#{i} via u=#{u}"
     end
   end
@@ -162,8 +162,8 @@ class RoundTripTest < Minitest::Test
     src = "def loop_me(n); i = 0; while i < n; i += 1; end; i; end"
     original = RubyVM::InstructionSequence.compile(src).to_binary
 
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
     assert_equal original, re_encoded,
       "round-trip byte mismatch for while-loop iseq"
 
@@ -186,8 +186,8 @@ class RoundTripTest < Minitest::Test
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
 
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
 
     loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
     assert_equal 55, loaded.eval, "round-tripped while loop must still compute 1+2+...+10"
@@ -197,7 +197,7 @@ class RoundTripTest < Minitest::Test
     # Computed offsets wider than INT64_MAX are rejected by the helper, not
     # deep in write_small_value with a misleading "must be non-negative" message.
     assert_raises(ArgumentError) do
-      RubyOpt::Codec::InstructionStream.i64_to_u64((1 << 63))
+      Optimize::Codec::InstructionStream.i64_to_u64((1 << 63))
     end
   end
 end

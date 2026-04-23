@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/catch_table"
-require "ruby_opt/codec/instruction_stream"
-require "ruby_opt/codec/binary_writer"
-require "ruby_opt/ir/instruction"
-require "ruby_opt/ir/catch_entry"
+require "optimize/codec"
+require "optimize/codec/catch_table"
+require "optimize/codec/instruction_stream"
+require "optimize/codec/binary_writer"
+require "optimize/ir/instruction"
+require "optimize/ir/catch_entry"
 
 class CatchTableTest < Minitest::Test
   def test_rescue_method_round_trips_through_catch_entries
@@ -19,7 +19,7 @@ class CatchTableTest < Minitest::Test
       safe_divide(10, 0)
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     safe_divide = ir.children.find { |c| c.name == "safe_divide" }
     refute_nil safe_divide
@@ -30,7 +30,7 @@ class CatchTableTest < Minitest::Test
     assert_includes safe_divide.instructions, rescue_entry.end_inst
 
     # Byte-identical round-trip still passes.
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 
   # 5d.ii: CatchTable.encode must silently drop catch entries whose start_inst,
@@ -46,7 +46,7 @@ class CatchTableTest < Minitest::Test
       safe_divide(10, 0)
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     safe_divide = ir.children.find { |c| c.name == "safe_divide" }
     refute_nil safe_divide
@@ -58,14 +58,14 @@ class CatchTableTest < Minitest::Test
     safe_divide.instructions.delete(deleted_inst)
 
     # Build inst_to_slot from the REDUCED instruction list.
-    inst_to_slot = RubyOpt::Codec::InstructionStream.inst_to_slot_map(safe_divide.instructions)
+    inst_to_slot = Optimize::Codec::InstructionStream.inst_to_slot_map(safe_divide.instructions)
 
     # CatchTable.encode must NOT raise KeyError even though the entry's start_inst
     # is no longer in inst_to_slot.
-    ct_writer = RubyOpt::Codec::BinaryWriter.new
+    ct_writer = Optimize::Codec::BinaryWriter.new
     error = nil
     begin
-      RubyOpt::Codec::CatchTable.encode(ct_writer, safe_divide.catch_entries, inst_to_slot)
+      Optimize::Codec::CatchTable.encode(ct_writer, safe_divide.catch_entries, inst_to_slot)
     rescue => e
       error = e
     end
@@ -101,7 +101,7 @@ class CatchTableTest < Minitest::Test
       safe_divide(10, 0)
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     safe_divide = ir.children.find { |c| c.name == "safe_divide" }
     refute_nil safe_divide
@@ -110,9 +110,9 @@ class CatchTableTest < Minitest::Test
     # Inject a dangling catch entry whose start_inst is a phantom instruction NOT in
     # safe_divide.instructions. This simulates an optimizer removing an instruction while
     # leaving a stale catch_entry behind.
-    phantom = RubyOpt::IR::Instruction.new(opcode: :nop, operands: [], line: nil)
+    phantom = Optimize::IR::Instruction.new(opcode: :nop, operands: [], line: nil)
     real_entry = safe_divide.catch_entries.first
-    dangling_entry = RubyOpt::IR::CatchEntry.new(
+    dangling_entry = Optimize::IR::CatchEntry.new(
       type:        real_entry.type,
       iseq_index:  real_entry.iseq_index,
       start_inst:  phantom,               # dangling: phantom not in instructions
@@ -125,7 +125,7 @@ class CatchTableTest < Minitest::Test
 
     # Full encode must not raise (the dangling entry is silently dropped),
     # and the result must load cleanly.
-    re_encoded = RubyOpt::Codec.encode(ir)
+    re_encoded = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
     assert_kind_of RubyVM::InstructionSequence, loaded
 

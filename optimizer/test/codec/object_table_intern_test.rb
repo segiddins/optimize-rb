@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class ObjectTableInternTest < Minitest::Test
   def test_index_for_finds_existing_literal_from_source
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
     ot = ir.misc[:object_table]
@@ -14,7 +14,7 @@ class ObjectTableInternTest < Minitest::Test
   end
 
   def test_intern_returns_existing_index_without_growing_the_table
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
     ot = ir.misc[:object_table]
@@ -27,7 +27,7 @@ class ObjectTableInternTest < Minitest::Test
   def test_intern_appends_new_integer_and_binary_round_trips
     src = "def f; 2 + 3; end; f"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
     ot = ir.misc[:object_table]
     before_size = ot.objects.size
     new_idx = ot.intern(6)
@@ -35,7 +35,7 @@ class ObjectTableInternTest < Minitest::Test
     assert_equal before_size + 1, ot.objects.size
     assert_equal 6, ot.objects[new_idx]
 
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
     assert_equal 5, loaded.eval
@@ -43,7 +43,7 @@ class ObjectTableInternTest < Minitest::Test
 
   def test_intern_appends_true_and_false_when_absent
     src = "def f; 1 + 2; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
 
     t_idx = ot.intern(true)
@@ -51,7 +51,7 @@ class ObjectTableInternTest < Minitest::Test
     assert_equal true,  ot.objects[t_idx]
     assert_equal false, ot.objects[f_idx]
 
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
   end
@@ -59,24 +59,24 @@ class ObjectTableInternTest < Minitest::Test
   def test_unmodified_round_trip_still_byte_identical
     src = "def f; 2 + 3; end; f"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 
   def test_intern_negative_integer_round_trips
     src = "def f; 2 + 3; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     idx = ot.intern(-6)
     assert_equal(-6, ot.objects[idx])
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
   end
 
   def test_intern_appends_string_and_round_trips
     src = "def f; 2 + 3; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     before_size = ot.objects.size
 
@@ -85,8 +85,8 @@ class ObjectTableInternTest < Minitest::Test
     assert_equal "hello", ot.objects[idx]
     assert_predicate ot.objects[idx], :frozen?
 
-    modified = RubyOpt::Codec.encode(ir)
-    reloaded = RubyOpt::Codec.decode(modified)
+    modified = Optimize::Codec.encode(ir)
+    reloaded = Optimize::Codec.decode(modified)
     assert_equal "hello", reloaded.misc[:object_table].objects[idx]
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
@@ -95,7 +95,7 @@ class ObjectTableInternTest < Minitest::Test
 
   def test_intern_string_returns_existing_index_when_literal_present
     src = 'def f; "already_here"; end; f'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     existing = ot.index_for("already_here")
     refute_nil existing, "literal must exist in the table"
@@ -105,7 +105,7 @@ class ObjectTableInternTest < Minitest::Test
   end
 
   def test_intern_still_rejects_arrays_and_hashes
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile("def f; 1; end; f").to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile("def f; 1; end; f").to_binary)
     ot = ir.misc[:object_table]
     assert_raises(ArgumentError) { ot.intern([1, 2]) }
     assert_raises(ArgumentError) { ot.intern({ a: 1 }) }

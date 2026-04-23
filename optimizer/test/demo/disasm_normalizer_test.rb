@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/disasm_normalizer"
+require "optimize/demo/disasm_normalizer"
 
 class DisasmNormalizerTest < Minitest::Test
   def test_strips_header_block
@@ -10,7 +10,7 @@ class DisasmNormalizerTest < Minitest::Test
       0000 putobject_INT2FIX_1_                                          (   1)[Li]
       0001 leave
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     refute_match(/disasm:/, normalized)
     refute_match(/local table/, normalized)
     assert_match(/putobject_INT2FIX_1_/, normalized)
@@ -23,7 +23,7 @@ class DisasmNormalizerTest < Minitest::Test
       0000 putobject_INT2FIX_1_
       0001 leave
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     refute_match(/^\d{4}\s/, normalized)
     assert_match(/putobject_INT2FIX_1_/, normalized)
   end
@@ -34,7 +34,7 @@ class DisasmNormalizerTest < Minitest::Test
       0000 putobject_INT2FIX_1_                                          (   1)[Li]
       0001 leave                                                         (   2)[Li]
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     refute_match(/\(\s*\d+\)\[/, normalized)
   end
 
@@ -45,7 +45,7 @@ class DisasmNormalizerTest < Minitest::Test
       == disasm: #<ISeq:inner@block>
       0000 leave
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     assert_match(/== block: inner@block/, normalized)
   end
 end

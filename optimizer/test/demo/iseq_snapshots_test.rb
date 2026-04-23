@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/iseq_snapshots"
+require "optimize/demo/iseq_snapshots"
 require "tmpdir"
 
 class IseqSnapshotsTest < Minitest::Test
@@ -21,7 +21,7 @@ class IseqSnapshotsTest < Minitest::Test
 
   def test_before_returns_disasm_text
     with_fixture do |path|
-      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+      snaps = Optimize::Demo::IseqSnapshots.generate(
         fixture_path: path, walkthrough: [],
       )
       assert_kind_of String, snaps.before
@@ -31,7 +31,7 @@ class IseqSnapshotsTest < Minitest::Test
 
   def test_after_full_uses_pipeline_default
     with_fixture do |path|
-      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+      snaps = Optimize::Demo::IseqSnapshots.generate(
         fixture_path: path, walkthrough: [],
       )
       assert_kind_of String, snaps.after_full
@@ -41,7 +41,7 @@ class IseqSnapshotsTest < Minitest::Test
 
   def test_per_pass_snapshots_match_prefixes
     with_fixture do |path|
-      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+      snaps = Optimize::Demo::IseqSnapshots.generate(
         fixture_path: path,
         walkthrough: [:const_fold, :dead_branch_fold],
       )
@@ -54,7 +54,7 @@ class IseqSnapshotsTest < Minitest::Test
 
   def test_entry_call_included_in_snapshotted_iseq
     with_fixture do |path|
-      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+      snaps = Optimize::Demo::IseqSnapshots.generate(
         fixture_path: path, walkthrough: [],
         entry_setup: "x = 5", entry_call: "add_one(x)",
       )
@@ -69,7 +69,7 @@ class IseqSnapshotsTest < Minitest::Test
   def test_unknown_walkthrough_name_raises
     with_fixture do |path|
       assert_raises(ArgumentError) do
-        RubyOpt::Demo::IseqSnapshots.generate(
+        Optimize::Demo::IseqSnapshots.generate(
           fixture_path: path, walkthrough: [:no_such_pass],
         )
       end

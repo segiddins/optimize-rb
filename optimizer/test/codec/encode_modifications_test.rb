@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/ir/instruction"
+require "optimize/codec"
+require "optimize/ir/instruction"
 
 class EncodeModificationsTest < Minitest::Test
   def test_modifying_putobject_operand_changes_bytes
@@ -9,7 +9,7 @@ class EncodeModificationsTest < Minitest::Test
     # Change second putobject to use the object-table index of 256 (making f return 256+256=512).
     src = "def f; 256 + 512; end; f"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     f = ir.children.find { |c| c.name == "f" }
     refute_nil f
@@ -27,7 +27,7 @@ class EncodeModificationsTest < Minitest::Test
     putobjects[0].operands[0] = idx1
     putobjects[1].operands[0] = idx0
 
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     refute_equal original, modified, "expected re-encoded bytes to differ after mutation"
     # Load and eval; 512 + 256 = 768 (addition is commutative).
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
@@ -37,8 +37,8 @@ class EncodeModificationsTest < Minitest::Test
   def test_round_trip_is_still_identity_when_instructions_unmodified
     src = "[1, 2, 3].map { |n| n * 2 }"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
     assert_equal original, re_encoded
   end
 

@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude"
-require "ruby_opt/demo/claude/serializer"
-require "ruby_opt/codec"
+require "optimize/demo/claude"
+require "optimize/demo/claude/serializer"
+require "optimize/codec"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class ClaudeIntegrationTest < Minitest::Test
@@ -41,7 +41,7 @@ module RubyOpt
 
         def correct_json_for_fixture
           iseq = RubyVM::InstructionSequence.compile_file(FIXTURE_PATH)
-          envelope = RubyOpt::Codec.decode(iseq.to_binary)
+          envelope = Optimize::Codec.decode(iseq.to_binary)
           object_table = envelope.misc[:object_table]
           target = find_fn(envelope, "answer") or raise "no answer fn"
           Serializer.serialize(target, object_table: object_table)

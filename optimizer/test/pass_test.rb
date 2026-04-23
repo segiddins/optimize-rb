@@ -1,18 +1,18 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/pass"
-require "ruby_opt/log"
-require "ruby_opt/codec"
+require "optimize/pass"
+require "optimize/log"
+require "optimize/codec"
 
 class PassTest < Minitest::Test
   def test_noop_pass_does_not_change_instructions
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("1 + 2").to_binary
     )
     f = ir.children.first # outer iseq
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::NoopPass.new.apply(f, type_env: nil, log: log, object_table: nil)
+    log = Optimize::Log.new
+    Optimize::NoopPass.new.apply(f, type_env: nil, log: log, object_table: nil)
     after = f.instructions.map(&:opcode)
     assert_equal before, after
     assert_empty log.entries
@@ -20,11 +20,11 @@ class PassTest < Minitest::Test
 
   def test_base_pass_apply_raises_not_implemented
     assert_raises(NotImplementedError) do
-      RubyOpt::Pass.new.apply(nil, type_env: nil, log: nil, object_table: nil)
+      Optimize::Pass.new.apply(nil, type_env: nil, log: nil, object_table: nil)
     end
   end
 
   def test_pass_has_a_name
-    assert_equal :noop, RubyOpt::NoopPass.new.name
+    assert_equal :noop, Optimize::NoopPass.new.name
   end
 end

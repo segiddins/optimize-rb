@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/ir/cfg"
+require "optimize/codec"
+require "optimize/ir/cfg"
 
 class CfgTest < Minitest::Test
   def test_straight_line_function_has_one_block
     src = "def f; 1 + 2; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     f = ir.children.find { |c| c.name == "f" }
@@ -18,7 +18,7 @@ class CfgTest < Minitest::Test
 
   def test_conditional_produces_two_successors
     src = "def f(x); if x then 1 else 2 end; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     f = ir.children.find { |c| c.name == "f" }
@@ -33,7 +33,7 @@ class CfgTest < Minitest::Test
 
   def test_predecessors_are_inverse_of_successors
     src = "def f(x); if x then 1 else 2 end; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     f = ir.children.find { |c| c.name == "f" }

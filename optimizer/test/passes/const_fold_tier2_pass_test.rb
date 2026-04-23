@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/passes/const_fold_tier2_pass"
-require "ruby_opt/pipeline"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/passes/const_fold_tier2_pass"
+require "optimize/pipeline"
 
 class ConstFoldTier2PassTest < Minitest::Test
   def test_folds_bare_integer_constant_reference
@@ -52,7 +52,7 @@ class ConstFoldTier2PassTest < Minitest::Test
     src = 'FOO = 1; FOO = 2; def f; FOO; end'
     ir = decode(src)
     ot = ir.misc[:object_table]
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     run_pass(ir, ot, log: log)
 
     f = find_iseq(ir, "f")
@@ -67,7 +67,7 @@ class ConstFoldTier2PassTest < Minitest::Test
     src = 'def self.make; 99; end; FOO = make; def f; FOO; end'
     ir = decode(src)
     ot = ir.misc[:object_table]
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     run_pass(ir, ot, log: log)
 
     f = find_iseq(ir, "f")
@@ -91,7 +91,7 @@ class ConstFoldTier2PassTest < Minitest::Test
     src = 'FOO = 42; def f; FOO + 1; end; f'
     ir = decode(src)
 
-    RubyOpt::Pipeline.default.run(ir, type_env: nil)
+    Optimize::Pipeline.default.run(ir, type_env: nil)
 
     f = find_iseq(ir, "f")
     opcodes = f.instructions.map(&:opcode)
@@ -116,14 +116,14 @@ class ConstFoldTier2PassTest < Minitest::Test
     ot = ir.misc[:object_table]
     run_pass(ir, ot)
     # Must not raise.
-    RubyOpt::Codec.encode(ir)
+    Optimize::Codec.encode(ir)
   end
 
   def test_logs_folded_for_each_rewrite
     src = 'FOO = 7; def a; FOO; end; def b; FOO; end'
     ir = decode(src)
     ot = ir.misc[:object_table]
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     run_pass(ir, ot, log: log)
 
     folded = log.for_pass(:const_fold_tier2).select { |e| e.reason == :folded }
@@ -133,11 +133,11 @@ class ConstFoldTier2PassTest < Minitest::Test
   private
 
   def decode(src)
-    RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   end
 
-  def run_pass(ir, ot, log: RubyOpt::Log.new)
-    pass = RubyOpt::Passes::ConstFoldTier2Pass.new
+  def run_pass(ir, ot, log: Optimize::Log.new)
+    pass = Optimize::Passes::ConstFoldTier2Pass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot)
     end

@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/passes/const_fold_pass"
-require "ruby_opt/passes/dead_branch_fold_pass"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/passes/const_fold_pass"
+require "optimize/passes/dead_branch_fold_pass"
 
 class DeadBranchFoldPassTest < Minitest::Test
   # ConstFoldPass folds `"a" == "a"` to `putobject true`, leaving
@@ -21,20 +21,20 @@ class DeadBranchFoldPassTest < Minitest::Test
       end
       f(10)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
-    RubyOpt::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     refute(f.instructions.any? { |i| i.opcode == :branchunless },
            "branchunless should have been folded away")
     assert(log.entries.any? { |e| e.reason == :branch_folded },
            "expected a :branch_folded log entry")
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 11, loaded.eval
   end
 
@@ -51,19 +51,19 @@ class DeadBranchFoldPassTest < Minitest::Test
       end
       f(10)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
-    RubyOpt::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     refute(f.instructions.any? { |i| i.opcode == :branchunless })
     assert(f.instructions.any? { |i| i.opcode == :jump })
     assert(log.entries.any? { |e| e.reason == :branch_folded })
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 9, loaded.eval
   end
 
@@ -81,34 +81,34 @@ class DeadBranchFoldPassTest < Minitest::Test
       end
       f(10)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
-    RubyOpt::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     refute(f.instructions.any? { |i| i.opcode == :branchunless })
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 11, loaded.eval
   end
 
   # Non-literal condition: nothing to fold.
   def test_unchanged_when_condition_is_not_a_literal
     src = "def f(x); if x.zero?; :a; else :b; end; end; f(1)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    RubyOpt::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.none? { |e| e.reason == :branch_folded })
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal :b, loaded.eval
   end
 
@@ -124,19 +124,19 @@ class DeadBranchFoldPassTest < Minitest::Test
       end
       f(10)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
-    RubyOpt::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     refute(f.instructions.any? { |i| i.opcode == :branchunless })
     refute(f.instructions.any? { |i| i.opcode == :dup })
     assert(log.entries.any? { |e| e.reason == :short_circuit_folded })
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 10, loaded.eval
   end
 
@@ -150,18 +150,18 @@ class DeadBranchFoldPassTest < Minitest::Test
       end
       f(10)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
-    RubyOpt::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     refute(f.instructions.any? { |i| i.opcode == :branchif })
     refute(f.instructions.any? { |i| i.opcode == :dup })
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 10, loaded.eval
   end
 
@@ -174,19 +174,19 @@ class DeadBranchFoldPassTest < Minitest::Test
       end
       f(10)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
     before = f.instructions.map(&:opcode)
-    RubyOpt::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    Optimize::Passes::DeadBranchFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before, f.instructions.map(&:opcode),
                  "short-circuit-taken shape must not be folded by the peephole"
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal false, loaded.eval
   end
 

@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/prompt"
+require "optimize/demo/claude/prompt"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class PromptTest < Minitest::Test

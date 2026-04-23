@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/serializer"
+require "optimize/demo/claude/serializer"
 
 class SerializerTest < Minitest::Test
   FIXTURE = <<~RUBY
@@ -11,7 +11,7 @@ class SerializerTest < Minitest::Test
 
   def decode_method(source, method_name)
     iseq = RubyVM::InstructionSequence.compile(source)
-    root = RubyOpt::Codec.decode(iseq.to_binary)
+    root = Optimize::Codec.decode(iseq.to_binary)
     object_table = root.misc[:object_table]
     target = find_function(root, method_name.to_s) or
       raise "method #{method_name} not found in iseq tree"
@@ -29,7 +29,7 @@ class SerializerTest < Minitest::Test
 
   def serialize_answer
     fn, ot = decode_method(FIXTURE, :answer)
-    RubyOpt::Demo::Claude::Serializer.serialize(fn, object_table: ot)
+    Optimize::Demo::Claude::Serializer.serialize(fn, object_table: ot)
   end
 
   def test_serialize_returns_array_of_tuples
@@ -71,27 +71,27 @@ class SerializerTest < Minitest::Test
 
   def test_round_trip_preserves_opcode_sequence
     fn, ot = decode_method(FIXTURE, :answer)
-    json = RubyOpt::Demo::Claude::Serializer.serialize(fn, object_table: ot)
-    restored = RubyOpt::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
+    json = Optimize::Demo::Claude::Serializer.serialize(fn, object_table: ot)
+    restored = Optimize::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
     assert_equal fn.instructions.map(&:opcode), restored.instructions.map(&:opcode)
   end
 
   def test_round_trip_call_data
     fn, ot = decode_method(FIXTURE, :answer)
-    json = RubyOpt::Demo::Claude::Serializer.serialize(fn, object_table: ot)
-    restored = RubyOpt::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
+    json = Optimize::Demo::Claude::Serializer.serialize(fn, object_table: ot)
+    restored = Optimize::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
     opt_plus = restored.instructions.find { |i| i.opcode == :opt_plus }
     refute_nil opt_plus
     cd = opt_plus.operands[0]
-    assert_kind_of RubyOpt::IR::CallData, cd
+    assert_kind_of Optimize::IR::CallData, cd
     assert_equal 1, cd.argc
     assert_equal :+, cd.mid_symbol(ot)
   end
 
   def test_round_trip_preserves_template_metadata
     fn, ot = decode_method(FIXTURE, :answer)
-    json = RubyOpt::Demo::Claude::Serializer.serialize(fn, object_table: ot)
-    restored = RubyOpt::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
+    json = Optimize::Demo::Claude::Serializer.serialize(fn, object_table: ot)
+    restored = Optimize::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
     assert_equal fn.name, restored.name
     assert_same fn.local_table, restored.local_table
     assert_same fn.catch_entries, restored.catch_entries
@@ -102,8 +102,8 @@ class SerializerTest < Minitest::Test
   def test_strict_raises_on_unknown_opcode
     fn, ot = decode_method(FIXTURE, :answer)
     json = [["opt_fastmath"], ["leave"]]
-    err = assert_raises(RubyOpt::Demo::Claude::Serializer::DeserializeError) do
-      RubyOpt::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot, strict: true)
+    err = assert_raises(Optimize::Demo::Claude::Serializer::DeserializeError) do
+      Optimize::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot, strict: true)
     end
     assert_includes err.message, "opt_fastmath"
   end
@@ -111,14 +111,14 @@ class SerializerTest < Minitest::Test
   def test_lax_tolerates_unknown_opcode
     fn, ot = decode_method(FIXTURE, :answer)
     json = [["opt_fastmath"], ["leave"]]
-    restored = RubyOpt::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot, strict: false)
+    restored = Optimize::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot, strict: false)
     assert_equal [:opt_fastmath, :leave], restored.instructions.map(&:opcode)
   end
 
   def test_round_trip_integer_literal_value_operand
     fn, ot = decode_method(FIXTURE, :answer)
     json = [["putobject", 42], ["leave"]]
-    restored = RubyOpt::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
+    restored = Optimize::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
     insn = restored.instructions[0]
     assert_equal :putobject, insn.opcode
     idx = insn.operands[0]
@@ -129,8 +129,8 @@ class SerializerTest < Minitest::Test
   def test_deserialize_rejects_unsupported_value_kind
     fn, ot = decode_method(FIXTURE, :answer)
     json = [["putobject", { "weird" => "object" }], ["leave"]]
-    assert_raises(RubyOpt::Demo::Claude::Serializer::DeserializeError) do
-      RubyOpt::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
+    assert_raises(Optimize::Demo::Claude::Serializer::DeserializeError) do
+      Optimize::Demo::Claude::Serializer.deserialize(json, template: fn, object_table: ot)
     end
   end
 end

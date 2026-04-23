@@ -48,7 +48,7 @@ namespace :demo do
     require "tmpdir"
     require "fileutils"
     $LOAD_PATH.unshift(File.expand_path("lib", __dir__))
-    require "ruby_opt/demo/runner"
+    require "optimize/demo/runner"
     examples_dir  = File.expand_path("examples", __dir__)
     committed_dir = File.expand_path("../docs/demo_artifacts", __dir__)
     sidecars = Dir[File.join(examples_dir, "*.walkthrough.yml")]
@@ -58,7 +58,7 @@ namespace :demo do
       mismatches = []
       sidecars.each do |sc|
         stem = File.basename(sc, ".walkthrough.yml")
-        regenerated = RubyOpt::Demo::Runner.run(sidecar_path: sc, output_dir: tmp)
+        regenerated = Optimize::Demo::Runner.run(sidecar_path: sc, output_dir: tmp)
         committed = File.join(committed_dir, "#{stem}.md")
         unless File.exist?(committed)
           mismatches << "missing committed artifact: #{committed}"

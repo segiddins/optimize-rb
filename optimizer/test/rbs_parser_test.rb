@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/rbs_parser"
+require "optimize/rbs_parser"
 
 class RbsParserTest < Minitest::Test
   def test_captures_top_level_def_signature
@@ -8,7 +8,7 @@ class RbsParserTest < Minitest::Test
       # @rbs (Integer, Integer) -> Integer
       def add(a, b); a + b; end
     RUBY
-    sigs = RubyOpt::RbsParser.parse(src, "test.rb")
+    sigs = Optimize::RbsParser.parse(src, "test.rb")
     assert_equal 1, sigs.size
     s = sigs.first
     assert_equal :add, s.method_name
@@ -26,7 +26,7 @@ class RbsParserTest < Minitest::Test
         end
       end
     RUBY
-    sigs = RubyOpt::RbsParser.parse(src, "test.rb")
+    sigs = Optimize::RbsParser.parse(src, "test.rb")
     s = sigs.find { |x| x.method_name == :distance_to }
     refute_nil s
     assert_equal "Point", s.receiver_class
@@ -40,12 +40,12 @@ class RbsParserTest < Minitest::Test
       # @rbs (Integer) -> Integer
       def annotated(a); a; end
     RUBY
-    sigs = RubyOpt::RbsParser.parse(src, "test.rb")
+    sigs = Optimize::RbsParser.parse(src, "test.rb")
     assert_equal 1, sigs.size
     assert_equal :annotated, sigs.first.method_name
   end
 
   def test_returns_empty_array_when_no_annotations
-    assert_empty RubyOpt::RbsParser.parse("def hi; end", "test.rb")
+    assert_empty Optimize::RbsParser.parse("def hi; end", "test.rb")
   end
 end

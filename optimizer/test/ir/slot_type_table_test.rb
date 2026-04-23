@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/ir/slot_type_table"
+require "optimize/ir/slot_type_table"
 
 class SlotTypeTableTest < Minitest::Test
   FnStub = Struct.new(:arg_spec, :instructions, :misc, keyword_init: true)
@@ -9,7 +9,7 @@ class SlotTypeTableTest < Minitest::Test
   def test_seeds_param_slots_from_signature
     fn  = FnStub.new(arg_spec: { lead_num: 2 }, instructions: [], misc: { local_table_size: 2 })
     sig = SigStub.new(arg_types: %w[Point Point])
-    table = RubyOpt::IR::SlotTypeTable.build(fn, sig, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, sig, nil)
 
     assert_equal "Point", table.lookup(0, 0)
     assert_equal "Point", table.lookup(1, 0)
@@ -18,7 +18,7 @@ class SlotTypeTableTest < Minitest::Test
   def test_non_param_slots_are_nil
     fn = FnStub.new(arg_spec: { lead_num: 1 }, instructions: [], misc: { local_table_size: 3 })
     sig = SigStub.new(arg_types: ["Integer"])
-    table = RubyOpt::IR::SlotTypeTable.build(fn, sig, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, sig, nil)
 
     assert_equal "Integer", table.lookup(0, 0)
     assert_nil table.lookup(1, 0)
@@ -27,7 +27,7 @@ class SlotTypeTableTest < Minitest::Test
 
   def test_no_signature_means_empty_seed
     fn = FnStub.new(arg_spec: { lead_num: 1 }, instructions: [], misc: { local_table_size: 1 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
 
     assert_nil table.lookup(0, 0)
   end
@@ -50,7 +50,7 @@ class SlotTypeTableTest < Minitest::Test
       InstStub.new(opcode: :setlocal_WC_0,         operands: [3]),
     ]
     fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
     assert_equal "Point", table.lookup(0, 0)
   end
 
@@ -60,7 +60,7 @@ class SlotTypeTableTest < Minitest::Test
       InstStub.new(opcode: :setlocal_WC_0, operands: [3]),
     ]
     fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
     assert_nil table.lookup(0, 0)
   end
 
@@ -77,7 +77,7 @@ class SlotTypeTableTest < Minitest::Test
       misc: { local_table_size: 1 },
     )
     sig = SigStub.new(arg_types: ["Point"])
-    table = RubyOpt::IR::SlotTypeTable.build(fn, sig, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, sig, nil)
     assert_nil table.lookup(0, 0)
   end
 
@@ -86,12 +86,12 @@ class SlotTypeTableTest < Minitest::Test
       arg_spec: { lead_num: 1 }, instructions: [], misc: { local_table_size: 1 },
     )
     parent_sig = SigStub.new(arg_types: ["Point"])
-    parent = RubyOpt::IR::SlotTypeTable.build(parent_fn, parent_sig, nil)
+    parent = Optimize::IR::SlotTypeTable.build(parent_fn, parent_sig, nil)
 
     child_fn = FnStub.new(
       arg_spec: {}, instructions: [], misc: { local_table_size: 0 },
     )
-    child = RubyOpt::IR::SlotTypeTable.build(child_fn, nil, parent)
+    child = Optimize::IR::SlotTypeTable.build(child_fn, nil, parent)
 
     assert_nil child.lookup(0, 0)
     assert_equal "Point", child.lookup(0, 1)
@@ -117,13 +117,13 @@ class SlotTypeTableTest < Minitest::Test
       InstStub.new(opcode: :setlocal_WC_0, operands: [3]),
     ]
     fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
     assert_equal "Point", table.lookup(0, 0)
   end
 
   def test_lookup_above_root_returns_nil
     fn = FnStub.new(arg_spec: {}, instructions: [], misc: { local_table_size: 0 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
     assert_nil table.lookup(0, 3)
   end
 end

@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/markdown_renderer"
-require "ruby_opt/demo/iseq_snapshots"
-require "ruby_opt/demo/benchmark"
+require "optimize/demo/markdown_renderer"
+require "optimize/demo/iseq_snapshots"
+require "optimize/demo/benchmark"
 
 class MarkdownRendererTest < Minitest::Test
   def build_snapshots(per_pass)
-    RubyOpt::Demo::IseqSnapshots::Result.new(
+    Optimize::Demo::IseqSnapshots::Result.new(
       before: "0000 putobject_INT2FIX_1_\n0001 leave\n",
       after_full: "0000 putobject_INT2FIX_2_\n0001 leave\n",
       per_pass: per_pass,
@@ -14,7 +14,7 @@ class MarkdownRendererTest < Minitest::Test
   end
 
   def build_bench
-    RubyOpt::Demo::Benchmark::Result.new(
+    Optimize::Demo::Benchmark::Result.new(
       stdout: "plain raw\noptimized raw\nComparison:\n  optimized: 2.0x  faster\n",
       plain_ips: 100.0,
       optimized_ips: 200.0,
@@ -25,7 +25,7 @@ class MarkdownRendererTest < Minitest::Test
     snaps = build_snapshots({
       const_fold: "0000 putobject_INT2FIX_2_\n0001 leave\n",
     })
-    md = RubyOpt::Demo::MarkdownRenderer.render(
+    md = Optimize::Demo::MarkdownRenderer.render(
       stem: "x",
       source: "def f; 1 + 1; end\n",
       walkthrough: [:const_fold],
@@ -45,7 +45,7 @@ class MarkdownRendererTest < Minitest::Test
     snaps = build_snapshots({
       const_fold: "0000 putobject_INT2FIX_2_\n0001 leave\n",
     })
-    md = RubyOpt::Demo::MarkdownRenderer.render(
+    md = Optimize::Demo::MarkdownRenderer.render(
       stem: "x", source: "def f; 1 + 1; end\n",
       walkthrough: [:const_fold],
       snapshots: snaps,
@@ -57,7 +57,7 @@ class MarkdownRendererTest < Minitest::Test
 
   def test_benchmark_headline_cites_ratio
     snaps = build_snapshots({})
-    md = RubyOpt::Demo::MarkdownRenderer.render(
+    md = Optimize::Demo::MarkdownRenderer.render(
       stem: "x", source: "def f; 1; end\n",
       walkthrough: [],
       snapshots: snaps,
@@ -70,20 +70,20 @@ class MarkdownRendererTest < Minitest::Test
 
   def test_heading_includes_convergence_when_present
     bench = Bench.new(1000.0, 1010.0)
-    md = RubyOpt::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: { "compute" => 3 })
+    md = Optimize::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: { "compute" => 3 })
     assert_includes md, "Converged in"
     assert_includes md, "3 iterations"
   end
 
   def test_heading_omits_convergence_when_absent
     bench = Bench.new(1000.0, 1010.0)
-    md = RubyOpt::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: {})
+    md = Optimize::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: {})
     refute_includes md, "Converged"
   end
 
   def test_heading_picks_max_iterations_across_functions
     bench = Bench.new(1000.0, 1010.0)
-    md = RubyOpt::Demo::MarkdownRenderer.heading(
+    md = Optimize::Demo::MarkdownRenderer.heading(
       "x",
       bench,
       convergence: { "<compiled>" => 1, "foo" => 5, "bar" => 2 },

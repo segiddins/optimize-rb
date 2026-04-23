@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/local_table"
+require "optimize/codec"
+require "optimize/codec/local_table"
 
 class LocalTableCodecTest < Minitest::Test
   # For every fixture iseq, decode(local_table_raw, size) → encode → must
@@ -11,7 +11,7 @@ class LocalTableCodecTest < Minitest::Test
     Dir[File.expand_path("corpus/*.rb", __dir__)].each do |fixture|
       src = File.read(fixture)
       bin = RubyVM::InstructionSequence.compile(src).to_binary
-      ir  = RubyOpt::Codec.decode(bin)
+      ir  = Optimize::Codec.decode(bin)
       assert_each_iseq_local_table_roundtrips(ir)
     end
   end
@@ -19,13 +19,13 @@ class LocalTableCodecTest < Minitest::Test
   def test_decode_produces_indices_for_method_with_one_local
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     target = find_iseq_named(ir, "take")
     refute_nil target, "expected to find an iseq named 'take'"
     size = target.misc[:local_table_size]
     assert_equal 1, size
     raw  = target.misc[:local_table_raw]
-    entries = RubyOpt::Codec::LocalTable.decode(raw, size)
+    entries = Optimize::Codec::LocalTable.decode(raw, size)
     assert_equal 1, entries.size
     idx = entries[0]
     assert_kind_of Integer, idx
@@ -33,25 +33,25 @@ class LocalTableCodecTest < Minitest::Test
   end
 
   def test_decode_raises_on_short_buffer
-    assert_raises(ArgumentError) { RubyOpt::Codec::LocalTable.decode("\x00".b, 1) }
+    assert_raises(ArgumentError) { Optimize::Codec::LocalTable.decode("\x00".b, 1) }
   end
 
   def test_grow_appends_entry_and_increments_size
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     take = find_iseq_named(ir, "take")
     refute_nil take
     old_size = take.misc[:local_table_size]
     old_raw  = take.misc[:local_table_raw]
-    original_entries = RubyOpt::Codec::LocalTable.decode(old_raw, old_size)
+    original_entries = Optimize::Codec::LocalTable.decode(old_raw, old_size)
     sentinel = original_entries[0]
 
-    returned = RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+    returned = Optimize::Codec::LocalTable.grow!(take, sentinel)
 
     assert_equal old_size, returned
     assert_equal old_size + 1, take.misc[:local_table_size]
-    new_entries = RubyOpt::Codec::LocalTable.decode(
+    new_entries = Optimize::Codec::LocalTable.decode(
       take.misc[:local_table_raw], take.misc[:local_table_size]
     )
     assert_equal original_entries + [sentinel], new_entries
@@ -60,15 +60,15 @@ class LocalTableCodecTest < Minitest::Test
   def test_grow_preserves_encoder_round_trip
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     take = find_iseq_named(ir, "take")
     refute_nil take
-    sentinel = RubyOpt::Codec::LocalTable.decode(
+    sentinel = Optimize::Codec::LocalTable.decode(
       take.misc[:local_table_raw], take.misc[:local_table_size]
     )[0]
 
-    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    Optimize::Codec::LocalTable.grow!(take, sentinel)
+    re_encoded = Optimize::Codec.encode(ir)
     # Loading alone proves layout integrity; LINDEX rewrites aren't our job.
     RubyVM::InstructionSequence.load_from_binary(re_encoded)
   end
@@ -76,33 +76,33 @@ class LocalTableCodecTest < Minitest::Test
   def test_grow_preserves_trailing_alignment_pad
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     take = find_iseq_named(ir, "take")
     refute_nil take
     old_bytesize = take.misc[:local_table_raw].bytesize
-    sentinel = RubyOpt::Codec::LocalTable.decode(
+    sentinel = Optimize::Codec::LocalTable.decode(
       take.misc[:local_table_raw], take.misc[:local_table_size]
     )[0]
 
-    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+    Optimize::Codec::LocalTable.grow!(take, sentinel)
 
-    assert_equal old_bytesize + RubyOpt::Codec::LocalTable::ID_SIZE,
+    assert_equal old_bytesize + Optimize::Codec::LocalTable::ID_SIZE,
                  take.misc[:local_table_raw].bytesize
   end
 
   def test_grow_sentinel_captures_pre_first_growth_size_only
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     take = find_iseq_named(ir, "take")
     refute_nil take
     original_size = take.misc[:local_table_size]
-    sentinel = RubyOpt::Codec::LocalTable.decode(
+    sentinel = Optimize::Codec::LocalTable.decode(
       take.misc[:local_table_raw], take.misc[:local_table_size]
     )[0]
 
-    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
-    RubyOpt::Codec::LocalTable.grow!(take, sentinel)
+    Optimize::Codec::LocalTable.grow!(take, sentinel)
+    Optimize::Codec::LocalTable.grow!(take, sentinel)
 
     assert_equal original_size, take.misc[:local_table_size_pre_growth]
   end
@@ -121,8 +121,8 @@ class LocalTableCodecTest < Minitest::Test
   def assert_each_iseq_local_table_roundtrips(fn)
     raw  = fn.misc[:local_table_raw]
     size = fn.misc[:local_table_size]
-    entries    = RubyOpt::Codec::LocalTable.decode(raw, size)
-    re_encoded = RubyOpt::Codec::LocalTable.encode(entries)
+    entries    = Optimize::Codec::LocalTable.decode(raw, size)
+    re_encoded = Optimize::Codec::LocalTable.encode(entries)
     raw_bytes  = (raw || "".b)
     prefix = raw_bytes.byteslice(0, re_encoded.bytesize) || "".b
     assert_equal prefix.bytes, re_encoded.bytes,

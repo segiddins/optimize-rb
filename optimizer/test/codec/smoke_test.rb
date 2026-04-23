@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class CodecSmokeTest < Minitest::Test
   def test_decode_encode_execute
@@ -10,8 +10,8 @@ class CodecSmokeTest < Minitest::Test
       add(2, 3) + greet("world").length
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
 
     loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
     result = loaded.eval

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/benchmark"
+require "optimize/demo/benchmark"
 require "tmpdir"
 
 class DemoBenchmarkTest < Minitest::Test
@@ -19,7 +19,7 @@ class DemoBenchmarkTest < Minitest::Test
 
   def test_compare_runs_both_labels_and_captures_output
     with_fixture do |path|
-      result = RubyOpt::Demo::Benchmark.compare(
+      result = Optimize::Demo::Benchmark.compare(
         fixture_path: path,
         entry_setup: "",
         entry_call: "noop",

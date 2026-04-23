@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/walkthrough"
+require "optimize/demo/walkthrough"
 require "tmpdir"
 
 class WalkthroughTest < Minitest::Test
@@ -22,7 +22,7 @@ class WalkthroughTest < Minitest::Test
         - dead_branch_fold
     YAML
     with_yaml(body) do |path, _dir|
-      wt = RubyOpt::Demo::Walkthrough.load(path)
+      wt = Optimize::Demo::Walkthrough.load(path)
       assert_equal "x.rb", wt.fixture
       assert_equal "a = 1", wt.entry_setup
       assert_equal "a + 1", wt.entry_call
@@ -39,8 +39,8 @@ class WalkthroughTest < Minitest::Test
         - no_such_pass
     YAML
     with_yaml(body) do |path, _dir|
-      err = assert_raises(RubyOpt::Demo::Walkthrough::InvalidSidecar) do
-        RubyOpt::Demo::Walkthrough.load(path)
+      err = assert_raises(Optimize::Demo::Walkthrough::InvalidSidecar) do
+        Optimize::Demo::Walkthrough.load(path)
       end
       assert_match(/no_such_pass/, err.message)
     end
@@ -54,7 +54,7 @@ class WalkthroughTest < Minitest::Test
       walkthrough: [const_fold]
     YAML
     with_yaml(body) do |path, dir|
-      wt = RubyOpt::Demo::Walkthrough.load(path)
+      wt = Optimize::Demo::Walkthrough.load(path)
       assert_equal File.join(dir, "x.rb"), wt.fixture_path
     end
   end
@@ -66,8 +66,8 @@ class WalkthroughTest < Minitest::Test
       walkthrough: [const_fold]
     YAML
     with_yaml(body) do |path, _dir|
-      assert_raises(RubyOpt::Demo::Walkthrough::InvalidSidecar) do
-        RubyOpt::Demo::Walkthrough.load(path)
+      assert_raises(Optimize::Demo::Walkthrough::InvalidSidecar) do
+        Optimize::Demo::Walkthrough.load(path)
       end
     end
   end

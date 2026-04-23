@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/local_table"
-require "ruby_opt/log"
-require "ruby_opt/ir/function"
-require "ruby_opt/ir/instruction"
-require "ruby_opt/passes/dead_stash_elim_pass"
+require "optimize/codec"
+require "optimize/codec/local_table"
+require "optimize/log"
+require "optimize/ir/function"
+require "optimize/ir/instruction"
+require "optimize/passes/dead_stash_elim_pass"
 
 class DeadStashElimPassTest < Minitest::Test
   def build_fn(insts, local_table: [{ name: :n, type: :local }])
-    RubyOpt::IR::Function.new(
+    Optimize::IR::Function.new(
       type: :method, name: "f",
       path: "/t", first_lineno: 1,
       local_table: local_table,
@@ -19,11 +19,11 @@ class DeadStashElimPassTest < Minitest::Test
   end
 
   def inst(opcode, operands, line: 1)
-    RubyOpt::IR::Instruction.new(opcode: opcode, operands: operands, line: line)
+    Optimize::IR::Instruction.new(opcode: opcode, operands: operands, line: line)
   end
 
-  def apply(fn, log: RubyOpt::Log.new)
-    RubyOpt::Passes::DeadStashElimPass.new.apply(fn, type_env: nil, log: log)
+  def apply(fn, log: Optimize::Log.new)
+    Optimize::Passes::DeadStashElimPass.new.apply(fn, type_env: nil, log: log)
     log
   end
 
@@ -44,15 +44,15 @@ class DeadStashElimPassTest < Minitest::Test
     # Use a method with one local so the object table already has a Symbol OT index
     # we can reuse as the stash slot's name for LocalTable.grow!.
     src = "def f(x); x; end; f(42)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = find_iseq(ir, "f")
-    existing_lt = RubyOpt::Codec::LocalTable.decode(
+    existing_lt = Optimize::Codec::LocalTable.decode(
       f.misc[:local_table_raw] || "".b,
       f.misc[:local_table_size] || 0,
     )
     skip("no locals to reuse as stash name") if existing_lt.empty?
     stash_sym_ot_idx = existing_lt.first
-    stash_lindex = RubyOpt::Codec::LocalTable.grow!(f, stash_sym_ot_idx) + 1
+    stash_lindex = Optimize::Codec::LocalTable.grow!(f, stash_sym_ot_idx) + 1
     # Shift pre-existing level-0 LINDEXes so x's slot doesn't collide with stash.
     f.instructions.each do |inst|
       case inst.opcode
@@ -68,8 +68,8 @@ class DeadStashElimPassTest < Minitest::Test
       insert_after = f.instructions.find_index { |i| i.opcode == :getlocal_WC_0 } || 0
     end
     f.instructions.insert(insert_after + 1,
-      RubyOpt::IR::Instruction.new(opcode: :setlocal_WC_0, operands: [stash_lindex], line: 1),
-      RubyOpt::IR::Instruction.new(opcode: :getlocal_WC_0, operands: [stash_lindex], line: 1),
+      Optimize::IR::Instruction.new(opcode: :setlocal_WC_0, operands: [stash_lindex], line: 1),
+      Optimize::IR::Instruction.new(opcode: :getlocal_WC_0, operands: [stash_lindex], line: 1),
     )
 
     assert_includes f.instructions.map(&:opcode), :setlocal_WC_0
@@ -82,7 +82,7 @@ class DeadStashElimPassTest < Minitest::Test
     refute_includes opcodes_after, :setlocal_WC_0
     assert_operator opcodes_after.size, :<, opcodes_before.size
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
 
@@ -193,7 +193,7 @@ class DeadStashElimPassTest < Minitest::Test
       inst(:getlocal_WC_0, [1]),
       inst(:leave, []),
     ])
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     apply(fn, log: log)
     assert_equal 1, log.rewrite_count
   end

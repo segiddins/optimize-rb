@@ -4,7 +4,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the Claude Code CLI (for the §7 gag pass demo driver — see
-# optimizer/lib/ruby_opt/demo/claude.rb). The native installer script
+# optimizer/lib/optimize/demo/claude.rb). The native installer script
 # drops the binary under /root/.local/bin.
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:${PATH}"

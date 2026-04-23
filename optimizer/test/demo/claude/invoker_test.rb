@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/invoker"
+require "optimize/demo/claude/invoker"
 require "open3"
 require "json"
 
 class InvokerTest < Minitest::Test
-  Invoker = RubyOpt::Demo::Claude::Invoker
+  Invoker = Optimize::Demo::Claude::Invoker
 
   def stub_status(code)
     Struct.new(:exitstatus, :success?).new(code, code.zero?)

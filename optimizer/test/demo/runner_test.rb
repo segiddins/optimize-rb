@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/runner"
+require "optimize/demo/runner"
 require "tmpdir"
 
 class RunnerTest < Minitest::Test
@@ -22,7 +22,7 @@ class RunnerTest < Minitest::Test
       out_dir = File.join(dir, "artifacts")
       Dir.mkdir(out_dir)
 
-      path = RubyOpt::Demo::Runner.run(
+      path = Optimize::Demo::Runner.run(
         sidecar_path: sidecar,
         output_dir: out_dir,
         bench_warmup: 0.1,

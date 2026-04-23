@@ -1,22 +1,22 @@
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/type_env"
-require "ruby_opt/ir/slot_type_table"
-require "ruby_opt/passes/inlining_pass"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/type_env"
+require "optimize/ir/slot_type_table"
+require "optimize/passes/inlining_pass"
 
 class InliningPassTest < Minitest::Test
   def test_zero_arg_constant_fcall_inlined
     src = "def magic; 42; end; def use_it; magic; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     magic  = find_iseq(ir, "magic")
 
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     callee_map = { magic: magic }
-    RubyOpt::Passes::InliningPass.new.apply(
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: callee_map,
     )
@@ -28,19 +28,19 @@ class InliningPassTest < Minitest::Test
     assert log.entries.any? { |e| e.reason == :inlined }
 
     # Round-trip still executes correctly.
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
 
   def test_skips_when_callee_has_two_args
     # v2 inlines one-arg FCALLs; two-arg callees still reject.
     src = "def add(a, b); a + b; end; def use_it; add(1, 2); end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     add    = find_iseq(ir, "add")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { add: add },
     )
@@ -51,12 +51,12 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_has_branches
     src = "def maybe; 1 > 0 ? 1 : 2; end; def use_it; maybe; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     maybe  = find_iseq(ir, "maybe")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { maybe: maybe },
     )
@@ -66,12 +66,12 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_has_locals
     src = "def local_y; y = 5; y; end; def use_it; local_y; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it  = find_iseq(ir, "use_it")
     local_y = find_iseq(ir, "local_y")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { local_y: local_y },
     )
@@ -82,13 +82,13 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_makes_nested_call
     src = "def inner; 1; end; def outer; inner; end; def use_it; outer; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     outer  = find_iseq(ir, "outer")
     inner  = find_iseq(ir, "inner")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { outer: outer, inner: inner },
     )
@@ -98,11 +98,11 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_unresolved
     src = "def use_it; bogus_name_that_does_not_exist; end; 1"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: {},
     )
@@ -111,12 +111,12 @@ class InliningPassTest < Minitest::Test
 
   def test_v2_skips_callee_with_multi_local
     src = "def wrap(x); y = x + 1; y; end; def use_it; wrap(3); end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     wrap   = find_iseq(ir, "wrap")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { wrap: wrap },
     )
@@ -127,12 +127,12 @@ class InliningPassTest < Minitest::Test
 
   def test_v2_skips_callee_that_writes_its_arg
     src = "def reassign(x); x = 5; x; end; def use_it; reassign(1); end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it   = find_iseq(ir, "use_it")
     reassign = find_iseq(ir, "reassign")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { reassign: reassign },
     )
@@ -143,12 +143,12 @@ class InliningPassTest < Minitest::Test
 
   def test_v2_skips_callee_with_two_args
     src = "def add(a, b); a + b; end; def use_it; add(1, 2); end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     add    = find_iseq(ir, "add")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { add: add },
     )
@@ -159,13 +159,13 @@ class InliningPassTest < Minitest::Test
 
   def test_v2_inlines_one_arg_literal_fcall
     src = "def double(x); x * 2; end; def use_it; double(3); end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double },
     )
@@ -175,21 +175,21 @@ class InliningPassTest < Minitest::Test
     assert log.entries.any? { |e| e.reason == :inlined }
     assert_equal 1, use_it.misc[:local_table_size]
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 6, loaded.eval
   end
 
   def test_v2_inlines_one_arg_forwarded_fcall
     src = "def double(x); x * 2; end; def use_it(n); double(n); end; use_it(7)"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
 
     assert_equal 1, use_it.misc[:local_table_size]
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double },
     )
@@ -198,19 +198,19 @@ class InliningPassTest < Minitest::Test
     assert log.entries.any? { |e| e.reason == :inlined }
     assert_equal 2, use_it.misc[:local_table_size]
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 14, loaded.eval
   end
 
   def test_v2_skips_arg_with_multi_instruction_push
     src = "def double(x); x * 2; end; def use_it(n); double(n + 1); end; use_it(1)"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double },
     )
@@ -229,7 +229,7 @@ class InliningPassTest < Minitest::Test
       def use_it(n); double(n) + triple(n); end
       use_it(5)
     RUBY
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
@@ -238,8 +238,8 @@ class InliningPassTest < Minitest::Test
     # use_it starts with 1 local (the `n` param).
     assert_equal 1, use_it.misc[:local_table_size]
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double, triple: triple },
     )
@@ -252,7 +252,7 @@ class InliningPassTest < Minitest::Test
     assert_equal 2, log.entries.count { |e| e.reason == :inlined }
 
     # The semantic check: 5*2 + 5*3 == 25.
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 25, loaded.eval
   end
 
@@ -263,29 +263,29 @@ class InliningPassTest < Minitest::Test
     # FCALL classifier rejects this as `:callee_makes_call`; the new
     # OPT_SEND classifier should accept it.
     src = "class Foo; attr_reader :x; def getter; x; end; end; 1"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     getter = find_iseq(ir, "getter")
     refute_nil getter
-    pass = RubyOpt::Passes::InliningPass.new
+    pass = Optimize::Passes::InliningPass.new
     assert_nil pass.send(:disqualify_callee_for_opt_send, getter)
   end
 
   def test_opt_send_eligibility_rejects_getinstancevariable
     src = "class Foo; def read_ivar; @x; end; end; 1"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     callee = find_iseq(ir, "read_ivar")
     refute_nil callee
-    pass = RubyOpt::Passes::InliningPass.new
+    pass = Optimize::Passes::InliningPass.new
     assert_equal :callee_uses_ivar,
                  pass.send(:disqualify_callee_for_opt_send, callee)
   end
 
   def test_opt_send_eligibility_rejects_branches
     src = "def maybe; 1 > 0 ? 1 : 2; end; 1"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     callee = find_iseq(ir, "maybe")
     refute_nil callee
-    pass = RubyOpt::Passes::InliningPass.new
+    pass = Optimize::Passes::InliningPass.new
     assert_equal :callee_has_branches,
                  pass.send(:disqualify_callee_for_opt_send, callee)
   end
@@ -304,9 +304,9 @@ class InliningPassTest < Minitest::Test
       def distance(p, q); p.distance_to(q); end
       distance(InliningOptSendT8Point.new, InliningOptSendT8Point.new)
     RUBY
-    ir       = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir       = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot       = ir.misc[:object_table]
-    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
     caller   = find_iseq(ir, "distance")
     callee   = find_iseq(ir, "distance_to")
     refute_nil caller
@@ -314,13 +314,13 @@ class InliningPassTest < Minitest::Test
 
     caller_sig = type_env.signature_for_function(caller, class_context: nil)
     refute_nil caller_sig, "caller must have an @rbs signature for this test"
-    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
     slot_type_map = {}.compare_by_identity
     slot_type_map[caller] = slot_table
 
     original_locals = caller.misc[:local_table_size]
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       caller,
       type_env: type_env, log: log,
       object_table: ot,
@@ -350,19 +350,19 @@ class InliningPassTest < Minitest::Test
       def distance(p, q); p.distance_to(q); end
       distance(InliningOptSendT8Point.new, InliningOptSendT8Point.new)
     RUBY
-    ir       = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir       = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot       = ir.misc[:object_table]
-    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
     caller   = find_iseq(ir, "distance")
     callee   = find_iseq(ir, "distance_to")
 
     caller_sig = type_env.signature_for_function(caller, class_context: nil)
-    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
     slot_type_map = {}.compare_by_identity
     slot_type_map[caller] = slot_table
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       caller,
       type_env: type_env, log: log,
       object_table: ot,
@@ -372,7 +372,7 @@ class InliningPassTest < Minitest::Test
     # Sanity: confirm the inline actually happened before we trust the eval.
     assert log.entries.any? { |e| e.reason == :inlined }
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
 
@@ -391,20 +391,20 @@ class InliningPassTest < Minitest::Test
       def driver(p, q); p.diff(q); end
       driver(InliningOptSendT9Box.new(7), InliningOptSendT9Box.new(3))
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
-    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
     caller = find_iseq(ir, "driver")
     callee = find_iseq(ir, "diff")
 
     caller_sig = type_env.signature_for_function(caller, class_context: nil)
-    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
     slot_type_map = {}.compare_by_identity
     slot_type_map[caller] = slot_table
 
     original_locals = caller.misc[:local_table_size]
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       caller,
       type_env: type_env, log: log,
       object_table: ot,
@@ -423,7 +423,7 @@ class InliningPassTest < Minitest::Test
     refute caller.instructions.any? { |i| i.opcode == :opt_send_without_block && i.operands[0].mid_symbol(ot) == :diff }
 
     # Round-trip through VM: driver(Box.new(7), Box.new(3)) returns p.v == 7.
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 7, loaded.eval
   end
 
@@ -441,21 +441,21 @@ class InliningPassTest < Minitest::Test
       def driver(p, q); p.mid(q); end
       driver(GuardClass.new, GuardClass.new)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
-    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
     caller   = find_iseq(ir, "driver")
     callee   = find_iseq(ir, "mid")
     caller_sig = type_env.signature_for_function(caller, class_context: nil)
-    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
     slot_type_map = {}.compare_by_identity
     slot_type_map[caller] = slot_table
     [caller, callee, slot_type_map, type_env, ot]
   end
 
   def apply_inliner(caller, callee_map, slot_type_map, type_env, ot)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       caller,
       type_env: type_env, log: log,
       object_table: ot,
@@ -475,12 +475,12 @@ class InliningPassTest < Minitest::Test
       def driver(p, q); p.mid(q); end    # intentionally no @rbs
       driver(NoSigClass.new, NoSigClass.new)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
-    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
     caller = find_iseq(ir, "driver")
     callee = find_iseq(ir, "mid")
-    slot_table = RubyOpt::IR::SlotTypeTable.build(caller, nil, nil, object_table: ot)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, nil, nil, object_table: ot)
     slot_type_map = {}.compare_by_identity
     slot_type_map[caller] = slot_table
 
@@ -566,13 +566,13 @@ class InliningPassTest < Minitest::Test
       def use_it(n); double(n) + double(n); end
       use_it(5)
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double },
     )
@@ -593,7 +593,7 @@ class InliningPassTest < Minitest::Test
     end
 
     # Semantic check: the VM must produce 20 (5*2 + 5*2).
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 20, loaded.eval
   end
 
@@ -628,9 +628,9 @@ class InliningPassTest < Minitest::Test
       end
       driver(InliningT11Box.new(11), InliningT11Box.new(5))
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
-    type_env = RubyOpt::TypeEnv.from_source(src, "t.rb")
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
     driver = find_iseq(ir, "driver")
     callee = find_iseq(ir, "diff")
     refute_nil driver
@@ -643,16 +643,16 @@ class InliningPassTest < Minitest::Test
 
     # Build slot_type_map the same way Pipeline does: walk with parent chain.
     driver_sig   = type_env.signature_for_function(driver, class_context: nil)
-    driver_table = RubyOpt::IR::SlotTypeTable.build(driver, driver_sig, nil, object_table: ot)
-    block_table  = RubyOpt::IR::SlotTypeTable.build(block_iseq, nil, driver_table, object_table: ot)
+    driver_table = Optimize::IR::SlotTypeTable.build(driver, driver_sig, nil, object_table: ot)
+    block_table  = Optimize::IR::SlotTypeTable.build(block_iseq, nil, driver_table, object_table: ot)
     slot_type_map = {}.compare_by_identity
     slot_type_map[driver]     = driver_table
     slot_type_map[block_iseq] = block_table
 
     callee_map = { ["InliningT11Box", :diff] => callee }
 
-    pass = RubyOpt::Passes::InliningPass.new
-    log = RubyOpt::Log.new
+    pass = Optimize::Passes::InliningPass.new
+    log = Optimize::Log.new
     # Apply to driver first, then block (order mirrors Pipeline's walk).
     pass.apply(driver,     type_env: type_env, log: log, object_table: ot,
                             callee_map: callee_map, slot_type_map: slot_type_map)
