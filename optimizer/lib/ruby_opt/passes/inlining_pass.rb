@@ -117,7 +117,7 @@ module RubyOpt
           return false
         end
         put_self_idx = send_idx - 1
-        body = callee.instructions[0..-2]
+        body = dup_body(callee.instructions, 0..-2)
         function.splice_instructions!(put_self_idx..(put_self_idx + 1), body)
         log.rewrite(pass: :inlining, reason: :inlined,
                     file: function.path, line: line)
@@ -182,7 +182,7 @@ module RubyOpt
           opcode: :setlocal_WC_0, operands: [NEW_SLOT_LINDEX],
           line: arg_push.line || line,
         )
-        body = callee.instructions[0..-2]
+        body = dup_body(callee.instructions, 0..-2)
         replacement = [arg_push, setlocal, *body]
         function.splice_instructions!((send_idx - 2)..send_idx, replacement)
 
@@ -222,7 +222,7 @@ module RubyOpt
           return false
         end
 
-        body = callee.instructions[0..-2]
+        body = dup_body(callee.instructions, 0..-2)
         body_uses_self = body.any? { |inst| inst.opcode == :putself }
 
         callee_arg_obj_idx = Codec::LocalTable.decode(
@@ -414,6 +414,17 @@ module RubyOpt
           end
         end
         nil
+      end
+
+      # Deep-copy a slice of source_insts so that the returned Array holds
+      # freshly allocated Instruction structs with independent operand arrays.
+      # Without this, the slice shares struct references with the callee's
+      # canonical instruction list; subsequent shift-step mutations during a
+      # second inline corrupt the callee's instructions in place.
+      def dup_body(source_insts, range)
+        source_insts[range].map do |i|
+          IR::Instruction.new(opcode: i.opcode, operands: i.operands.dup, line: i.line)
+        end
       end
     end
   end

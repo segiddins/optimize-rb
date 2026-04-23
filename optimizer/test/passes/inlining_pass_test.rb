@@ -555,6 +555,48 @@ class InliningPassTest < Minitest::Test
     }, "expected block-related or no-trailing-leave rejection, got: #{log.entries.map(&:reason).inspect}"
   end
 
+  def test_inlining_same_method_twice_does_not_alias_callee_body
+    # Two call sites for the same one-arg callee in the same function.
+    # The second inline triggers the LINDEX shift that corrupts the first
+    # inline's spliced-in body when the Instruction objects are shared
+    # (shallow slice bug). Each setlocal_WC_0 stash must be immediately
+    # followed by a getlocal_WC_0 that reads the same slot.
+    src = <<~RUBY
+      def double(x); x * 2; end
+      def use_it(n); double(n) + double(n); end
+      use_it(5)
+    RUBY
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    use_it = find_iseq(ir, "use_it")
+    double = find_iseq(ir, "double")
+
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::InliningPass.new.apply(
+      use_it, type_env: nil, log: log,
+      object_table: ot, callee_map: { double: double },
+    )
+
+    # Both sends should be inlined.
+    assert_equal 2, log.entries.count { |e| e.reason == :inlined }
+
+    # For every inliner stash (setlocal_WC_0 followed immediately by
+    # getlocal_WC_0), the slots must match. Aliasing would cause the
+    # second body's getlocal to read a slot that was already shifted.
+    insts = use_it.instructions
+    insts.each_with_index do |inst, i|
+      next unless inst.opcode == :setlocal_WC_0
+      next_inst = insts[i + 1]
+      next unless next_inst&.opcode == :getlocal_WC_0
+      assert_equal inst.operands[0], next_inst.operands[0],
+        "inline stash at #{i} writes slot #{inst.operands[0]} but next getlocal reads slot #{next_inst.operands[0]} — aliasing bug"
+    end
+
+    # Semantic check: the VM must produce 20 (5*2 + 5*2).
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 20, loaded.eval
+  end
+
   private
 
   def find_iseq(fn, name)
