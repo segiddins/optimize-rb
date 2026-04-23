@@ -22,6 +22,17 @@ def mask_nondeterministic(md)
 end
 
 namespace :demo do
+  desc "Regenerate docs/demo_artifacts/claude_gag.md by calling `claude -p`. Non-deterministic; review the diff before committing. Requires ANTHROPIC_API_KEY or a prior `claude setup-token`."
+  task :regenerate_claude do
+    unless ENV["ANTHROPIC_API_KEY"] || ENV["CLAUDE_CODE_SSO_TOKEN"]
+      warn "Warning: neither ANTHROPIC_API_KEY nor CLAUDE_CODE_SSO_TOKEN is set. " \
+           "If `claude setup-token` hasn't been run in this environment, the call will fail."
+    end
+    warn "This will overwrite docs/demo_artifacts/claude_gag.md. " \
+         "Claude's output is non-deterministic — review the diff before committing."
+    sh File.expand_path("bin/demo-claude", __dir__)
+  end
+
   desc "Regenerate demo artifacts and diff against the committed versions"
   task :verify do
     require "tmpdir"
