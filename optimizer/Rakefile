@@ -59,8 +59,16 @@ namespace :demo do
           mismatches << stem
         end
       end
+      # Claude gag artifact has no sidecar (non-deterministic; regenerated
+      # opt-in via `rake demo:regenerate_claude`). Verify only that the
+      # committed markdown exists and is non-empty.
+      claude_artifact = File.join(committed_dir, "claude_gag.md")
+      unless File.exist?(claude_artifact) && File.size(claude_artifact).positive?
+        mismatches << "claude_gag.md missing or empty"
+      end
+
       if mismatches.empty?
-        puts "demo:verify OK (#{sidecars.size} fixtures)"
+        puts "demo:verify OK (#{sidecars.size} fixtures + claude_gag)"
       else
         abort "demo:verify FAILED for: #{mismatches.join(', ')}. " \
               "Re-run `bin/demo --all` and commit the regenerated artifacts."

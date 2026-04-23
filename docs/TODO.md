@@ -4,7 +4,7 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture).
+Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture; claude gag pass shipped).
 
 ## Three-pass plan: status
 
@@ -29,7 +29,10 @@ Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture).
 - **Demo programs.** The talk names two (`sum_of_squares` numeric kernel
   and `Point#distance_to` object-y method). Neither is wired. We've only
   benchmarked the synthetic `2*3/6*x → x` payoff.
-- **Claude Code gag pass.** §7 of talk-structure. Not specced.
+- ~~**Claude Code gag pass.** §7 of talk-structure. Not specced.~~
+  *Shipped 2026-04-23 as `RubyOpt::Demo::Claude`. Spec:
+  `docs/superpowers/specs/2026-04-23-claude-code-gag-pass-design.md`.
+  Plan: `docs/superpowers/plans/2026-04-23-claude-code-gag-pass.md`.*
 
 ## Roadmap gap, ranked by talk-ROI
 
@@ -81,7 +84,20 @@ Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture).
    alone (since `(y%7)%3 ≠ y%3`); rejects zero divisors. Tests:
    `optimizer/test/passes/arith_reassoc_pass_test.rb` (6 new cases
    under `# ---- opt_mod ----`).
-5. **Claude Code gag pass.** §7 close. Scripted output is fine.
+5. ~~**Claude Code gag pass.** §7 close. Scripted output is fine.~~
+   **Shipped 2026-04-23.** Spec:
+   `docs/superpowers/specs/2026-04-23-claude-code-gag-pass-design.md`.
+   Plan: `docs/superpowers/plans/2026-04-23-claude-code-gag-pass.md`.
+   `RubyOpt::Demo::Claude` drives a 3-try retry loop (structural +
+   semantic validator errors fed back to `claude -p` each retry) over
+   the `claude_gag` fixture (`def answer; 2 + 3; end`). Not in
+   `Pipeline.default`. Regeneration is opt-in via
+   `rake demo:regenerate_claude` (needs `CLAUDE_CODE_SSO_TOKEN` or
+   `ANTHROPIC_API_KEY`); `demo:verify` only checks the committed
+   `docs/demo_artifacts/claude_gag.md` is non-empty (Claude's output
+   is non-deterministic). First captured transcript collapsed the
+   4-instruction body to `[putobject 5, leave]` in a single iteration
+   — authentic constant-fold punchline; no flail in this run.
 6. ~~**Tier 4 classifier v2 — argc-generic safe sends.** Extend
    `ConstFoldEnvPass#consumer_safe?` to look at `insts[i + 1 + argc]`
    for argc 0..MAX_SAFE_ARGC (3 is plenty). Unlocks
