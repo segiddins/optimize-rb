@@ -18,6 +18,10 @@ module RubyOpt
     def name
       self.class.name.to_s.split("::").last.sub(/Pass$/, "").downcase.to_sym
     end
+
+    def one_shot?
+      false
+    end
   end
 
   # Pass that does nothing. Used to exercise the pipeline without depending

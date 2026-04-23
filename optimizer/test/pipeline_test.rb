@@ -259,6 +259,22 @@ class PipelineTest < Minitest::Test
       "#{log.entries.map { |e| [e.pass, e.reason] }.tally.inspect}"
   end
 
+  def test_pass_defaults_to_not_one_shot
+    refute RubyOpt::Pass.new.one_shot?
+  end
+
+  def test_inlining_pass_is_one_shot
+    require "ruby_opt/passes/inlining_pass"
+    assert RubyOpt::Passes::InliningPass.new.one_shot?
+  end
+
+  def test_other_passes_are_not_one_shot
+    require "ruby_opt/passes/arith_reassoc_pass"
+    require "ruby_opt/passes/const_fold_pass"
+    refute RubyOpt::Passes::ArithReassocPass.new.one_shot?
+    refute RubyOpt::Passes::ConstFoldPass.new.one_shot?
+  end
+
   private
 
   def find_iseq(ir, name)

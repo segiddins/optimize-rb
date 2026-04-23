@@ -33,6 +33,10 @@ module RubyOpt
 
       def name = :inlining
 
+      def one_shot?
+        true
+      end
+
       def apply(function, type_env:, log:, object_table: nil, callee_map: {}, slot_type_map: {}, **_extras)
         _ = type_env
         return unless object_table
