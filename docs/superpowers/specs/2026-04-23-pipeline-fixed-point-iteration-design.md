@@ -39,6 +39,23 @@ YAML sidecars; altering `DisasmNormalizer`.
 `one_shot?` predicate, default `false`. `InliningPass` overrides to
 `true`. No other shipped pass needs the override.
 
+### Log rewrite/skip split (prerequisite)
+
+`Log#skip` today records both skipped-optimization entries (e.g.,
+`:unsafe_divisor`, `:chain_too_short`, `:no_change`) and successful
+rewrite entries (e.g., `:reassociated`, `:folded`). These must be
+distinguished for fixed-point detection — a sweep that records only
+skip entries made no IR changes and should terminate the loop.
+
+Add `Log#rewrite(pass:, reason:, file:, line:)` alongside `skip`. It
+appends the same `Entry` shape to `@entries` (so existing `for_pass` /
+`entries` consumers are unaffected) AND increments an internal
+`@rewrite_count` integer. `Log#rewrite_count` returns it.
+
+Migrate each pass's known-rewrite call sites from `skip` to `rewrite`
+based on the reason taxonomy. Skip entries (decisions *not* to rewrite)
+stay on `skip`.
+
 ### Per-function loop in `Pipeline#run`
 
 Current structure: `each_function { |fn| passes.each { |p| p.apply(fn, …) } }`.
@@ -48,11 +65,11 @@ New structure per function:
 1. Partition `@passes` into `one_shot` and `iterative` by `one_shot?`.
 2. Run each `one_shot` pass once.
 3. Enter loop, bounded by `MAX_ITERATIONS = 8`:
-   a. Snapshot `log.entries.size` before the sweep.
+   a. Snapshot `log.rewrite_count` before the sweep.
    b. Run each `iterative` pass once.
-   c. If `log.entries.size == snapshot`, break — converged.
+   c. If `log.rewrite_count == snapshot`, break — converged.
 4. If the loop exits via the iteration cap (i.e., the final sweep still
-   recorded entries), raise `Pipeline::FixedPointOverflow` with the
+   recorded rewrites), raise `Pipeline::FixedPointOverflow` with the
    function name and iteration count.
 5. Record the per-function convergence count on a new
    `Log#convergence[fn_identity] = n` map (or equivalent), for the
@@ -179,15 +196,17 @@ pipeline change. `rake demo:verify` must be green at HEAD.
 
 ## Implementation order
 
-1. Add `Pass#one_shot?` with default `false`; override in `InliningPass`.
-2. Add `Pipeline::FixedPointOverflow` error class and `MAX_ITERATIONS`.
-3. Restructure `Pipeline#run` per-function loop.
-4. Add convergence tracking to `Log` (or a sibling field on `Pipeline`).
-5. Write new `pipeline_test.rb` cases.
-6. Run full test suite. Triage failures.
-7. Regenerate demo artifacts. Run `rake demo:verify`.
-8. Add `MarkdownRenderer` header line.
-9. Re-run `rake demo:verify`, commit artifacts.
+1. Add `Log#rewrite` + `Log#rewrite_count`; migrate pass call sites from
+   `skip` to `rewrite` based on reason taxonomy.
+2. Add `Pass#one_shot?` with default `false`; override in `InliningPass`.
+3. Add `Pipeline::FixedPointOverflow` error class and `MAX_ITERATIONS`.
+4. Restructure `Pipeline#run` per-function loop.
+5. Add convergence tracking to `Log`.
+6. Write new `pipeline_test.rb` cases.
+7. Run full test suite. Triage failures.
+8. Regenerate demo artifacts. Run `rake demo:verify`.
+9. Add `MarkdownRenderer` header line.
+10. Re-run `rake demo:verify`, commit artifacts.
 
 ## Out of scope
 
