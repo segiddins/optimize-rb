@@ -31,11 +31,11 @@ optimizer pass; it is a single-purpose demo driver.
 
 ## Architecture
 
-New namespace: `RubyOpt::Demo::Claude`. Driven by `bin/demo claude_gag`.
+New namespace: `Optimize::Demo::Claude`. Driven by `bin/demo claude_gag`.
 
 High-level flow:
 
-1. Load fixture iseq via existing `RubyOpt::Harness`.
+1. Load fixture iseq via existing `Optimize::Harness`.
 2. Serialize `IR::Function` to a JSON array of `[opcode_sym, *operands]`
    tuples.
 3. Shell out to `claude -p --output-format json` with a prompt
@@ -56,12 +56,12 @@ High-level flow:
 
 | File | Responsibility |
 |---|---|
-| `optimizer/lib/ruby_opt/demo/claude.rb` | Top-level orchestrator. Owns the retry loop. |
-| `optimizer/lib/ruby_opt/demo/claude/prompt.rb` | Builds initial + retry prompts. Holds opcode allowlist and JSON schema description. |
-| `optimizer/lib/ruby_opt/demo/claude/serializer.rb` | IR ↔ JSON array. Reuses locals/insns_info/line_entries from the original function. |
-| `optimizer/lib/ruby_opt/demo/claude/validator.rb` | `structural(ir)` and `semantic(ir, expected)`. Returns `[errors]`. |
-| `optimizer/lib/ruby_opt/demo/claude/invoker.rb` | `Open3.capture3("claude", "-p", "--output-format", "json", ...)`. Returns parsed JSON. Single responsibility: shell I/O. |
-| `optimizer/lib/ruby_opt/demo/claude/transcript.rb` | Append-only log. Renders markdown. |
+| `optimizer/lib/optimize/demo/claude.rb` | Top-level orchestrator. Owns the retry loop. |
+| `optimizer/lib/optimize/demo/claude/prompt.rb` | Builds initial + retry prompts. Holds opcode allowlist and JSON schema description. |
+| `optimizer/lib/optimize/demo/claude/serializer.rb` | IR ↔ JSON array. Reuses locals/insns_info/line_entries from the original function. |
+| `optimizer/lib/optimize/demo/claude/validator.rb` | `structural(ir)` and `semantic(ir, expected)`. Returns `[errors]`. |
+| `optimizer/lib/optimize/demo/claude/invoker.rb` | `Open3.capture3("claude", "-p", "--output-format", "json", ...)`. Returns parsed JSON. Single responsibility: shell I/O. |
+| `optimizer/lib/optimize/demo/claude/transcript.rb` | Append-only log. Renders markdown. |
 | `optimizer/examples/claude_gag.rb` | Fixture: trivial method returning `2 + 3`. |
 | `docs/demo_artifacts/claude_gag.md` | Committed transcript. |
 | `docker/Dockerfile` | Installs `claude` CLI, accepts setup-token via env. |

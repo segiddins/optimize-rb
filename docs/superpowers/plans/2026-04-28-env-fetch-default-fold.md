@@ -14,7 +14,7 @@
 
 ## File map
 
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
   - Add `PURE_DEFAULT_OPCODES` frozen Set.
   - Add `fetch_send_argc2?(inst, object_table)` predicate.
   - Add `pure_default?(inst)` helper.
@@ -43,13 +43,13 @@ The existing `test_env_fetch_argc_two_is_not_folded` (lines ~344–362) must be 
   ```ruby
   def test_folds_env_fetch_with_literal_default_when_key_present
     src = 'def r; ENV.fetch("A", "fallback"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -68,13 +68,13 @@ The existing `test_env_fetch_argc_two_is_not_folded` (lines ~344–362) must be 
   ```ruby
   def test_folds_env_fetch_with_string_default_when_key_absent
     src = 'def r; ENV.fetch("MISSING", "fallback"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -96,13 +96,13 @@ The existing `test_env_fetch_argc_two_is_not_folded` (lines ~344–362) must be 
   ```ruby
   def test_folds_env_fetch_with_putnil_default_when_key_absent
     src = 'def r; ENV.fetch("MISSING", nil); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -121,13 +121,13 @@ The existing `test_env_fetch_argc_two_is_not_folded` (lines ~344–362) must be 
   ```ruby
   def test_folds_env_fetch_with_integer_default_when_key_absent
     src = 'def r; ENV.fetch("MISSING", 42); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     snap = {}.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -152,14 +152,14 @@ The existing `test_env_fetch_argc_two_is_not_folded` (lines ~344–362) must be 
       def other_call; "x"; end
       def r; ENV.fetch("A", other_call); end
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     r = find_iseq(ir, "r")
     before = r.instructions.map(&:opcode)
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -188,7 +188,7 @@ The existing `test_env_fetch_argc_two_is_not_folded` (lines ~344–362) must be 
 ## Task 2: Green — add argc=2 fold arm + wire-up + docs
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
 - Modify: `docs/TODO.md`
 
 One commit combining the code change, the wire-up into the fold loop, and the status-table update.

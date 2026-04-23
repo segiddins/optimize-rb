@@ -20,7 +20,7 @@
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     codec/
       ci_entries.rb                         # NEW Task 1  — parse/emit ci_entries blob
       instruction_stream.rb                 # MODIFIED Task 2  — attach CallData to send ops
@@ -69,21 +69,21 @@ jj commit -m "Plan: Inlining Pass v1 (zero-arg FCALL, constant-body callees)"
 
 ## Task 1: `CallData` value object + `ci_entries` codec (round-trip preserved)
 
-**Context:** Right now `optimizer/lib/ruby_opt/codec/iseq_list.rb` stores `ci_entries` as `misc[:ci_entries_raw]` (bytes in, bytes out). To inspect a call site's `mid`, we need a structured decode that round-trips byte-identically. Per `research/cruby/ibf-format.md:188`, each entry is `mid_idx, flag, argc, kwlen, kw_indices[kwlen]` written with `write_small_value`. The object-table stores `mid_idx` as an ID (Symbol) reference — use the same mechanism `local_table` bytes would use, except we don't touch the object table here (indices are opaque; we resolve them to symbols lazily).
+**Context:** Right now `optimizer/lib/optimize/codec/iseq_list.rb` stores `ci_entries` as `misc[:ci_entries_raw]` (bytes in, bytes out). To inspect a call site's `mid`, we need a structured decode that round-trips byte-identically. Per `research/cruby/ibf-format.md:188`, each entry is `mid_idx, flag, argc, kwlen, kw_indices[kwlen]` written with `write_small_value`. The object-table stores `mid_idx` as an ID (Symbol) reference — use the same mechanism `local_table` bytes would use, except we don't touch the object table here (indices are opaque; we resolve them to symbols lazily).
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/ir/call_data.rb`
-- Create: `optimizer/lib/ruby_opt/codec/ci_entries.rb`
+- Create: `optimizer/lib/optimize/ir/call_data.rb`
+- Create: `optimizer/lib/optimize/codec/ci_entries.rb`
 - Create: `optimizer/test/codec/ci_entries_test.rb`
 
 - [ ] **Step 1: Define `IR::CallData`.**
 
-Create `optimizer/lib/ruby_opt/ir/call_data.rb`:
+Create `optimizer/lib/optimize/ir/call_data.rb`:
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module IR
     # One call-site's calldata record. Mirrors the on-disk shape at
     # research/cruby/ibf-format.md §4.1 "call info (ci) entries":
@@ -130,15 +130,15 @@ values MUST be verified against the running VM. See Step 4.
 
 - [ ] **Step 2: Implement `Codec::CiEntries`.**
 
-Create `optimizer/lib/ruby_opt/codec/ci_entries.rb`:
+Create `optimizer/lib/optimize/codec/ci_entries.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/codec/binary_reader"
-require "ruby_opt/codec/binary_writer"
-require "ruby_opt/ir/call_data"
+require "optimize/codec/binary_reader"
+require "optimize/codec/binary_writer"
+require "optimize/ir/call_data"
 
-module RubyOpt
+module Optimize
   module Codec
     # Parse and emit the ci_entries section of an iseq body.
     #
@@ -192,8 +192,8 @@ Create `optimizer/test/codec/ci_entries_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/ci_entries"
+require "optimize/codec"
+require "optimize/codec/ci_entries"
 
 class CiEntriesCodecTest < Minitest::Test
   # For every fixture iseq, decode(ci_entries_raw) → encode → must equal input.
@@ -201,7 +201,7 @@ class CiEntriesCodecTest < Minitest::Test
     Dir[File.expand_path("corpus/*.rb", __dir__)].each do |fixture|
       src = File.read(fixture)
       bin = RubyVM::InstructionSequence.compile(src).to_binary
-      ir  = RubyOpt::Codec.decode(bin)
+      ir  = Optimize::Codec.decode(bin)
       assert_each_iseq_ci_roundtrips(ir)
     end
   end
@@ -209,11 +209,11 @@ class CiEntriesCodecTest < Minitest::Test
   def test_decode_produces_calldata_for_simple_send
     src = "def magic; 42; end; magic"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     # Top-level iseq has exactly one ci entry: the `magic` FCALL.
     raw      = ir.misc[:ci_entries_raw]
     ci_size  = ir.misc[:ci_size]
-    entries  = RubyOpt::Codec::CiEntries.decode(raw, ci_size)
+    entries  = Optimize::Codec::CiEntries.decode(raw, ci_size)
     assert_equal 1, entries.size
     cd = entries[0]
     assert cd.fcall?, "expected FCALL flag"
@@ -226,8 +226,8 @@ class CiEntriesCodecTest < Minitest::Test
   def assert_each_iseq_ci_roundtrips(fn)
     raw     = fn.misc[:ci_entries_raw]
     ci_size = fn.misc[:ci_size]
-    entries = RubyOpt::Codec::CiEntries.decode(raw, ci_size)
-    assert_equal raw.bytes, RubyOpt::Codec::CiEntries.encode(entries).bytes,
+    entries = Optimize::Codec::CiEntries.decode(raw, ci_size)
+    assert_equal raw.bytes, Optimize::Codec::CiEntries.encode(entries).bytes,
       "ci_entries round-trip mismatch in #{fn.name} (ci_size=#{ci_size})"
     fn.children&.each { |c| assert_each_iseq_ci_roundtrips(c) }
   end
@@ -243,9 +243,9 @@ src = "def m; end; m"
 bin = RubyVM::InstructionSequence.compile(src).to_binary
 # We don't have direct enum access, but we can read ci_entries:
 # Decode our own copy, print flag for known call.
-require_relative "optimizer/lib/ruby_opt"
-ir = RubyOpt::Codec.decode(bin)
-entries = RubyOpt::Codec::CiEntries.decode(ir.misc[:ci_entries_raw], ir.misc[:ci_size])
+require_relative "optimizer/lib/optimize"
+ir = Optimize::Codec.decode(bin)
+entries = Optimize::Codec::CiEntries.decode(ir.misc[:ci_entries_raw], ir.misc[:ci_size])
 puts entries.map { |e| format("flag=0x%x argc=%d kwlen=%d", e.flag, e.argc, e.kwlen) }
 ```
 
@@ -275,8 +275,8 @@ jj commit -m "Codec: decode/encode ci_entries into IR::CallData records"
 **Context:** The IR `opt_send_without_block` instruction has `operands: []` because `instruction_stream.rb:313-337` drops `CALLDATA` slots via `filter_map`. We want inlining to see the calldata record directly at the send site. The cleanest way: at decode time, zip the structured `ci_entries` array with the send instructions in iteration order, and attach each record as the operand for the send's `CALLDATA` slot. At encode time, harvest records from send instructions in order and re-emit ci_entries from them — replacing the raw-bytes round-trip. This preserves byte-identical output because the encode uses the same `CiEntries.encode` whose output matches the original bytes (from Task 1's proven round-trip).
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/instruction_stream.rb` (decode + encode)
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_list.rb` (pass ci_entries through; encode from instructions)
+- Modify: `optimizer/lib/optimize/codec/instruction_stream.rb` (decode + encode)
+- Modify: `optimizer/lib/optimize/codec/iseq_list.rb` (pass ci_entries through; encode from instructions)
 
 - [ ] **Step 1: Identify send opcodes that consume calldata.**
 
@@ -290,7 +290,7 @@ method). Grep:
 ```
 # via Grep tool
 pattern: :CALLDATA
-path: optimizer/lib/ruby_opt/codec/instruction_stream.rb
+path: optimizer/lib/optimize/codec/instruction_stream.rb
 ```
 
 **These are all sites that consume one ci_entry each, in iteration
@@ -387,7 +387,7 @@ jj commit -m "Codec: attach CallData to send instructions; drop raw ci_entries p
 **Context:** With calldata accessible on send instructions, the pass itself is straightforward instruction-list rewriting in the style of `IdentityElimPass`. We scan for `putself; opt_send_without_block`; look up the callee Function by symbol name in a `callee_map` (built at Pipeline level, see Task 4); verify preconditions; splice in the callee body minus its trailing `leave`, and delete the matching send's calldata from the iseq's ci_entries (handled automatically since the CallData operand goes away with the spliced `opt_send_without_block`).
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Create: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Create: `optimizer/test/passes/inlining_pass_test.rb`
 
 - [ ] **Step 1: Write failing smoke test.**
@@ -397,21 +397,21 @@ Create `optimizer/test/passes/inlining_pass_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/passes/inlining_pass"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/passes/inlining_pass"
 
 class InliningPassTest < Minitest::Test
   def test_zero_arg_constant_fcall_inlined
     src = "def magic; 42; end; def use_it; magic; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     magic  = find_iseq(ir, "magic")
 
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     callee_map = { magic: magic }
-    RubyOpt::Passes::InliningPass.new.apply(
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: callee_map,
     )
@@ -423,18 +423,18 @@ class InliningPassTest < Minitest::Test
     assert log.entries.any? { |e| e.reason == :inlined }
 
     # Round-trip still executes correctly.
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
 
   def test_skips_when_callee_has_args
     src = "def add_one(x); x + 1; end; def use_it; add_one(5); end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it   = find_iseq(ir, "use_it")
     add_one  = find_iseq(ir, "add_one")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { add_one: add_one },
     )
@@ -445,12 +445,12 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_has_branches
     src = "def maybe; 1 > 0 ? 1 : 2; end; def use_it; maybe; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     maybe  = find_iseq(ir, "maybe")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { maybe: maybe },
     )
@@ -460,12 +460,12 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_has_locals
     src = "def local_y; y = 5; y; end; def use_it; local_y; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it  = find_iseq(ir, "use_it")
     local_y = find_iseq(ir, "local_y")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { local_y: local_y },
     )
@@ -475,14 +475,14 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_makes_nested_call
     src = "def inner; 1; end; def outer; inner; end; def use_it; outer; end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     outer  = find_iseq(ir, "outer")
     inner  = find_iseq(ir, "inner")
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     # Apply to use_it; outer has a nested `inner` call that v1 can't splice.
-    RubyOpt::Passes::InliningPass.new.apply(
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { outer: outer, inner: inner },
     )
@@ -492,11 +492,11 @@ class InliningPassTest < Minitest::Test
 
   def test_skips_when_callee_unresolved
     src = "def use_it; bogus_name_that_does_not_exist; end; 1"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: {},
     )
@@ -519,24 +519,24 @@ end
 - [ ] **Step 2: Run the tests to verify they all FAIL.**
 
 Use `mcp__ruby-bytecode__run_optimizer_tests`. All 6 tests fail with
-`NameError: uninitialized constant RubyOpt::Passes::InliningPass` or
+`NameError: uninitialized constant Optimize::Passes::InliningPass` or
 similar.
 
 - [ ] **Step 3: Implement the pass.**
 
-Create `optimizer/lib/ruby_opt/passes/inlining_pass.rb`:
+Create `optimizer/lib/optimize/passes/inlining_pass.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/pass"
-require "ruby_opt/ir/call_data"
-require "ruby_opt/ir/cfg"
+require "optimize/pass"
+require "optimize/ir/call_data"
+require "optimize/ir/cfg"
 
-module RubyOpt
+module Optimize
   module Passes
     # v1: inline zero-arg FCALLs to constant-body callees. See
     # docs/superpowers/specs/2026-04-21-pass-inlining-v1-design.md.
-    class InliningPass < RubyOpt::Pass
+    class InliningPass < Optimize::Pass
       INLINE_BUDGET = 8  # max callee instructions INCLUDING the trailing leave
 
       LOCAL_OPCODES = %i[
@@ -690,9 +690,9 @@ jj commit -m "InliningPass v1: zero-arg FCALL inline for constant-body callees"
 **Context:** The pass currently takes a `callee_map:` kwarg. The Pipeline builds that map once per `run` by walking the IR tree and collecting every `Function` whose `type == :method`. Pipeline passes it to each pass via `**extras`. Pass base class ignores unknown kwargs today because every pass declares `object_table: nil`; we need to widen that to accept `callee_map:` too or use `**`.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
-- Modify: `optimizer/lib/ruby_opt/pass.rb`
-- Modify: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`, `const_fold_pass.rb`, `identity_elim_pass.rb` (accept `**` in `apply`)
+- Modify: `optimizer/lib/optimize/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pass.rb`
+- Modify: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`, `const_fold_pass.rb`, `identity_elim_pass.rb` (accept `**` in `apply`)
 - Create: `optimizer/test/codec/corpus/inlining_zero_arg.rb`
 - Modify: `optimizer/test/pipeline_test.rb`
 
@@ -709,7 +709,7 @@ This makes them tolerant of extra kwargs so Pipeline can pass
 
 - [ ] **Step 2: Build `callee_map` in `Pipeline#run` and pass it through.**
 
-Modify `optimizer/lib/ruby_opt/pipeline.rb` `run`:
+Modify `optimizer/lib/optimize/pipeline.rb` `run`:
 
 ```ruby
 def run(ir, type_env:)
@@ -756,7 +756,7 @@ end
 ```
 
 Order matters: inlining first (exposes new literals for const-fold and
-reassoc). `require "ruby_opt/passes/inlining_pass"` at the top.
+reassoc). `require "optimize/passes/inlining_pass"` at the top.
 
 - [ ] **Step 4: Add corpus fixture.**
 
@@ -788,9 +788,9 @@ Append to `optimizer/test/pipeline_test.rb`:
 def test_inlining_pass_runs_end_to_end
   src = File.read(File.expand_path("codec/corpus/inlining_zero_arg.rb", __dir__))
   bin = RubyVM::InstructionSequence.compile(src).to_binary
-  ir  = RubyOpt::Codec.decode(bin)
+  ir  = Optimize::Codec.decode(bin)
 
-  log = RubyOpt::Pipeline.default.run(ir, type_env: nil)
+  log = Optimize::Pipeline.default.run(ir, type_env: nil)
 
   use_it = ir.children.find { |c| c.name == "use_it" }
   refute_nil use_it
@@ -798,7 +798,7 @@ def test_inlining_pass_runs_end_to_end
     "expected `use_it` to have its call to `magic` inlined"
   assert log.entries.any? { |e| e.pass == :inlining && e.reason == :inlined }
 
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal 42, loaded.eval
 end
 ```

@@ -119,7 +119,7 @@ no public entry that ingests a modified array. The only path in is
 Consequence: the round-trip goes **iseq → `.to_binary` → our binary
 decoder → IR → passes → IR → our binary encoder → `load_from_binary`
 → iseq**. The binary format is private and version-specific. Our
-codec lives in a single isolated module (`ruby_opt/codec/`) and is
+codec lives in a single isolated module (`optimize/codec/`) and is
 not shown in the talk — the audience sees the IR and the passes; the
 codec is acknowledged as "we did the brittle part for you."
 

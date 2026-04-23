@@ -15,12 +15,12 @@
 ## File Structure
 
 **Created:**
-- `optimizer/lib/ruby_opt/passes/dead_stash_elim_pass.rb` — the pass.
+- `optimizer/lib/optimize/passes/dead_stash_elim_pass.rb` — the pass.
 - `optimizer/test/passes/dead_stash_elim_pass_test.rb` — unit tests.
 
 **Modified:**
-- `optimizer/lib/ruby_opt/pipeline.rb` — require + register in `Pipeline.default`.
-- `optimizer/lib/ruby_opt/demo/markdown_renderer.rb` — one-line entry in `PASS_DESCRIPTIONS`.
+- `optimizer/lib/optimize/pipeline.rb` — require + register in `Pipeline.default`.
+- `optimizer/lib/optimize/demo/markdown_renderer.rb` — one-line entry in `PASS_DESCRIPTIONS`.
 - `docs/demo_artifacts/polynomial.md` — regenerated.
 - `docs/TODO.md` — strike the cascade-gap bullet this resolves; add a new entry for full DSE.
 
@@ -40,8 +40,8 @@
   ```
 - jj, not git. `jj commit -m "msg" <paths>`.
 - `Log#rewrite` bumps the fixed-point counter; `Log#skip` doesn't. New rewrite reasons go through `rewrite`.
-- Existing `Pass` base class: `optimizer/lib/ruby_opt/pass.rb`. Subclasses override `#apply` and optionally `#name` / `#one_shot?`. Default `#one_shot?` is false.
-- IR model: `function.instructions` is an Array of `RubyOpt::IR::Instruction`. Each has `opcode` (Symbol), `operands` (Array), `line` (Integer or nil). `function.splice_instructions!(range, replacement)` is the documented mutation API (used by ArithReassoc and others).
+- Existing `Pass` base class: `optimizer/lib/optimize/pass.rb`. Subclasses override `#apply` and optionally `#name` / `#one_shot?`. Default `#one_shot?` is false.
+- IR model: `function.instructions` is an Array of `Optimize::IR::Instruction`. Each has `opcode` (Symbol), `operands` (Array), `line` (Integer or nil). `function.splice_instructions!(range, replacement)` is the documented mutation API (used by ArithReassoc and others).
 - InliningPass runs first in `Pipeline.default` and is the current source of the pattern. After inlining, the stash slot appears as `setlocal_WC_0 n@K` followed by `getlocal_WC_0 n@K` where K is a slot index added to the caller's local table via `LocalTable#grow!`.
 
 ---
@@ -49,7 +49,7 @@
 ## Task 1: Create `DeadStashElimPass` with tests (TDD)
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/passes/dead_stash_elim_pass.rb`
+- Create: `optimizer/lib/optimize/passes/dead_stash_elim_pass.rb`
 - Create: `optimizer/test/passes/dead_stash_elim_pass_test.rb`
 
 ### Step 1: Write the failing tests
@@ -59,17 +59,17 @@ Create `optimizer/test/passes/dead_stash_elim_pass_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/ir/function"
-require "ruby_opt/ir/instruction"
-require "ruby_opt/passes/dead_stash_elim_pass"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/ir/function"
+require "optimize/ir/instruction"
+require "optimize/passes/dead_stash_elim_pass"
 
 class DeadStashElimPassTest < Minitest::Test
   # Build a minimal IR::Function whose body is the given array of Instruction
   # objects. Slot `n@1` is in the local table so set/get-local operands resolve.
   def build_fn(insts, local_table: [{ name: :n, type: :local }])
-    fn = RubyOpt::IR::Function.new(
+    fn = Optimize::IR::Function.new(
       type: :method, name: "f",
       path: "/t", first_lineno: 1,
       local_table: local_table,
@@ -80,11 +80,11 @@ class DeadStashElimPassTest < Minitest::Test
   end
 
   def inst(opcode, operands, line: 1)
-    RubyOpt::IR::Instruction.new(opcode: opcode, operands: operands, line: line)
+    Optimize::IR::Instruction.new(opcode: opcode, operands: operands, line: line)
   end
 
-  def apply(fn, log: RubyOpt::Log.new)
-    RubyOpt::Passes::DeadStashElimPass.new.apply(fn, type_env: nil, log: log)
+  def apply(fn, log: Optimize::Log.new)
+    Optimize::Passes::DeadStashElimPass.new.apply(fn, type_env: nil, log: log)
     log
   end
 
@@ -104,7 +104,7 @@ class DeadStashElimPassTest < Minitest::Test
 
   def test_end_to_end_preserves_value_through_dropped_pair
     src = "def f; 42; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = find_iseq(ir, "f")
     # Synthesise a stash pair around the leading producer.
     # Grow the local table by one slot at level 0.
@@ -114,8 +114,8 @@ class DeadStashElimPassTest < Minitest::Test
     producer_idx = f.instructions.find_index { |i| i.opcode == :putobject || i.opcode.to_s.start_with?("putobject") }
     skip("no producer") unless producer_idx
     f.instructions.insert(producer_idx + 1,
-      RubyOpt::IR::Instruction.new(opcode: :setlocal_WC_0, operands: [stash_idx], line: 1),
-      RubyOpt::IR::Instruction.new(opcode: :getlocal_WC_0, operands: [stash_idx], line: 1),
+      Optimize::IR::Instruction.new(opcode: :setlocal_WC_0, operands: [stash_idx], line: 1),
+      Optimize::IR::Instruction.new(opcode: :getlocal_WC_0, operands: [stash_idx], line: 1),
     )
 
     # Sanity: pre-pass the stash pair is present.
@@ -128,7 +128,7 @@ class DeadStashElimPassTest < Minitest::Test
     refute_includes f.instructions.map(&:opcode), :setlocal_WC_0
     refute_includes f.instructions.map(&:opcode), :getlocal_WC_0
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
 
@@ -243,7 +243,7 @@ class DeadStashElimPassTest < Minitest::Test
       inst(:getlocal_WC_0, [1]),
       inst(:leave, []),
     ])
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     apply(fn, log: log)
     assert_equal 1, log.rewrite_count
   end
@@ -264,7 +264,7 @@ class DeadStashElimPassTest < Minitest::Test
 end
 ```
 
-Check the existing `IR::Function` constructor signature before running — if the keyword argument names or requirements differ, adjust the `build_fn` helper to match. Look at `optimizer/lib/ruby_opt/ir/function.rb` for the canonical shape. Do NOT change the function class; adapt the test helper.
+Check the existing `IR::Function` constructor signature before running — if the keyword argument names or requirements differ, adjust the `build_fn` helper to match. Look at `optimizer/lib/optimize/ir/function.rb` for the canonical shape. Do NOT change the function class; adapt the test helper.
 
 ### Step 2: Run the tests to verify they fail
 
@@ -273,17 +273,17 @@ mcp__ruby-bytecode__run_optimizer_tests
   test_filter: "test/passes/dead_stash_elim_pass_test.rb"
 ```
 
-Expected: `cannot load such file -- ruby_opt/passes/dead_stash_elim_pass` or similar.
+Expected: `cannot load such file -- optimize/passes/dead_stash_elim_pass` or similar.
 
 ### Step 3: Implement the pass
 
-Create `optimizer/lib/ruby_opt/passes/dead_stash_elim_pass.rb`:
+Create `optimizer/lib/optimize/passes/dead_stash_elim_pass.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/pass"
+require "optimize/pass"
 
-module RubyOpt
+module Optimize
   module Passes
     # Peephole: drop adjacent `setlocal X; getlocal X` pairs where slot X has
     # no other references at the matching level in the same function.
@@ -301,7 +301,7 @@ module RubyOpt
     #
     # Mixed shorthand+explicit-level-0 is explicitly NOT matched (documented
     # non-goal in the spec).
-    class DeadStashElimPass < RubyOpt::Pass
+    class DeadStashElimPass < Optimize::Pass
       SETLOCAL_OPCODES = %i[setlocal setlocal_WC_0].freeze
       GETLOCAL_OPCODES = %i[getlocal getlocal_WC_0].freeze
       LOCAL_OPCODES    = (SETLOCAL_OPCODES + GETLOCAL_OPCODES).freeze
@@ -388,7 +388,7 @@ end
 ```
 
 Notes:
-- If `IR::Instruction#operands` uses a different access pattern (e.g. a separate `level` reader), adjust the private helpers to match. Inspect `optimizer/lib/ruby_opt/ir/instruction.rb` before implementing. Do NOT change the Instruction class.
+- If `IR::Instruction#operands` uses a different access pattern (e.g. a separate `level` reader), adjust the private helpers to match. Inspect `optimizer/lib/optimize/ir/instruction.rb` before implementing. Do NOT change the Instruction class.
 - If `Function#splice_instructions!` does not exist, grep for how `ArithReassocPass` mutates the instruction list (it uses the same API). If the API differs, follow that.
 
 ### Step 4: Run the tests to verify they pass
@@ -419,7 +419,7 @@ folded the inlined body. Does NOT implement general DSE — that's
 tracked as a separate TODO.
 
 Spec: docs/superpowers/specs/2026-04-23-pass-dead-stash-elim-design.md" \
-  optimizer/lib/ruby_opt/passes/dead_stash_elim_pass.rb \
+  optimizer/lib/optimize/passes/dead_stash_elim_pass.rb \
   optimizer/test/passes/dead_stash_elim_pass_test.rb
 ```
 
@@ -428,15 +428,15 @@ Spec: docs/superpowers/specs/2026-04-23-pass-dead-stash-elim-design.md" \
 ## Task 2: Register in `Pipeline.default` + add pass description
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
-- Modify: `optimizer/lib/ruby_opt/demo/markdown_renderer.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
+- Modify: `optimizer/lib/optimize/demo/markdown_renderer.rb`
 
 ### Step 1: Require + register
 
-Open `optimizer/lib/ruby_opt/pipeline.rb`. At the top of the file, alongside the other `require "ruby_opt/passes/..."` lines (there are 7 of them currently), add:
+Open `optimizer/lib/optimize/pipeline.rb`. At the top of the file, alongside the other `require "optimize/passes/..."` lines (there are 7 of them currently), add:
 
 ```ruby
-require "ruby_opt/passes/dead_stash_elim_pass"
+require "optimize/passes/dead_stash_elim_pass"
 ```
 
 In `Pipeline.default`, insert the new pass directly after `InliningPass`:
@@ -456,7 +456,7 @@ Preserve all existing comments on other entries.
 
 ### Step 2: Add pass description for demo rendering
 
-Open `optimizer/lib/ruby_opt/demo/markdown_renderer.rb`. The file has a `PASS_DESCRIPTIONS` hash (around line 11). Add a new entry:
+Open `optimizer/lib/optimize/demo/markdown_renderer.rb`. The file has a `PASS_DESCRIPTIONS` hash (around line 11). Add a new entry:
 
 ```ruby
 dead_stash_elim:  "Drop `setlocal X; getlocal X` pairs whose slot has no other refs.",
@@ -481,8 +481,8 @@ jj commit -m "feat(pipeline): register DeadStashElimPass after InliningPass
 Cleans up the inliner's argument-stash round-trip so the producer
 value is exposed directly to following instructions in the same
 pipeline run (via fixed-point iteration)." \
-  optimizer/lib/ruby_opt/pipeline.rb \
-  optimizer/lib/ruby_opt/demo/markdown_renderer.rb
+  optimizer/lib/optimize/pipeline.rb \
+  optimizer/lib/optimize/demo/markdown_renderer.rb
 ```
 
 ---

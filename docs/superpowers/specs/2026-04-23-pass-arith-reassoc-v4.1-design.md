@@ -40,7 +40,7 @@ of `a`, and the truncation at `x / a` loses information that
 ## Walker change
 
 Inside `try_rewrite_chain_ordered` at
-`optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`, the literal
+`optimizer/lib/optimize/passes/arith_reassoc_pass.rb`, the literal
 branch of the `stream.each` walk currently has three cases:
 
 ```ruby

@@ -4,7 +4,7 @@
 
 **Goal:** Build a round-trippable decoder/encoder for the YARB ("Instruction Binary Format") output of `RubyVM::InstructionSequence#to_binary`, so the optimizer can modify iseqs and hand them back to `load_from_binary`.
 
-**Architecture:** A single isolated module at `optimizer/lib/ruby_opt/codec/` exposing `Codec.decode(String) -> IR::Function` and `Codec.encode(IR::Function) -> String`. Validated primarily by an identity round-trip: for any `to_binary` output, `encode(decode(bin))` produces a byte-identical result.
+**Architecture:** A single isolated module at `optimizer/lib/optimize/codec/` exposing `Codec.decode(String) -> IR::Function` and `Codec.encode(IR::Function) -> String`. Validated primarily by an identity round-trip: for any `to_binary` output, `encode(decode(bin))` produces a byte-identical result.
 
 **Tech Stack:** Ruby 4.0.2, minitest, prism (already in experiments Gemfile). Codec is pure Ruby, reads and writes the packed binary format directly.
 
@@ -21,8 +21,8 @@ optimizer/
   Gemfile                         # created in Task 1
   Rakefile                        # created in Task 1
   lib/
-    ruby_opt.rb                   # top-level require
-    ruby_opt/
+    optimize.rb                   # top-level require
+    optimize/
       codec.rb                    # public API: Codec.decode / Codec.encode
       codec/
         binary_reader.rb          # primitive byte reader
@@ -55,7 +55,7 @@ research/
 **Files:**
 - Create: `optimizer/Gemfile`
 - Create: `optimizer/Rakefile`
-- Create: `optimizer/lib/ruby_opt.rb`
+- Create: `optimizer/lib/optimize.rb`
 - Create: `optimizer/test/test_helper.rb`
 - Create: `optimizer/.ruby-version`
 
@@ -96,12 +96,12 @@ end
 task default: :test
 ```
 
-- [ ] **Step 4: Create `lib/ruby_opt.rb`**
+- [ ] **Step 4: Create `lib/optimize.rb`**
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   VERSION = "0.0.0"
 end
 ```
@@ -111,7 +111,7 @@ end
 ```ruby
 # frozen_string_literal: true
 require "minitest/autorun"
-require "ruby_opt"
+require "optimize"
 ```
 
 - [ ] **Step 6: Install and verify**
@@ -166,8 +166,8 @@ jj commit -m "Add IBF format reference notes"
 ### Task 3: Byte primitives (`BinaryReader`, `BinaryWriter`)
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/binary_reader.rb`
-- Create: `optimizer/lib/ruby_opt/codec/binary_writer.rb`
+- Create: `optimizer/lib/optimize/codec/binary_reader.rb`
+- Create: `optimizer/lib/optimize/codec/binary_writer.rb`
 - Test: `optimizer/test/codec/binary_reader_test.rb`
 - Test: `optimizer/test/codec/binary_writer_test.rb`
 
@@ -188,28 +188,28 @@ Interface:
 ```ruby
 # test/codec/binary_reader_test.rb
 require "test_helper"
-require "ruby_opt/codec/binary_reader"
+require "optimize/codec/binary_reader"
 
 class BinaryReaderTest < Minitest::Test
   def test_read_u32_little_endian
-    reader = RubyOpt::Codec::BinaryReader.new("\x04\x00\x00\x00".b)
+    reader = Optimize::Codec::BinaryReader.new("\x04\x00\x00\x00".b)
     assert_equal 4, reader.read_u32
     assert_equal 4, reader.pos
   end
 
   def test_read_bytes
-    reader = RubyOpt::Codec::BinaryReader.new("YARB".b)
+    reader = Optimize::Codec::BinaryReader.new("YARB".b)
     assert_equal "YARB".b, reader.read_bytes(4)
   end
 
   def test_seek_and_peek
-    reader = RubyOpt::Codec::BinaryReader.new("\x00\x01\x02\x03".b)
+    reader = Optimize::Codec::BinaryReader.new("\x00\x01\x02\x03".b)
     reader.seek(2)
     assert_equal 2, reader.read_u8
   end
 
   def test_reads_past_end_raise
-    reader = RubyOpt::Codec::BinaryReader.new("\x00".b)
+    reader = Optimize::Codec::BinaryReader.new("\x00".b)
     reader.read_u8
     assert_raises(RangeError) { reader.read_u8 }
   end
@@ -219,15 +219,15 @@ end
 - [ ] **Step 2: Run, expect failure**
 
 Run: `bundle exec rake test TEST=test/codec/binary_reader_test.rb`
-Expected: LoadError for `ruby_opt/codec/binary_reader`.
+Expected: LoadError for `optimize/codec/binary_reader`.
 
 - [ ] **Step 3: Implement `BinaryReader`**
 
 ```ruby
-# lib/ruby_opt/codec/binary_reader.rb
+# lib/optimize/codec/binary_reader.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Codec
     class BinaryReader
       attr_reader :pos
@@ -282,34 +282,34 @@ Expected: 4 runs, all pass.
 ```ruby
 # test/codec/binary_writer_test.rb
 require "test_helper"
-require "ruby_opt/codec/binary_writer"
+require "optimize/codec/binary_writer"
 
 class BinaryWriterTest < Minitest::Test
   def test_write_u32_little_endian
-    writer = RubyOpt::Codec::BinaryWriter.new
+    writer = Optimize::Codec::BinaryWriter.new
     writer.write_u32(4)
     assert_equal "\x04\x00\x00\x00".b, writer.buffer
   end
 
   def test_write_bytes
-    writer = RubyOpt::Codec::BinaryWriter.new
+    writer = Optimize::Codec::BinaryWriter.new
     writer.write_bytes("YARB".b)
     assert_equal "YARB".b, writer.buffer
   end
 
   def test_write_cstr
-    writer = RubyOpt::Codec::BinaryWriter.new
+    writer = Optimize::Codec::BinaryWriter.new
     writer.write_cstr("hi")
     assert_equal "hi\x00".b, writer.buffer
   end
 
   def test_round_trip_with_reader
-    writer = RubyOpt::Codec::BinaryWriter.new
+    writer = Optimize::Codec::BinaryWriter.new
     writer.write_u32(0xdeadbeef)
     writer.write_bytes("YARB".b)
     writer.write_cstr("hello")
 
-    reader = RubyOpt::Codec::BinaryReader.new(writer.buffer)
+    reader = Optimize::Codec::BinaryReader.new(writer.buffer)
     assert_equal 0xdeadbeef, reader.read_u32
     assert_equal "YARB".b, reader.read_bytes(4)
     assert_equal "hello".b, reader.read_cstr
@@ -320,10 +320,10 @@ end
 - [ ] **Step 6: Implement `BinaryWriter`**
 
 ```ruby
-# lib/ruby_opt/codec/binary_writer.rb
+# lib/optimize/codec/binary_writer.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Codec
     class BinaryWriter
       def initialize
@@ -369,19 +369,19 @@ jj commit -m "Add binary reader/writer primitives"
 
 **Files:**
 - Create: `optimizer/test/codec/round_trip_test.rb`
-- Create: `optimizer/lib/ruby_opt/codec.rb` (stub)
+- Create: `optimizer/lib/optimize/codec.rb` (stub)
 
 Purpose: Set up the core contract test *before* the decoder/encoder exist. This test will initially fail (decoder not implemented), and we'll unfail it piece by piece.
 
 - [ ] **Step 1: Write the stub for the public API**
 
 ```ruby
-# lib/ruby_opt/codec.rb
+# lib/optimize/codec.rb
 # frozen_string_literal: true
-require "ruby_opt/codec/binary_reader"
-require "ruby_opt/codec/binary_writer"
+require "optimize/codec/binary_reader"
+require "optimize/codec/binary_writer"
 
-module RubyOpt
+module Optimize
   module Codec
     # Decodes a YARB binary blob (from RubyVM::InstructionSequence#to_binary)
     # into an IR::Function.
@@ -403,7 +403,7 @@ end
 ```ruby
 # test/codec/round_trip_test.rb
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class RoundTripTest < Minitest::Test
   # The core contract: encode(decode(bin)) == bin, for unmodified iseqs.
@@ -420,16 +420,16 @@ class RoundTripTest < Minitest::Test
   EXAMPLES.each_with_index do |src, i|
     define_method(:"test_identity_#{i}_#{src[0,20].gsub(/\W+/,'_')}") do
       original = RubyVM::InstructionSequence.compile(src).to_binary
-      ir = RubyOpt::Codec.decode(original)
-      re_encoded = RubyOpt::Codec.encode(ir)
+      ir = Optimize::Codec.decode(original)
+      re_encoded = Optimize::Codec.encode(ir)
       assert_equal original, re_encoded,
         "round-trip mismatch for #{src.inspect}"
     end
 
     define_method(:"test_executable_#{i}_#{src[0,20].gsub(/\W+/,'_')}") do
       original = RubyVM::InstructionSequence.compile(src).to_binary
-      ir = RubyOpt::Codec.decode(original)
-      re_encoded = RubyOpt::Codec.encode(ir)
+      ir = Optimize::Codec.decode(original)
+      re_encoded = Optimize::Codec.encode(ir)
       # The VM must accept it and running must not raise
       loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
       assert_kind_of RubyVM::InstructionSequence, loaded
@@ -455,8 +455,8 @@ jj commit -m "Add identity round-trip test harness for codec"
 ### Task 5: Decode + encode the YARB header
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/header.rb`
-- Modify: `optimizer/lib/ruby_opt/codec.rb`
+- Create: `optimizer/lib/optimize/codec/header.rb`
+- Modify: `optimizer/lib/optimize/codec.rb`
 - Test: covered by round-trip test (header-only slice)
 
 Purpose: First real section of the format. The header is fixed-layout; sections below it are offset-indexed from here. Per `research/cruby/ibf-format.md` (produced in Task 2), the header contains:
@@ -472,14 +472,14 @@ Purpose: First real section of the format. The header is fixed-layout; sections 
 # In test/codec/round_trip_test.rb, add:
 def test_header_round_trip
   original = RubyVM::InstructionSequence.compile("1 + 2").to_binary
-  reader = RubyOpt::Codec::BinaryReader.new(original)
-  header = RubyOpt::Codec::Header.decode(reader)
+  reader = Optimize::Codec::BinaryReader.new(original)
+  header = Optimize::Codec::Header.decode(reader)
 
   assert_equal "YARB", header.magic
   refute_nil header.major_version
   refute_nil header.platform
 
-  writer = RubyOpt::Codec::BinaryWriter.new
+  writer = Optimize::Codec::BinaryWriter.new
   header.encode(writer)
   # Header section must reproduce its original bytes
   header_len = reader.pos
@@ -494,10 +494,10 @@ end
 Structure (fill in byte-level details from `research/cruby/ibf-format.md`):
 
 ```ruby
-# lib/ruby_opt/codec/header.rb
+# lib/optimize/codec/header.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Codec
     Header = Struct.new(
       :magic, :major_version, :minor_version, :size,
@@ -537,7 +537,7 @@ jj commit -m "Implement YARB header decode/encode"
 ### Task 6: Decode + encode the object table
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/object_table.rb`
+- Create: `optimizer/lib/optimize/codec/object_table.rb`
 
 Purpose: The object table holds all literals (strings, symbols, integers, floats, arrays, hashes, ranges, classes, regexps) referenced by instructions. Instructions carry indices into this table, not objects directly.
 
@@ -548,9 +548,9 @@ def test_object_table_round_trip
   original = RubyVM::InstructionSequence.compile(
     '[1, "two", :three, 4.5, /six/]'
   ).to_binary
-  reader = RubyOpt::Codec::BinaryReader.new(original)
-  header = RubyOpt::Codec::Header.decode(reader)
-  table = RubyOpt::Codec::ObjectTable.decode(reader, header)
+  reader = Optimize::Codec::BinaryReader.new(original)
+  header = Optimize::Codec::Header.decode(reader)
+  table = Optimize::Codec::ObjectTable.decode(reader, header)
 
   # Table should contain literals seen in the snippet
   assert_includes table.objects, 1
@@ -558,7 +558,7 @@ def test_object_table_round_trip
   assert_includes table.objects, :three
   assert_includes table.objects, 4.5
 
-  writer = RubyOpt::Codec::BinaryWriter.new
+  writer = Optimize::Codec::BinaryWriter.new
   header.encode(writer)
   table.encode(writer, header)
   table_end = reader.pos
@@ -569,10 +569,10 @@ end
 - [ ] **Step 2: Implement `ObjectTable` per the format notes**
 
 ```ruby
-# lib/ruby_opt/codec/object_table.rb
+# lib/optimize/codec/object_table.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Codec
     class ObjectTable
       attr_reader :objects
@@ -617,18 +617,18 @@ jj commit -m "Implement YARB object table decode/encode"
 ### Task 7: Decode + encode the per-iseq envelope
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
-- Create: `optimizer/lib/ruby_opt/ir/function.rb`
+- Create: `optimizer/lib/optimize/codec/iseq_envelope.rb`
+- Create: `optimizer/lib/optimize/ir/function.rb`
 
 Purpose: Each iseq is a record with its name, path, arg spec, local variable table, catch table, line-number info, a reference to instructions, and references to nested (block/method) iseqs. The instructions themselves are decoded in Task 8; this task handles the envelope.
 
 - [ ] **Step 1: Define `IR::Function` as the decoded form**
 
 ```ruby
-# lib/ruby_opt/ir/function.rb
+# lib/optimize/ir/function.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module IR
     # One decoded iseq. Field names mirror the envelope fields
     # described in research/cruby/ibf-format.md.
@@ -650,7 +650,7 @@ end
 def test_iseq_envelope_round_trip
   src = "def hi(name, times: 1); times.times { puts name }; end"
   original = RubyVM::InstructionSequence.compile(src).to_binary
-  ir = RubyOpt::Codec.decode(original)
+  ir = Optimize::Codec.decode(original)
 
   # Outer Function has a child for `hi`, which has a child for the block.
   hi = ir.children.find { |f| f.name == "hi" }
@@ -658,7 +658,7 @@ def test_iseq_envelope_round_trip
   block = hi.children.find { |f| f.type == :block }
   refute_nil block
 
-  re_encoded = RubyOpt::Codec.encode(ir)
+  re_encoded = Optimize::Codec.encode(ir)
   assert_equal original, re_encoded
 end
 ```
@@ -668,10 +668,10 @@ end
 - [ ] **Step 3: Implement `IseqEnvelope` using the format notes**
 
 ```ruby
-# lib/ruby_opt/codec/iseq_envelope.rb
+# lib/optimize/codec/iseq_envelope.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Codec
     module IseqEnvelope
       def self.decode(reader, header, object_table)
@@ -714,18 +714,18 @@ jj commit -m "Decode/encode per-iseq envelope"
 ### Task 8: Decode + encode the instruction stream
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/instruction_stream.rb`
-- Create: `optimizer/lib/ruby_opt/ir/instruction.rb`
+- Create: `optimizer/lib/optimize/codec/instruction_stream.rb`
+- Create: `optimizer/lib/optimize/ir/instruction.rb`
 
 Purpose: Each iseq carries a packed instruction stream. Decoding means turning bytes into a list of `IR::Instruction`; encoding mirrors.
 
 - [ ] **Step 1: Define `IR::Instruction`**
 
 ```ruby
-# lib/ruby_opt/ir/instruction.rb
+# lib/optimize/ir/instruction.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module IR
     # One YARV instruction after decoding. Operands are Ruby values,
     # not object-table indices — the codec resolves indices on
@@ -744,7 +744,7 @@ end
 ```ruby
 def test_instruction_stream_decode_shape
   src = "def add(a, b); a + b; end"
-  ir = RubyOpt::Codec.decode(
+  ir = Optimize::Codec.decode(
     RubyVM::InstructionSequence.compile(src).to_binary
   )
   add = ir.children.find { |f| f.name == "add" }
@@ -758,10 +758,10 @@ end
 - [ ] **Step 3: Implement `InstructionStream` using the insn table**
 
 ```ruby
-# lib/ruby_opt/codec/instruction_stream.rb
+# lib/optimize/codec/instruction_stream.rb
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Codec
     module InstructionStream
       # Maps opcode number -> [name_sym, operand_type_list].
@@ -829,7 +829,7 @@ Create files under `test/codec/corpus/` with representative Ruby snippets. Examp
 ```ruby
 # test/codec/corpus_test.rb
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class CorpusTest < Minitest::Test
   Dir[File.join(__dir__, "corpus", "*.rb")].each do |path|
@@ -837,8 +837,8 @@ class CorpusTest < Minitest::Test
     define_method(:"test_corpus_#{name}") do
       source = File.read(path)
       original = RubyVM::InstructionSequence.compile(source, path).to_binary
-      ir = RubyOpt::Codec.decode(original)
-      re_encoded = RubyOpt::Codec.encode(ir)
+      ir = Optimize::Codec.decode(original)
+      re_encoded = Optimize::Codec.encode(ir)
       assert_equal original, re_encoded, "mismatch for #{name}"
       # Must also still run
       RubyVM::InstructionSequence.load_from_binary(re_encoded).eval
@@ -862,8 +862,8 @@ jj commit -m "Add corpus round-trip tests for codec"
 ### Task 10: Fail loudly on unsupported constructs
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/instruction_stream.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/object_table.rb`
+- Modify: `optimizer/lib/optimize/codec/instruction_stream.rb`
+- Modify: `optimizer/lib/optimize/codec/object_table.rb`
 - Test: add to `corpus_test.rb`
 
 Purpose: An unknown opcode or object kind must raise a clearly named exception, not silently miscompile. This is the codec's failure mode. The harness (next plan) will catch it and fall back to the original iseq unchanged.
@@ -871,8 +871,8 @@ Purpose: An unknown opcode or object kind must raise a clearly named exception, 
 - [ ] **Step 1: Define exception types**
 
 ```ruby
-# In lib/ruby_opt/codec.rb, add:
-module RubyOpt
+# In lib/optimize/codec.rb, add:
+module Optimize
   module Codec
     class UnsupportedOpcode < StandardError; end
     class UnsupportedObjectKind < StandardError; end
@@ -895,8 +895,8 @@ Similarly for `ObjectTable.decode` on unknown kinds.
 
 ```ruby
 def test_malformed_binary_raises
-  assert_raises(RubyOpt::Codec::MalformedBinary) do
-    RubyOpt::Codec.decode("NOTYARB!".b)
+  assert_raises(Optimize::Codec::MalformedBinary) do
+    Optimize::Codec.decode("NOTYARB!".b)
   end
 end
 ```
@@ -925,7 +925,7 @@ Purpose: End-to-end check that what we produce is actually loadable and runnable
 ```ruby
 # test/codec/smoke_test.rb
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class CodecSmokeTest < Minitest::Test
   def test_decode_encode_execute
@@ -935,8 +935,8 @@ class CodecSmokeTest < Minitest::Test
       add(2, 3) + greet("world").length
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
 
     loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
     result = loaded.eval
@@ -960,7 +960,7 @@ jj commit -m "Add end-to-end codec smoke test"
 
 **Files:**
 - Create: `optimizer/README.md`
-- Modify: `optimizer/lib/ruby_opt/codec.rb` (docstring)
+- Modify: `optimizer/lib/optimize/codec.rb` (docstring)
 
 - [ ] **Step 1: Write `optimizer/README.md`**
 
@@ -983,8 +983,8 @@ Talk-artifact Ruby optimizer. Companion to
 
 ## Layout
 
-- `lib/ruby_opt/codec/` — YARB binary surgery
-- `lib/ruby_opt/ir/` — iseq IR
+- `lib/optimize/codec/` — YARB binary surgery
+- `lib/optimize/ir/` — iseq IR
 - `test/codec/` — round-trip and corpus tests
 ```
 
@@ -1007,7 +1007,7 @@ jj commit -m "Document codec status and API"
 
 Run through the spec (`docs/superpowers/specs/2026-04-19-optimizer.md`, round-trip section) and confirm:
 
-1. The codec is isolated to one module — ✓ (`lib/ruby_opt/codec/`)
+1. The codec is isolated to one module — ✓ (`lib/optimize/codec/`)
 2. Identity round-trip is the primary contract — ✓ (Task 4, reinforced in Task 9)
 3. Version-gated, fails loudly on mismatch — ✓ (Task 5 checks magic, Task 10 defines errors)
 4. Preserves iseq metadata — ✓ (Task 7 envelope + Task 8 instructions)

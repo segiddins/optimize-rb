@@ -146,7 +146,7 @@ Pass name: `:identity_elim`.
 ## Interface
 
 ```ruby
-class RubyOpt::Passes::IdentityElimPass < RubyOpt::Pass
+class Optimize::Passes::IdentityElimPass < Optimize::Pass
   def name = :identity_elim
   def apply(function, type_env:, log:, object_table: nil)
 end
@@ -158,7 +158,7 @@ end
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       identity_elim_pass.rb            # NEW — the pass
     pipeline.rb                        # MODIFIED — append IdentityElimPass.new

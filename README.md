@@ -1,16 +1,19 @@
-# ruby-the-hard-way-bytecode-talk
+# optimize-rb
 
-Research, experiments, and draft for the RubyKaigi 2026 talk
-*Ruby the Hard Way: Writing Bytecode to Optimize Plain Ruby*
-by Samuel Giddins.
+The [`optimize`](https://rubygems.org/gems/optimize) gem — a hand-rolled
+YARV bytecode optimizer for CRuby — plus the companion post and research
+for the RubyKaigi 2026 talk *Ruby the Hard Way: Writing Bytecode to
+Optimize Plain Ruby* by Samuel Giddins.
 
 Talk page: <https://rubykaigi.org/2026/presentations/segiddins.html>
 
 ## Layout
 
-- `research/` — notes, references, prior art
+- `optimizer/` — the `optimize` gem: IR, codec, passes, harness, demos
+- `post.md` — long-form companion to the talk
+- `talk/` — bibliography and references
+- `research/` — notes and prior art
 - `experiments/` — runnable Ruby experiments (shared Gemfile, numbered subdirs)
-- `talk/` — prose outline, notes, bibliography
 - `mcp-server/` — local MCP server that runs Ruby in Docker for the harness
 - `docs/superpowers/` — design specs and implementation plans
 
@@ -22,7 +25,8 @@ Talk page: <https://rubykaigi.org/2026/presentations/segiddins.html>
 
 ## Getting started
 
-    cd experiments && bundle install
+    cd optimizer && bundle install && bundle exec rake test
+    cd ../experiments && bundle install
     cd ../mcp-server && bundle install && bundle exec rake test
 
 The MCP server is registered via `.mcp.json` at the repo root; Claude

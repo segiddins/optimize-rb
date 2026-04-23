@@ -18,7 +18,7 @@
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     codec/
       object_table.rb           # MODIFIED Task 1a — index_for, intern, encode-with-append
     codec.rb                    # MODIFIED Task 1a — patch global_object_list_size header field
@@ -49,8 +49,8 @@ optimizer/
 - `global_object_list_size` is a header field at byte offset 24 (4 bytes, little-endian uint32).
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/object_table.rb`
-- Modify: `optimizer/lib/ruby_opt/codec.rb`
+- Modify: `optimizer/lib/optimize/codec/object_table.rb`
+- Modify: `optimizer/lib/optimize/codec.rb`
 - Create: `optimizer/test/codec/object_table_intern_test.rb`
 
 - [ ] **Step 1: Write the failing tests** — `optimizer/test/codec/object_table_intern_test.rb`
@@ -58,11 +58,11 @@ optimizer/
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class ObjectTableInternTest < Minitest::Test
   def test_index_for_finds_existing_literal_from_source
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
     ot = ir.misc[:object_table]
@@ -74,7 +74,7 @@ class ObjectTableInternTest < Minitest::Test
   end
 
   def test_intern_returns_existing_index_without_growing_the_table
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
     ot = ir.misc[:object_table]
@@ -87,7 +87,7 @@ class ObjectTableInternTest < Minitest::Test
   def test_intern_appends_new_integer_and_binary_round_trips
     src = "def f; 2 + 3; end; f"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
     ot = ir.misc[:object_table]
     before_size = ot.objects.size
     new_idx = ot.intern(6)
@@ -96,7 +96,7 @@ class ObjectTableInternTest < Minitest::Test
     assert_equal 6, ot.objects[new_idx]
 
     # Re-encoding after an intern must produce a binary that load_from_binary accepts.
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
 
@@ -107,7 +107,7 @@ class ObjectTableInternTest < Minitest::Test
   def test_intern_appends_true_and_false_when_absent
     # Compile a source that doesn't naturally carry true/false literals.
     src = "def f; 1 + 2; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
 
     t_idx = ot.intern(true)
@@ -115,7 +115,7 @@ class ObjectTableInternTest < Minitest::Test
     assert_equal true,  ot.objects[t_idx]
     assert_equal false, ot.objects[f_idx]
 
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
   end
@@ -124,15 +124,15 @@ class ObjectTableInternTest < Minitest::Test
     # Sanity: this task must not break the identity round-trip when no intern happens.
     src = "def f; 2 + 3; end; f"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 end
 ```
 
 - [ ] **Step 2: Run, expect NoMethodError.** Use `mcp__ruby-bytecode__run_optimizer_tests` with `test_filter: "test/codec/object_table_intern_test.rb"`.
 
-- [ ] **Step 3: Extend `ObjectTable`** — `optimizer/lib/ruby_opt/codec/object_table.rb`
+- [ ] **Step 3: Extend `ObjectTable`** — `optimizer/lib/optimize/codec/object_table.rb`
 
 Add the following public API. You will need an `@appended` list (`Array<Object>` of values added since decode, in order) and a small serializer for their payloads:
 
@@ -174,7 +174,7 @@ The old `iseq_list_delta == 0 && obj_list_size == 0` fast path collapses into th
 
 Expose `@appended.size` (or equivalent) so Codec.encode can patch the header's `global_object_list_size`. Simplest: add `def appended_count; (@appended || []).size; end`.
 
-- [ ] **Step 4: Patch `global_object_list_size` in `Codec.encode`** — `optimizer/lib/ruby_opt/codec.rb`
+- [ ] **Step 4: Patch `global_object_list_size` in `Codec.encode`** — `optimizer/lib/optimize/codec.rb`
 
 After the existing header-field patches at lines ~138–140, add:
 
@@ -200,7 +200,7 @@ If any existing byte-identical fixture drifts: `@appended` is leaking into the "
 jj commit -m "ObjectTable: intern new special-const values with encode-time append"
 ```
 
-(Files: `optimizer/lib/ruby_opt/codec/object_table.rb`, `optimizer/lib/ruby_opt/codec.rb`, `optimizer/test/codec/object_table_intern_test.rb`.)
+(Files: `optimizer/lib/optimize/codec/object_table.rb`, `optimizer/lib/optimize/codec.rb`, `optimizer/test/codec/object_table_intern_test.rb`.)
 
 ---
 
@@ -220,7 +220,7 @@ Ruby 4.0.2 has three literal-producer shapes:
 - `LiteralValue.emit(value, line:, object_table:)` → a new `IR::Instruction` that pushes `value` onto the stack. Uses `putobject_INT2FIX_0_`/`_1_` for `0`/`1` (no table entry needed), and `putobject <intern(value)>` otherwise
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/passes/literal_value.rb`
+- Create: `optimizer/lib/optimize/passes/literal_value.rb`
 - Create: `optimizer/test/passes/literal_value_test.rb`
 
 - [ ] **Step 1: Write the investigation + behavior test** — `optimizer/test/passes/literal_value_test.rb`
@@ -228,23 +228,23 @@ Ruby 4.0.2 has three literal-producer shapes:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/passes/literal_value"
+require "optimize/codec"
+require "optimize/passes/literal_value"
 
 class LiteralValueTest < Minitest::Test
   def test_read_plain_putobject_resolves_via_object_table
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2; end; f").to_binary
     )
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     po = f.instructions.find { |i| i.opcode == :putobject }
     refute_nil po, "expected a plain putobject for literal 2"
-    assert_equal 2, RubyOpt::Passes::LiteralValue.read(po, object_table: ot)
+    assert_equal 2, Optimize::Passes::LiteralValue.read(po, object_table: ot)
   end
 
   def test_read_handles_dedicated_0_and_1_opcodes
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 0; end; def g; 1; end").to_binary
     )
     ot = ir.misc[:object_table]
@@ -254,27 +254,27 @@ class LiteralValueTest < Minitest::Test
     one  = g.instructions.find { |i| i.opcode == :putobject_INT2FIX_1_ }
     refute_nil zero, "expected a putobject_INT2FIX_0_"
     refute_nil one,  "expected a putobject_INT2FIX_1_"
-    assert_equal 0, RubyOpt::Passes::LiteralValue.read(zero, object_table: ot)
-    assert_equal 1, RubyOpt::Passes::LiteralValue.read(one, object_table: ot)
+    assert_equal 0, Optimize::Passes::LiteralValue.read(zero, object_table: ot)
+    assert_equal 1, Optimize::Passes::LiteralValue.read(one, object_table: ot)
   end
 
   def test_read_returns_nil_for_non_literal_producer
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; x = 1; x; end").to_binary
     )
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     getlocal = f.instructions.find { |i| i.opcode.to_s.start_with?("getlocal") }
     refute_nil getlocal
-    assert_nil RubyOpt::Passes::LiteralValue.read(getlocal, object_table: ot)
+    assert_nil Optimize::Passes::LiteralValue.read(getlocal, object_table: ot)
   end
 
   def test_emit_prefers_dedicated_opcodes_for_0_and_1
     # Any object_table — 0/1 don't need it.
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile("nil").to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile("nil").to_binary)
     ot = ir.misc[:object_table]
-    zero = RubyOpt::Passes::LiteralValue.emit(0, line: 42, object_table: ot)
-    one  = RubyOpt::Passes::LiteralValue.emit(1, line: 42, object_table: ot)
+    zero = Optimize::Passes::LiteralValue.emit(0, line: 42, object_table: ot)
+    one  = Optimize::Passes::LiteralValue.emit(1, line: 42, object_table: ot)
     assert_equal :putobject_INT2FIX_0_, zero.opcode
     assert_equal :putobject_INT2FIX_1_, one.opcode
     assert_empty zero.operands
@@ -284,38 +284,38 @@ class LiteralValueTest < Minitest::Test
   end
 
   def test_emit_interns_arbitrary_integer_and_is_readable
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
     ot = ir.misc[:object_table]
-    inst = RubyOpt::Passes::LiteralValue.emit(42, line: 7, object_table: ot)
+    inst = Optimize::Passes::LiteralValue.emit(42, line: 7, object_table: ot)
     assert_equal :putobject, inst.opcode
     assert_equal 1, inst.operands.size
     assert_equal 42, ot.objects[inst.operands[0]]
-    assert_equal 42, RubyOpt::Passes::LiteralValue.read(inst, object_table: ot)
+    assert_equal 42, Optimize::Passes::LiteralValue.read(inst, object_table: ot)
     assert_equal 7, inst.line
   end
 
   def test_emit_true_and_false_via_intern
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 1; end").to_binary
     )
     ot = ir.misc[:object_table]
-    t = RubyOpt::Passes::LiteralValue.emit(true,  line: 1, object_table: ot)
-    f = RubyOpt::Passes::LiteralValue.emit(false, line: 1, object_table: ot)
+    t = Optimize::Passes::LiteralValue.emit(true,  line: 1, object_table: ot)
+    f = Optimize::Passes::LiteralValue.emit(false, line: 1, object_table: ot)
     assert_equal :putobject, t.opcode
     assert_equal :putobject, f.opcode
-    assert_equal true,  RubyOpt::Passes::LiteralValue.read(t, object_table: ot)
-    assert_equal false, RubyOpt::Passes::LiteralValue.read(f, object_table: ot)
+    assert_equal true,  Optimize::Passes::LiteralValue.read(t, object_table: ot)
+    assert_equal false, Optimize::Passes::LiteralValue.read(f, object_table: ot)
   end
 
   def test_emit_reuses_existing_index_when_value_already_in_table
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
     ot = ir.misc[:object_table]
     before_size = ot.objects.size
-    inst = RubyOpt::Passes::LiteralValue.emit(3, line: 1, object_table: ot)
+    inst = Optimize::Passes::LiteralValue.emit(3, line: 1, object_table: ot)
     # 3 is already in the table from the source — no new entry should appear.
     assert_equal before_size, ot.objects.size
     assert_equal 3, ot.objects[inst.operands[0]]
@@ -324,17 +324,17 @@ class LiteralValueTest < Minitest::Test
   def test_emit_round_trips_through_codec
     # A fold-emit followed by re-encode must produce a loadable binary.
     src = "def f; 2 + 3; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     # Sanity: unmodified round-trip first.
     assert_equal(
       RubyVM::InstructionSequence.compile(src).to_binary,
-      RubyOpt::Codec.encode(ir),
+      Optimize::Codec.encode(ir),
     )
     # Emit an interned value; the binary should still load even though
     # we didn't actually splice the instruction anywhere.
-    _unused = RubyOpt::Passes::LiteralValue.emit(99, line: 1, object_table: ot)
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    _unused = Optimize::Passes::LiteralValue.emit(99, line: 1, object_table: ot)
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_kind_of RubyVM::InstructionSequence, loaded
   end
 
@@ -351,13 +351,13 @@ class LiteralValueTest < Minitest::Test
 end
 ```
 
-- [ ] **Step 2: Run, expect LoadError** for `ruby_opt/passes/literal_value`
+- [ ] **Step 2: Run, expect LoadError** for `optimize/passes/literal_value`
 
 Run: `mcp__ruby-bytecode__run_optimizer_tests` with `test_filter: "test/passes/literal_value_test.rb"`.
 
-Expected: `cannot load such file -- ruby_opt/passes/literal_value`.
+Expected: `cannot load such file -- optimize/passes/literal_value`.
 
-- [ ] **Step 3: Implement `LiteralValue`** — `optimizer/lib/ruby_opt/passes/literal_value.rb`
+- [ ] **Step 3: Implement `LiteralValue`** — `optimizer/lib/optimize/passes/literal_value.rb`
 
 Implement the module. The behavior contract is fully specified by the tests above. The specific operand encoding for non-0/1 Integer literals — whether `operands[0]` is the raw VALUE `(n<<1)|1` or an object-table index — is determined by running the investigation test in Step 2 (it will fail until you inspect the actual operand and write the right `read` / `emit` code).
 
@@ -365,9 +365,9 @@ Full implementation:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/ir/instruction"
+require "optimize/ir/instruction"
 
-module RubyOpt
+module Optimize
   module Passes
     # Reads and emits Integer and boolean literal-producer instructions.
     #
@@ -425,7 +425,7 @@ Run: `mcp__ruby-bytecode__run_optimizer_tests` with `test_filter: "test/passes/l
 jj commit -m "Add LiteralValue read/emit helper for const-fold pass"
 ```
 
-(Files: `optimizer/lib/ruby_opt/passes/literal_value.rb`, `optimizer/test/passes/literal_value_test.rb`.)
+(Files: `optimizer/lib/optimize/passes/literal_value.rb`, `optimizer/test/passes/literal_value_test.rb`.)
 
 ---
 
@@ -436,9 +436,9 @@ jj commit -m "Add LiteralValue read/emit helper for const-fold pass"
 **Interface change — thread `object_table` through `Pass#apply`:** `LiteralValue.read`/`.emit` take an `object_table:` keyword (Tasks 1 and 1a). The pass needs access. Extend `Pass#apply` to accept `object_table: nil` and update `Pipeline#run` to pull it from `ir.misc[:object_table]` and pass it to every `apply` call.
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`
-- Modify: `optimizer/lib/ruby_opt/pass.rb` (Pass#apply keyword, NoopPass#apply keyword)
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb` (pull object_table from root ir, thread through)
+- Create: `optimizer/lib/optimize/passes/const_fold_pass.rb`
+- Modify: `optimizer/lib/optimize/pass.rb` (Pass#apply keyword, NoopPass#apply keyword)
+- Modify: `optimizer/lib/optimize/pipeline.rb` (pull object_table from root ir, thread through)
 - Modify: `optimizer/test/pass_test.rb` (update NoopPass test call)
 - Modify: `optimizer/test/pipeline_test.rb` (if it calls apply directly)
 - Create: `optimizer/test/passes/const_fold_pass_test.rb`
@@ -448,43 +448,43 @@ jj commit -m "Add LiteralValue read/emit helper for const-fold pass"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/passes/const_fold_pass"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/passes/const_fold_pass"
 
 class ConstFoldPassTest < Minitest::Test
   def test_folds_single_arithmetic_triple
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before_count = f.instructions.size
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
     # Three instructions collapse to one: net -2.
     assert_equal before_count - 2, f.instructions.size
-    folded = f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 5 }
+    folded = f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 5 }
     refute_nil folded, "expected a literal producer for 5 after the fold"
   end
 
   def test_folded_iseq_runs_and_returns_expected_value
     src = "def f; 2 + 3; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
-    RubyOpt::Passes::ConstFoldPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    Optimize::Passes::ConstFoldPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: Optimize::Log.new, object_table: ot)
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 5, loaded.eval
   end
 
   def test_leaves_non_literal_operands_alone
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f(x); x + 2; end").to_binary
     )
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     assert_equal before, f.instructions.map(&:opcode)
   end
 
@@ -505,7 +505,7 @@ end
 
 Run: `mcp__ruby-bytecode__run_optimizer_tests` with `test_filter: "test/passes/const_fold_pass_test.rb"`.
 
-- [ ] **Step 3: Extend `Pass#apply` to accept `object_table:`** — `optimizer/lib/ruby_opt/pass.rb`
+- [ ] **Step 3: Extend `Pass#apply` to accept `object_table:`** — `optimizer/lib/optimize/pass.rb`
 
 Change `Pass#apply` and `NoopPass#apply` to:
 
@@ -515,18 +515,18 @@ def apply(function, type_env:, log:, object_table: nil)
 end
 ```
 
-Update `optimizer/lib/ruby_opt/pipeline.rb`'s `#run`: after receiving the root `ir`, pull `object_table = ir.misc && ir.misc[:object_table]`, and pass `object_table: object_table` to every `pass.apply(...)` call. Update any existing test in `optimizer/test/pass_test.rb` / `optimizer/test/pipeline_test.rb` that calls `apply` directly to pass `object_table:` (nil is fine for NoopPass).
+Update `optimizer/lib/optimize/pipeline.rb`'s `#run`: after receiving the root `ir`, pull `object_table = ir.misc && ir.misc[:object_table]`, and pass `object_table: object_table` to every `pass.apply(...)` call. Update any existing test in `optimizer/test/pass_test.rb` / `optimizer/test/pipeline_test.rb` that calls `apply` directly to pass `object_table:` (nil is fine for NoopPass).
 
-- [ ] **Step 4: Implement `ConstFoldPass`** — `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`
+- [ ] **Step 4: Implement `ConstFoldPass`** — `optimizer/lib/optimize/passes/const_fold_pass.rb`
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/pass"
-require "ruby_opt/passes/literal_value"
+require "optimize/pass"
+require "optimize/passes/literal_value"
 
-module RubyOpt
+module Optimize
   module Passes
-    class ConstFoldPass < RubyOpt::Pass
+    class ConstFoldPass < Optimize::Pass
       ARITH_OPS = {
         opt_plus:  :+,
         opt_minus: :-,
@@ -588,7 +588,7 @@ end
 jj commit -m "ConstFoldPass: fold literal Integer arithmetic triples"
 ```
 
-(Files: `optimizer/lib/ruby_opt/pass.rb`, `optimizer/lib/ruby_opt/pipeline.rb`, `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`, `optimizer/test/pass_test.rb`, `optimizer/test/pipeline_test.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
+(Files: `optimizer/lib/optimize/pass.rb`, `optimizer/lib/optimize/pipeline.rb`, `optimizer/lib/optimize/passes/const_fold_pass.rb`, `optimizer/test/pass_test.rb`, `optimizer/test/pipeline_test.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
 
 ---
 
@@ -597,35 +597,35 @@ jj commit -m "ConstFoldPass: fold literal Integer arithmetic triples"
 **Context:** Add `opt_lt`, `opt_le`, `opt_gt`, `opt_ge`, `opt_eq`, `opt_neq` using the same triple shape. Result is `true`/`false`, emitted via `LiteralValue.emit(bool, ...)`.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_pass.rb`
 - Modify: `optimizer/test/passes/const_fold_pass_test.rb`
 
 - [ ] **Step 1: Add failing tests** to `const_fold_pass_test.rb`
 
 ```ruby
   def test_folds_integer_comparison_to_boolean
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 5 < 10; end; f").to_binary
     )
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-    folded = f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true }
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
+    folded = f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == true }
     refute_nil folded
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal true, loaded.eval
   end
 
   def test_folds_integer_equality
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 5 == 5; end; def g; 5 == 6; end").to_binary
     )
     f = find_iseq(ir, "f")
     g = find_iseq(ir, "g")
-    pass = RubyOpt::Passes::ConstFoldPass.new
-    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-    pass.apply(g, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true })
-    assert(g.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == false })
+    pass = Optimize::Passes::ConstFoldPass.new
+    pass.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
+    pass.apply(g, type_env: nil, log: Optimize::Log.new, object_table: ot)
+    assert(f.instructions.any? { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == true })
+    assert(g.instructions.any? { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == false })
   end
 ```
 
@@ -675,7 +675,7 @@ Update the `apply` body's call to use the new name. `LiteralValue.emit` already 
 jj commit -m "ConstFoldPass: fold Integer comparison triples (lt/le/gt/ge/eq/neq)"
 ```
 
-(Files: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
+(Files: `optimizer/lib/optimize/passes/const_fold_pass.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
 
 ---
 
@@ -694,7 +694,7 @@ opt_plus
 After the first fold we have `putobject 3; putobject 3; opt_plus` — the step-back logic already catches this case. Add an explicit outer-loop fixpoint as belt-and-braces so any missed triple-shape is auto-covered, and prove the deep-chain case with a test.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_pass.rb`
 - Modify: `optimizer/test/passes/const_fold_pass_test.rb`
 
 - [ ] **Step 1: Add failing test for deep chain**
@@ -702,28 +702,28 @@ After the first fold we have `putobject 3; putobject 3; opt_plus` — the step-b
 ```ruby
   def test_folds_deep_integer_chain_to_single_literal
     src = "def f; 1 + 2 + 3 + 4 + 5; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
-    folded = f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 15 }
+    log = Optimize::Log.new
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    folded = f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 15 }
     refute_nil folded, "expected the whole chain to fold to 15"
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 15, loaded.eval
   end
 
   def test_partial_chain_fold_when_a_non_literal_breaks_it
     src = "def f(x); 1 + 2 + x + 3 + 4; end; f(10)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     # The literal-only prefix (1+2) folds to 3, AND the literal-only
     # suffix (3+4) folds to 7 — `x` in the middle breaks the chain but
     # each sub-chain folds independently.
-    values = f.instructions.filter_map { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) }
+    values = f.instructions.filter_map { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) }
     assert_includes values, 3
     assert_includes values, 7
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 20, loaded.eval # 3 + 10 + 7
   end
 ```
@@ -768,7 +768,7 @@ end
 jj commit -m "ConstFoldPass: chain folding via internal fixpoint"
 ```
 
-(Files: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
+(Files: `optimizer/lib/optimize/passes/const_fold_pass.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
 
 ---
 
@@ -783,7 +783,7 @@ jj commit -m "ConstFoldPass: chain folding via internal fixpoint"
 **The `Log#skip` signature** only takes `pass:, reason:, file:, line:`. Folds are recorded through the same interface — reason `:folded` — to keep the pipeline's existing log shape. (A richer "fold detail" field can come in a follow-up; the talk's first slide just needs counts by reason.)
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_pass.rb`
 - Modify: `optimizer/test/passes/const_fold_pass_test.rb`
 
 - [ ] **Step 1: Add failing tests**
@@ -791,9 +791,9 @@ jj commit -m "ConstFoldPass: chain folding via internal fixpoint"
 ```ruby
   def test_logs_folded_reason_for_each_successful_fold
     src = "def f; 1 + 2 + 3; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ConstFoldPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: log)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    log = Optimize::Log.new
+    Optimize::Passes::ConstFoldPass.new.apply(find_iseq(ir, "f"), type_env: nil, log: log)
     folded_entries = log.for_pass(:const_fold).select { |e| e.reason == :folded }
     # 1+2 → 3, then 3+3 → 6 (folded triples in sequence)
     assert_operator folded_entries.size, :>=, 2
@@ -801,11 +801,11 @@ jj commit -m "ConstFoldPass: chain folding via internal fixpoint"
 
   def test_logs_would_raise_for_division_by_zero
     src = "def f; 1 / 0; end"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
     # The triple is left alone.
     assert_equal before, f.instructions.map(&:opcode)
     skipped = log.for_pass(:const_fold).select { |e| e.reason == :would_raise }
@@ -814,10 +814,10 @@ jj commit -m "ConstFoldPass: chain folding via internal fixpoint"
 
   def test_logs_non_integer_literal_when_string_operand_reaches_an_arith_op
     src = 'def f; "a" + "b"; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: log, object_table: ot)
     skipped = log.for_pass(:const_fold).select { |e| e.reason == :non_integer_literal }
     assert_operator skipped.size, :>=, 1
   end
@@ -870,7 +870,7 @@ Note: `Log#skip` is the one interface we have — we reuse it for `:folded` too.
 jj commit -m "ConstFoldPass: log :folded, :would_raise, :non_integer_literal"
 ```
 
-(Files: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
+(Files: `optimizer/lib/optimize/passes/const_fold_pass.rb`, `optimizer/test/passes/const_fold_pass_test.rb`.)
 
 ---
 
@@ -879,13 +879,13 @@ jj commit -m "ConstFoldPass: log :folded, :would_raise, :non_integer_literal"
 **Context:** The pipeline currently runs `NoopPass` by default (or tests construct a pipeline explicitly). This task adds a `Pipeline.default` factory, makes `ConstFoldPass` the only default pass, and runs the full codec corpus through it to confirm no regression.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
 - Modify: `optimizer/test/pipeline_test.rb`
 - Create: `optimizer/test/passes/const_fold_pass_corpus_test.rb`
 
 - [ ] **Step 1: Read current pipeline wiring**
 
-Read `optimizer/lib/ruby_opt/pipeline.rb` and `optimizer/test/pipeline_test.rb`. Confirm there is no existing `Pipeline.default`; this task adds it.
+Read `optimizer/lib/optimize/pipeline.rb` and `optimizer/test/pipeline_test.rb`. Confirm there is no existing `Pipeline.default`; this task adds it.
 
 - [ ] **Step 2: Add a failing default-pipeline test** — `optimizer/test/pipeline_test.rb`
 
@@ -893,24 +893,24 @@ Append:
 
 ```ruby
   def test_default_pipeline_folds_integer_literals_in_every_function
-    require "ruby_opt/pipeline"
-    require "ruby_opt/passes/literal_value"
-    ir = RubyOpt::Codec.decode(
+    require "optimize/pipeline"
+    require "optimize/passes/literal_value"
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def f; 2 + 3; end; f").to_binary
     )
-    pipeline = RubyOpt::Pipeline.default
+    pipeline = Optimize::Pipeline.default
     pipeline.run(ir, type_env: nil)
     f = ir.children.flat_map { |c| [c, *(c.children || [])] }.find { |x| x.name == "f" }
-    assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 5 })
+    assert(f.instructions.any? { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 5 })
   end
 ```
 
-- [ ] **Step 3: Add `Pipeline.default`** — `optimizer/lib/ruby_opt/pipeline.rb`:
+- [ ] **Step 3: Add `Pipeline.default`** — `optimizer/lib/optimize/pipeline.rb`:
 
 Add at the top of the file, inside the class body:
 
 ```ruby
-require "ruby_opt/passes/const_fold_pass"
+require "optimize/passes/const_fold_pass"
 
 # ... inside class Pipeline:
 
@@ -924,8 +924,8 @@ end
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/pipeline"
+require "optimize/codec"
+require "optimize/pipeline"
 
 class ConstFoldPassCorpusTest < Minitest::Test
   def test_every_corpus_fixture_loads_and_runs_through_default_pipeline
@@ -933,11 +933,11 @@ class ConstFoldPassCorpusTest < Minitest::Test
     skip "no codec corpus" if corpus.empty?
     corpus.each do |path|
       src = File.read(path)
-      ir = RubyOpt::Codec.decode(
+      ir = Optimize::Codec.decode(
         RubyVM::InstructionSequence.compile(src, path).to_binary
       )
-      RubyOpt::Pipeline.default.run(ir, type_env: nil)
-      bin = RubyOpt::Codec.encode(ir)
+      Optimize::Pipeline.default.run(ir, type_env: nil)
+      bin = Optimize::Codec.encode(ir)
       loaded = RubyVM::InstructionSequence.load_from_binary(bin)
       assert_kind_of RubyVM::InstructionSequence, loaded,
         "#{File.basename(path)} did not re-load after the default pipeline"
@@ -960,7 +960,7 @@ If any corpus fixture fails: the fold is producing a shape the codec can't re-em
 jj commit -m "Wire ConstFoldPass into default pipeline + corpus regression test"
 ```
 
-(Files: `optimizer/lib/ruby_opt/pipeline.rb`, `optimizer/test/pipeline_test.rb`, `optimizer/test/passes/const_fold_pass_corpus_test.rb`.)
+(Files: `optimizer/lib/optimize/pipeline.rb`, `optimizer/test/pipeline_test.rb`, `optimizer/test/passes/const_fold_pass_corpus_test.rb`.)
 
 ---
 
@@ -978,7 +978,7 @@ jj commit -m "Wire ConstFoldPass into default pipeline + corpus regression test"
 ```
 ## Passes
 
-- `RubyOpt::Passes::ConstFoldPass` — tier 1 constant folding. Folds
+- `Optimize::Passes::ConstFoldPass` — tier 1 constant folding. Folds
   Integer literal arithmetic (`+ - * / %`) and Integer literal
   comparison (`< <= > >= == !=`) triples within a basic block,
   iterating until no more folds fire. Division/modulo by zero and

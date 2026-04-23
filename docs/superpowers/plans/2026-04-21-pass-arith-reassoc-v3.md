@@ -20,7 +20,7 @@
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       arith_reassoc_pass.rb              # MODIFIED Task 1 (rename + shape) + Task 2 (opt_minus)
   test/
@@ -48,7 +48,7 @@ The v2 file currently hard-codes `op_spec[:opcode]` in two sites (the forward sc
 All 134 existing tests must stay green.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`
 
 - [ ] **Step 1: Baseline — run the full suite via MCP, confirm 134 green, 0 failures.**
 
@@ -60,21 +60,21 @@ If the baseline is not 134/0, STOP. The plan assumes v2 is fully green. Do not p
 
 - [ ] **Step 2: Replace the pass file with the refactored version.**
 
-Overwrite `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb` with the following. Behavior is identical to v2 for both the additive and multiplicative paths.
+Overwrite `optimizer/lib/optimize/passes/arith_reassoc_pass.rb` with the following. Behavior is identical to v2 for both the additive and multiplicative paths.
 
 ```ruby
 # frozen_string_literal: true
 require "set"
-require "ruby_opt/pass"
-require "ruby_opt/passes/literal_value"
-require "ruby_opt/ir/cfg"
-require "ruby_opt/ir/instruction"
+require "optimize/pass"
+require "optimize/passes/literal_value"
+require "optimize/ir/cfg"
+require "optimize/ir/instruction"
 
-module RubyOpt
+module Optimize
   module Passes
     # Arithmetic reassociation within a basic block, driven by REASSOC_GROUPS.
     # See docs/superpowers/specs/2026-04-21-pass-arith-reassoc-v3-design.md.
-    class ArithReassocPass < RubyOpt::Pass
+    class ArithReassocPass < Optimize::Pass
       # Each entry describes one commutative-associative group of operators:
       #   ops:        opcode => Symbol method used to combine that op's RHS
       #               literal into the running accumulator. Insertion-ordered.
@@ -302,7 +302,7 @@ Notes on what changed from v2, strictly:
 6. Reduction: `inject(op_spec[:identity], op_spec[:reducer])` → `inject(group[:identity]) { |acc, c| acc.send(c[:combiner], c[:value]) }` using a per-producer combiner lookup. For a single-op group this is identical to v2.
 7. `classified` switched from a 3-tuple to a hash. This gives each producer a `combiner` field that Task 2 will exploit; in Task 1 the combiner is always the primary op's (same for every producer in a single-op group).
 8. Tail ops: replaced `original_ops = chain[:op_indices].map { |k| insts[k] }` reuse with `IR::Instruction.new(opcode: group[:primary_op], operands: first_op_inst.operands, line: first_op_inst.line)` construction. For a single-op group these instructions are semantically equivalent to the originals (same opcode, same operands shape — `opt_plus` / `opt_mult` inline-cache operands are reconstituted identically by the codec on re-encode). Extracted to a `build_replacement` helper so Task 2 can override it for the additive group.
-9. Added `require "ruby_opt/ir/instruction"` since we now construct `IR::Instruction` directly.
+9. Added `require "optimize/ir/instruction"` since we now construct `IR::Instruction` directly.
 
 No test changes. No other file changes.
 
@@ -320,7 +320,7 @@ If any test fails: the refactor has drifted from v2 behavior. Most likely culpri
 jj commit -m "ArithReassocPass: refactor REASSOC_OPS → REASSOC_GROUPS (no behavior change)"
 ```
 
-(Files: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`.)
+(Files: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`.)
 
 ---
 
@@ -341,7 +341,7 @@ The multiplicative group's rewrite path is unchanged — its one op is also its 
 Effective sign of a non-literal producer: `+` if its combiner is the primary op's combiner (`:+` for additive, `:*` for multiplicative), `−` otherwise. For the additive group with `primary_op: :opt_plus`, combiner `:+` → sign `+`, combiner `:-` → sign `−`. For any single-op group (today the multiplicative one), every combiner is the primary's, so every non-literal is `+`-signed and the partition is a no-op.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`
 - Modify: `optimizer/test/passes/arith_reassoc_pass_test.rb`
 
 - [ ] **Step 1: Append the failing tests to `arith_reassoc_pass_test.rb`.**
@@ -353,108 +353,108 @@ Open `optimizer/test/passes/arith_reassoc_pass_test.rb`. Insert the following bl
 
   def test_opt_plus_minus_collapses_leading_non_literal_chain
     src = "def f(x); x + 1 - 2 + 3; end; f(10)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_plus }
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_minus }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 2 }
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 2 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 12, loaded.eval
   end
 
   def test_opt_minus_only_chain_emits_negative_literal
     src = "def f(x); x - 1 - 2 - 3; end; f(10)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_plus }
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_minus }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == -6 }
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == -6 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 4, loaded.eval
   end
 
   def test_opt_plus_minus_folds_to_negative_literal
     src = "def f(x); x - 5 + 3; end; f(10)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_plus }
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_minus }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == -2 }
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == -2 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 8, loaded.eval
   end
 
   def test_opt_plus_minus_with_pos_and_neg_non_literals
     # x + 1 - y + 2: pos=[x], neg=[y], literal=3 → emit "x - y + 3"
     src = "def f(x, y); x + 1 - y + 2; end; f(10, 4)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_plus },
       "one opt_plus for the literal tail"
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_minus },
       "one opt_minus between x and y"
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 3 }
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 3 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 9, loaded.eval
   end
 
   def test_opt_plus_minus_all_negative_non_literals_is_skipped
     # 1 - x + 2 - y + 3: pos=[], neg=[x, y] → skip :no_positive_nonliteral.
     src = "def f(x, y); 1 - x + 2 - y + 3; end; f(10, 4)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before_opcodes = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before_opcodes, f.instructions.map(&:opcode),
       ":no_positive_nonliteral should leave the chain untouched"
     entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :no_positive_nonliteral }
     assert_operator entries.size, :>=, 1
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal (1 - 10 + 2 - 4 + 3), loaded.eval # -8
   end
 
   def test_opt_plus_minus_single_leading_negative_is_skipped
     # 1 - x + 2: pos=[], neg=[x] → skip.
     src = "def f(x); 1 - x + 2; end; f(4)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before_opcodes = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before_opcodes, f.instructions.map(&:opcode)
     entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :no_positive_nonliteral }
     assert_operator entries.size, :>=, 1
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal (1 - 4 + 2), loaded.eval # -1
   end
 
   def test_opt_plus_minus_mixed_literal_types_is_skipped
     src = "def f(x); x + 1 - 1.5; end; f(4)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before_opcodes = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before_opcodes, f.instructions.map(&:opcode)
     entries = log.for_pass(:arith_reassoc).select { |e| e.reason == :mixed_literal_types }
@@ -463,35 +463,35 @@ Open `optimizer/test/passes/arith_reassoc_pass_test.rb`. Insert the following bl
 
   def test_opt_minus_single_literal_chain_is_left_alone
     src = "def f(x); x - 1; end; f(10)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before_opcodes = f.instructions.map(&:opcode)
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     assert_equal before_opcodes, f.instructions.map(&:opcode)
   end
 
   def test_opt_plus_minus_no_literals_chain_is_left_alone
     src = "def f(x, y, z); x - y + z; end; f(10, 4, 2)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before_opcodes = f.instructions.map(&:opcode)
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     assert_equal before_opcodes, f.instructions.map(&:opcode)
   end
 
   def test_opt_plus_minus_all_literal_chain_folds
     src = "def f; 3 - 1 - 1; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_plus }
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_minus }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 1 }
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 1 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 1, loaded.eval
   end
 
@@ -500,10 +500,10 @@ Open `optimizer/test/passes/arith_reassoc_pass_test.rb`. Insert the following bl
   def test_mult_exposes_additive_chain_with_minus
     # x + 2 * 3 - 4 → x + 6 - 4 after mult folds → x + 2 after additive re-runs.
     src = "def f(x); x + 2 * 3 - 4; end; f(10)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_mult },
       "mult should have folded 2*3 to a literal"
@@ -511,8 +511,8 @@ Open `optimizer/test/passes/arith_reassoc_pass_test.rb`. Insert the following bl
       "additive re-run should have collapsed to one opt_plus"
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_minus },
       "additive re-run should have folded the minus into the literal"
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 2 }
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 2 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 12, loaded.eval
   end
 
@@ -520,11 +520,11 @@ Open `optimizer/test/passes/arith_reassoc_pass_test.rb`. Insert the following bl
 
   def test_opt_mult_no_literals_chain_is_left_alone
     src = "def f(x, y, z); x * y * z; end; f(2, 3, 4)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before_opcodes = f.instructions.map(&:opcode)
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     assert_equal before_opcodes, f.instructions.map(&:opcode)
   end
 ```
@@ -697,7 +697,7 @@ If a corpus test regresses: the new additive path is producing a shape that `Cod
 jj commit -m "ArithReassocPass: add opt_minus to additive group + sign-aware reorder"
 ```
 
-(Files: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`, `optimizer/test/passes/arith_reassoc_pass_test.rb`.)
+(Files: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`, `optimizer/test/passes/arith_reassoc_pass_test.rb`.)
 
 ---
 
@@ -717,7 +717,7 @@ Use the Read tool on `optimizer/README.md`. Locate the `ArithReassocPass` bullet
 Swap the existing bullet with:
 
 ```
-- `RubyOpt::Passes::ArithReassocPass` — arithmetic reassociation driven by
+- `Optimize::Passes::ArithReassocPass` — arithmetic reassociation driven by
   the `REASSOC_GROUPS` table. Two groups today: the additive group
   (`opt_plus` identity 0, `opt_minus` with sign `-`, primary `opt_plus`) and
   the multiplicative group (`opt_mult` identity 1, primary `opt_mult`).

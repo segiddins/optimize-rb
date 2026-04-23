@@ -27,11 +27,11 @@ so a `(1 << 64) - n` literally stays `(1 << 64) - n`.
 
 Two symmetric bugs fall out:
 
-- **Decode** (`optimizer/lib/ruby_opt/codec/instruction_stream.rb:324`):
+- **Decode** (`optimizer/lib/optimize/codec/instruction_stream.rb:324`):
   `read_small_value` returns the raw unsigned integer; the subsequent
   `next_insn_slot + raw_offset` arithmetic produces an impossible slot
   and the lookup at line 360 raises.
-- **Encode** (`optimizer/lib/ruby_opt/codec/instruction_stream.rb:417`):
+- **Encode** (`optimizer/lib/optimize/codec/instruction_stream.rb:417`):
   `write_small_value` explicitly rejects negative inputs
   (`binary_writer.rb:39`). Even if decode were fixed, any pass preserving
   a backward branch would blow up on re-encode. This path is currently
@@ -76,7 +76,7 @@ belongs at the two OFFSET call sites.
 
 ### Helpers
 
-Add two module-level helpers on `RubyOpt::Codec::InstructionStream`:
+Add two module-level helpers on `Optimize::Codec::InstructionStream`:
 
 ```ruby
 U64_MASK  = (1 << 64) - 1

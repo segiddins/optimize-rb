@@ -18,7 +18,7 @@ Every task ends with `jj split -m "..." <explicit files>` to carve that task's c
 
 ## Running the test suite
 
-Tests run inside the Docker sandbox via the `run_optimizer_tests` MCP tool (see `optimizer/lib/ruby_opt` and the user memory about the Ruby MCP server). **Do not** shell out to `bundle exec rake test` — route through the MCP tool.
+Tests run inside the Docker sandbox via the `run_optimizer_tests` MCP tool (see `optimizer/lib/optimize` and the user memory about the Ruby MCP server). **Do not** shell out to `bundle exec rake test` — route through the MCP tool.
 
 Per-test invocation: the MCP tool accepts a `TESTOPTS="--name=/pattern/"` style filter. When a step says "run test X", invoke the MCP tool with the file path and the `-n /test_name/` filter.
 
@@ -27,7 +27,7 @@ Per-test invocation: the MCP tool accepts a `TESTOPTS="--name=/pattern/"` style 
 ## Task 1: `SlotTypeTable` — signature-param seeding
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/ir/slot_type_table.rb`
+- Create: `optimizer/lib/optimize/ir/slot_type_table.rb`
 - Create: `optimizer/test/ir/slot_type_table_test.rb`
 
 - [ ] **Step 1: Write the failing test for signature-param seeding**
@@ -37,7 +37,7 @@ Create `optimizer/test/ir/slot_type_table_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/ir/slot_type_table"
+require "optimize/ir/slot_type_table"
 
 class SlotTypeTableTest < Minitest::Test
   # A minimal stub IR::Function-ish object — we only need :arg_spec + :instructions.
@@ -47,7 +47,7 @@ class SlotTypeTableTest < Minitest::Test
   def test_seeds_param_slots_from_signature
     fn  = FnStub.new(arg_spec: { lead_num: 2 }, instructions: [], misc: { local_table_size: 2 })
     sig = SigStub.new(arg_types: %w[Point Point])
-    table = RubyOpt::IR::SlotTypeTable.build(fn, sig, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, sig, nil)
 
     assert_equal "Point", table.lookup(0, 0)
     assert_equal "Point", table.lookup(1, 0)
@@ -56,7 +56,7 @@ class SlotTypeTableTest < Minitest::Test
   def test_non_param_slots_are_nil
     fn = FnStub.new(arg_spec: { lead_num: 1 }, instructions: [], misc: { local_table_size: 3 })
     sig = SigStub.new(arg_types: ["Integer"])
-    table = RubyOpt::IR::SlotTypeTable.build(fn, sig, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, sig, nil)
 
     assert_equal "Integer", table.lookup(0, 0)
     assert_nil table.lookup(1, 0)
@@ -65,7 +65,7 @@ class SlotTypeTableTest < Minitest::Test
 
   def test_no_signature_means_empty_seed
     fn = FnStub.new(arg_spec: { lead_num: 1 }, instructions: [], misc: { local_table_size: 1 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
 
     assert_nil table.lookup(0, 0)
   end
@@ -75,16 +75,16 @@ end
 - [ ] **Step 2: Run test to verify it fails**
 
 MCP `run_optimizer_tests` with `test/ir/slot_type_table_test.rb`.
-Expected: FAIL with `LoadError: cannot load such file -- ruby_opt/ir/slot_type_table`.
+Expected: FAIL with `LoadError: cannot load such file -- optimize/ir/slot_type_table`.
 
 - [ ] **Step 3: Minimal implementation**
 
-Create `optimizer/lib/ruby_opt/ir/slot_type_table.rb`:
+Create `optimizer/lib/optimize/ir/slot_type_table.rb`:
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module IR
     # Per-function map from local-slot-index → type-string.
     # v1: populated from (a) RBS signature param types, (b) ClassName.new
@@ -140,7 +140,7 @@ Expected: PASS (3 tests).
 
 ```bash
 jj split -m "feat: IR::SlotTypeTable — signature-param seeding" \
-  optimizer/lib/ruby_opt/ir/slot_type_table.rb \
+  optimizer/lib/optimize/ir/slot_type_table.rb \
   optimizer/test/ir/slot_type_table_test.rb
 ```
 
@@ -149,7 +149,7 @@ jj split -m "feat: IR::SlotTypeTable — signature-param seeding" \
 ## Task 2: `SlotTypeTable` — `ClassName.new` constructor-prop
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/ir/slot_type_table.rb`
+- Modify: `optimizer/lib/optimize/ir/slot_type_table.rb`
 - Modify: `optimizer/test/ir/slot_type_table_test.rb`
 
 - [ ] **Step 1: Write failing tests for constructor-prop**
@@ -169,7 +169,7 @@ Append to `optimizer/test/ir/slot_type_table_test.rb`:
       InstStub.new(opcode: :setlocal_WC_0,         operands: [3]), # LINDEX 3 == slot 0 in size-1 table… see table-size conversion below
     ]
     fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
     assert_equal "Point", table.lookup(0, 0)
   end
 
@@ -179,7 +179,7 @@ Append to `optimizer/test/ir/slot_type_table_test.rb`:
       InstStub.new(opcode: :setlocal_WC_0, operands: [3]),
     ]
     fn = FnStub.new(arg_spec: {}, instructions: insts, misc: { local_table_size: 1 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
     assert_nil table.lookup(0, 0)
   end
 
@@ -266,7 +266,7 @@ end
 
 ```bash
 jj split -m "feat: SlotTypeTable — ClassName.new constructor-prop" \
-  optimizer/lib/ruby_opt/ir/slot_type_table.rb \
+  optimizer/lib/optimize/ir/slot_type_table.rb \
   optimizer/test/ir/slot_type_table_test.rb
 ```
 
@@ -287,10 +287,10 @@ Append:
   def test_cross_level_lookup_walks_to_parent
     parent_fn  = FnStub.new(arg_spec: { lead_num: 1 }, instructions: [], misc: { local_table_size: 1 })
     parent_sig = SigStub.new(arg_types: ["Point"])
-    parent = RubyOpt::IR::SlotTypeTable.build(parent_fn, parent_sig, nil)
+    parent = Optimize::IR::SlotTypeTable.build(parent_fn, parent_sig, nil)
 
     child_fn = FnStub.new(arg_spec: {}, instructions: [], misc: { local_table_size: 0 })
-    child = RubyOpt::IR::SlotTypeTable.build(child_fn, nil, parent)
+    child = Optimize::IR::SlotTypeTable.build(child_fn, nil, parent)
 
     assert_nil child.lookup(0, 0)
     assert_equal "Point", child.lookup(0, 1)
@@ -298,7 +298,7 @@ Append:
 
   def test_lookup_above_root_returns_nil
     fn = FnStub.new(arg_spec: {}, instructions: [], misc: { local_table_size: 0 })
-    table = RubyOpt::IR::SlotTypeTable.build(fn, nil, nil)
+    table = Optimize::IR::SlotTypeTable.build(fn, nil, nil)
     assert_nil table.lookup(0, 3)
   end
 ```
@@ -317,7 +317,7 @@ jj split -m "test: SlotTypeTable — cross-level lookup coverage" \
 ## Task 4: `TypeEnv` — `signature_for_function` + `new_returns?`
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/type_env.rb`
+- Modify: `optimizer/lib/optimize/type_env.rb`
 - Modify: `optimizer/test/type_env_test.rb`
 
 - [ ] **Step 1: Write failing tests**
@@ -327,7 +327,7 @@ Append to `optimizer/test/type_env_test.rb`:
 ```ruby
   def test_signature_for_function_matches_top_level_def
     FnStub = Struct.new(:name, :type, :path, :first_lineno, :misc, keyword_init: true) unless defined?(FnStub)
-    env = RubyOpt::TypeEnv.from_source(<<~RUBY, "t.rb")
+    env = Optimize::TypeEnv.from_source(<<~RUBY, "t.rb")
       # @rbs (Integer) -> Integer
       def inc(a); a + 1; end
     RUBY
@@ -339,7 +339,7 @@ Append to `optimizer/test/type_env_test.rb`:
   end
 
   def test_signature_for_function_matches_instance_method_with_class_context
-    env = RubyOpt::TypeEnv.from_source(<<~RUBY, "t.rb")
+    env = Optimize::TypeEnv.from_source(<<~RUBY, "t.rb")
       class Point
         # @rbs (Point) -> Float
         def distance_to(o); 0.0; end
@@ -352,7 +352,7 @@ Append to `optimizer/test/type_env_test.rb`:
   end
 
   def test_new_returns_identity
-    env = RubyOpt::TypeEnv.from_source("", "t.rb")
+    env = Optimize::TypeEnv.from_source("", "t.rb")
     assert_equal "Point", env.new_returns?("Point")
   end
 ```
@@ -361,7 +361,7 @@ Append to `optimizer/test/type_env_test.rb`:
 
 - [ ] **Step 3: Implement the two queries**
 
-Modify `optimizer/lib/ruby_opt/type_env.rb`:
+Modify `optimizer/lib/optimize/type_env.rb`:
 
 ```ruby
 def signature_for_function(function, class_context:)
@@ -380,7 +380,7 @@ end
 
 ```bash
 jj split -m "feat: TypeEnv — signature_for_function + new_returns?" \
-  optimizer/lib/ruby_opt/type_env.rb \
+  optimizer/lib/optimize/type_env.rb \
   optimizer/test/type_env_test.rb
 ```
 
@@ -389,7 +389,7 @@ jj split -m "feat: TypeEnv — signature_for_function + new_returns?" \
 ## Task 5: `Pipeline` — pre-build slot-type / signature maps, thread as extras
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
 - Modify: `optimizer/test/pipeline_test.rb`
 
 Goal: `Pipeline#run` walks the iseq tree once, builds `slot_type_map: Hash{Function => SlotTypeTable}` (keyed by identity via `compare_by_identity`) and `signature_map: Hash{Function => Signature}`. Both are passed to every `pass.apply` via the existing `**extras` channel.
@@ -399,7 +399,7 @@ Goal: `Pipeline#run` walks the iseq tree once, builds `slot_type_map: Hash{Funct
 Append to `optimizer/test/pipeline_test.rb` (a minimal spy pass that asserts extras presence):
 
 ```ruby
-  class ExtrasSpyPass < RubyOpt::Pass
+  class ExtrasSpyPass < Optimize::Pass
     attr_reader :seen_slot_map, :seen_signature_map
     def name = :extras_spy
     def apply(function, type_env:, log:, object_table: nil, slot_type_map: nil, signature_map: nil, **_extras)
@@ -411,8 +411,8 @@ Append to `optimizer/test/pipeline_test.rb` (a minimal spy pass that asserts ext
   def test_pipeline_threads_slot_type_map_and_signature_map
     ir = build_trivial_top_level_ir # existing helper OR inline-build
     spy = ExtrasSpyPass.new
-    pipeline = RubyOpt::Pipeline.new([spy])
-    type_env = RubyOpt::TypeEnv.from_source("", "t.rb")
+    pipeline = Optimize::Pipeline.new([spy])
+    type_env = Optimize::TypeEnv.from_source("", "t.rb")
     pipeline.run(ir, type_env: type_env)
     refute_nil spy.seen_slot_map
     refute_nil spy.seen_signature_map
@@ -425,10 +425,10 @@ If no `build_trivial_top_level_ir` exists in `pipeline_test.rb` yet, inline a st
 
 - [ ] **Step 3: Implement**
 
-Modify `optimizer/lib/ruby_opt/pipeline.rb`:
+Modify `optimizer/lib/optimize/pipeline.rb`:
 
 ```ruby
-require "ruby_opt/ir/slot_type_table"
+require "optimize/ir/slot_type_table"
 
 # ...
 
@@ -492,7 +492,7 @@ end
 
 ```bash
 jj split -m "feat: Pipeline threads slot_type_map + signature_map as pass extras" \
-  optimizer/lib/ruby_opt/pipeline.rb \
+  optimizer/lib/optimize/pipeline.rb \
   optimizer/test/pipeline_test.rb
 ```
 
@@ -501,7 +501,7 @@ jj split -m "feat: Pipeline threads slot_type_map + signature_map as pass extras
 ## Task 6: `callee_map` — key instance methods by `(receiver_class, method_name)`
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
 - Modify: `optimizer/test/pipeline_test.rb`
 
 - [ ] **Step 1: Write failing test**
@@ -509,7 +509,7 @@ jj split -m "feat: Pipeline threads slot_type_map + signature_map as pass extras
 Append to `optimizer/test/pipeline_test.rb`:
 
 ```ruby
-  class CalleeMapSpyPass < RubyOpt::Pass
+  class CalleeMapSpyPass < Optimize::Pass
     attr_reader :seen_callee_map
     def name = :callee_map_spy
     def apply(function, type_env:, log:, callee_map: {}, **_extras)
@@ -519,20 +519,20 @@ Append to `optimizer/test/pipeline_test.rb`:
 
   def test_callee_map_keys_instance_methods_by_class_and_method
     # Synthesize an IR where root is :top, child is :class (Point), grandchild is :method (distance_to).
-    method_fn = RubyOpt::IR::Function.new(
+    method_fn = Optimize::IR::Function.new(
       name: "distance_to", type: :method, path: "t.rb", first_lineno: 3, misc: {},
       instructions: [], children: [],
     )
-    class_fn = RubyOpt::IR::Function.new(
+    class_fn = Optimize::IR::Function.new(
       name: "Point", type: :class, path: "t.rb", first_lineno: 1, misc: {},
       instructions: [], children: [method_fn],
     )
-    top_fn = RubyOpt::IR::Function.new(
+    top_fn = Optimize::IR::Function.new(
       name: "<main>", type: :top, path: "t.rb", first_lineno: 1, misc: {},
       instructions: [], children: [class_fn],
     )
     spy = CalleeMapSpyPass.new
-    RubyOpt::Pipeline.new([spy]).run(top_fn, type_env: nil)
+    Optimize::Pipeline.new([spy]).run(top_fn, type_env: nil)
 
     assert_same method_fn, spy.seen_callee_map[["Point", :distance_to]]
   end
@@ -573,7 +573,7 @@ end
 
 ```bash
 jj split -m "feat: Pipeline callee_map keys instance methods by (class, :mid)" \
-  optimizer/lib/ruby_opt/pipeline.rb \
+  optimizer/lib/optimize/pipeline.rb \
   optimizer/test/pipeline_test.rb
 ```
 
@@ -582,7 +582,7 @@ jj split -m "feat: Pipeline callee_map keys instance methods by (class, :mid)" \
 ## Task 7: `InliningPass` — OPT_SEND-eligible `disqualify` variant (permits plain sends)
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Modify: `optimizer/test/passes/inlining_pass_test.rb`
 
 - [ ] **Step 1: Write failing tests**
@@ -598,7 +598,7 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
       IR::Instruction.new(opcode: :opt_send_without_block, operands: [fake_cd(:x, 0)], line: 1),
       IR::Instruction.new(opcode: :leave, operands: [], line: 1),
     ])
-    pass = RubyOpt::Passes::InliningPass.new
+    pass = Optimize::Passes::InliningPass.new
     assert_nil pass.send(:disqualify_callee_for_opt_send, callee)
   end
 
@@ -607,7 +607,7 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
       IR::Instruction.new(opcode: :getinstancevariable, operands: [0, 0], line: 1),
       IR::Instruction.new(opcode: :leave, operands: [], line: 1),
     ])
-    pass = RubyOpt::Passes::InliningPass.new
+    pass = Optimize::Passes::InliningPass.new
     assert_equal :callee_uses_ivar, pass.send(:disqualify_callee_for_opt_send, callee)
   end
 
@@ -616,7 +616,7 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
       IR::Instruction.new(opcode: :branchunless, operands: [2], line: 1),
       IR::Instruction.new(opcode: :leave, operands: [], line: 1),
     ])
-    pass = RubyOpt::Passes::InliningPass.new
+    pass = Optimize::Passes::InliningPass.new
     assert_equal :callee_has_branches, pass.send(:disqualify_callee_for_opt_send, callee)
   end
 ```
@@ -668,7 +668,7 @@ Also: add `:callee_uses_ivar` / `:callee_uses_block` / `:callee_send_has_block` 
 
 ```bash
 jj split -m "feat: InliningPass — OPT_SEND-eligible callee classifier (permits plain sends)" \
-  optimizer/lib/ruby_opt/passes/inlining_pass.rb \
+  optimizer/lib/optimize/passes/inlining_pass.rb \
   optimizer/test/passes/inlining_pass_test.rb
 ```
 
@@ -677,7 +677,7 @@ jj split -m "feat: InliningPass — OPT_SEND-eligible callee classifier (permits
 ## Task 8: `InliningPass` — OPT_SEND recognizer, constant-body path
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Modify: `optimizer/test/passes/inlining_pass_test.rb`
 
 **Scope:** argc=1 OPT_SEND, receiver producer is `getlocal*` at level 0 pointing at a typed slot; callee body has no `putself` (zero self-ops), so no self-stash is grown. Arg is stashed; receiver is stashed but never referenced. This is the minimum viable splice, upgraded in Task 9 with self-rewrite.
@@ -710,7 +710,7 @@ Append to `inlining_pass_test.rb`:
       ],
     )
 
-    slot_table = RubyOpt::IR::SlotTypeTable.build(
+    slot_table = Optimize::IR::SlotTypeTable.build(
       caller,
       signature_stub(arg_types: ["Point", "Point"]),
       nil,
@@ -719,11 +719,11 @@ Append to `inlining_pass_test.rb`:
     slot_type_map[caller] = slot_table
 
     object_table = make_object_table(%i[distance_to other])
-    pass = RubyOpt::Passes::InliningPass.new
+    pass = Optimize::Passes::InliningPass.new
     pass.apply(
       caller,
       type_env: stub_type_env(for_class: "Point", mid: :distance_to),
-      log: RubyOpt::Log.new,
+      log: Optimize::Log.new,
       object_table: object_table,
       callee_map: { ["Point", :distance_to] => callee },
       slot_type_map: slot_type_map,
@@ -895,7 +895,7 @@ Do **not** hook cross-level lookup correctness yet; Task 11 replaces `decode_get
 
 ```bash
 jj split -m "feat: InliningPass — OPT_SEND recognizer, constant-body path (no self-rewrite)" \
-  optimizer/lib/ruby_opt/passes/inlining_pass.rb \
+  optimizer/lib/optimize/passes/inlining_pass.rb \
   optimizer/test/passes/inlining_pass_test.rb
 ```
 
@@ -904,7 +904,7 @@ jj split -m "feat: InliningPass — OPT_SEND recognizer, constant-body path (no 
 ## Task 9: `InliningPass` — self-stash + `putself` rewrite
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Modify: `optimizer/test/passes/inlining_pass_test.rb`
 
 **Scope:** callee bodies may now contain one or more `putself` ops (rewritten to `getlocal <self_stash> level=0`). Receiver stash becomes a real local. Total growth: +2 slots.
@@ -1042,7 +1042,7 @@ Note the splice range changes: the original recv producer at `send_idx - 2` stay
 
 ```bash
 jj split -m "feat: InliningPass — self-stash + putself rewrite for OPT_SEND" \
-  optimizer/lib/ruby_opt/passes/inlining_pass.rb \
+  optimizer/lib/optimize/passes/inlining_pass.rb \
   optimizer/test/passes/inlining_pass_test.rb
 ```
 
@@ -1099,7 +1099,7 @@ jj split -m "test: InliningPass OPT_SEND — guard coverage for all skip reasons
 ## Task 11: `InliningPass` — cross-level receiver (block iseq reads parent slot)
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Modify: `optimizer/test/passes/inlining_pass_test.rb`
 
 **Scope:** the benchmark shape is `1_000_000.times { p.distance_to(q) }` — the call site lives in a block iseq, and `p` / `q` live in the parent's local table. The block uses `getlocal_WC_1` to read them. `decode_getlocal` must read the parent's `local_table_size` to compute the slot correctly, and SlotTypeTable's cross-level lookup supplies the type from the parent table.
@@ -1191,8 +1191,8 @@ Pass `slot_table` into `decode_getlocal` instead of `function`.
 
 ```bash
 jj split -m "feat: InliningPass — cross-iseq-level receiver lookup for block call sites" \
-  optimizer/lib/ruby_opt/passes/inlining_pass.rb \
-  optimizer/lib/ruby_opt/ir/slot_type_table.rb \
+  optimizer/lib/optimize/passes/inlining_pass.rb \
+  optimizer/lib/optimize/ir/slot_type_table.rb \
   optimizer/test/passes/inlining_pass_test.rb
 ```
 
@@ -1241,10 +1241,10 @@ Append to `optimizer/test/pipeline_test.rb`:
     source = File.read(File.expand_path("../examples/point_distance.rb", __dir__))
     iseq = RubyVM::InstructionSequence.compile(source, "point_distance.rb", "point_distance.rb")
     binary = iseq.to_binary
-    ir = RubyOpt::Codec.decode(binary)
-    type_env = RubyOpt::TypeEnv.from_source(source, "point_distance.rb")
-    log = RubyOpt::Pipeline.default.run(ir, type_env: type_env)
-    modified = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(binary)
+    type_env = Optimize::TypeEnv.from_source(source, "point_distance.rb")
+    log = Optimize::Pipeline.default.run(ir, type_env: type_env)
+    modified = Optimize::Codec.encode(ir)
     reloaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, reloaded
 

@@ -63,9 +63,9 @@ any ENV write anywhere in the IR tree. See §Soundness gate.
 
 ## Architecture
 
-### New file: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+### New file: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
 
-A new `RubyOpt::Passes::ConstFoldEnvPass` alongside `ConstFoldPass`
+A new `Optimize::Passes::ConstFoldEnvPass` alongside `ConstFoldPass`
 rather than an expansion of it. Rationale: `ConstFoldPass` is cleanly
 "Integer-on-Integer triple"; this pass has a different shape (2- and
 3-tuples, string-typed result, whole-tree precondition). Keeping them
@@ -107,7 +107,7 @@ every `pass.apply` call alongside `type_env:`, `log:`, `object_table:`,
 absorbs it).
 
 ```ruby
-# optimizer/lib/ruby_opt/pipeline.rb
+# optimizer/lib/optimize/pipeline.rb
 def run(ir, type_env:, env_snapshot: nil)
   # ...
   pass.apply(

@@ -112,7 +112,7 @@ Flow per fixture:
    `RubyVM::InstructionSequence.compile_file` with the harness
    *not* installed. Disasm to text; store as `before_iseq`.
 3. **Generate "after full pipeline" iseq.** Same source compiled
-   with `RubyOpt::Harness` installed and `Pipeline.default`. Disasm;
+   with `Optimize::Harness` installed and `Pipeline.default`. Disasm;
    store as `after_full_iseq`.
 4. **Per-pass snapshots.** For each prefix of `walkthrough` with
    length 1..N, construct `Pipeline.new(passes: <prefix>)`, re-parse

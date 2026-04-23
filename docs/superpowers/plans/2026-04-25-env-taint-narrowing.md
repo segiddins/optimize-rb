@@ -14,9 +14,9 @@
 
 ## File map
 
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
   - Require `set` (for `Set`).
-  - Require `ruby_opt/ir/call_data`.
+  - Require `optimize/ir/call_data`.
   - Add `SAFE_ENV_READ_METHODS` constant.
   - Rewrite `classify` to dispatch to a `consumer_safe?` helper.
   - Add `consumer_safe?(insts, i, object_table)` returning `[safe?, consumer_line]`.
@@ -41,13 +41,13 @@
   ```ruby
   def test_env_fetch_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.fetch("B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -74,7 +74,7 @@
 ## Task 2: Green — narrow the classifier
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
 
 - [ ] **Step 1: Add requires and the safe-method constant.**
 
@@ -82,10 +82,10 @@
 
   ```ruby
   require "set"
-  require "ruby_opt/ir/call_data"
+  require "optimize/ir/call_data"
   ```
 
-  Inside `class ConstFoldEnvPass < RubyOpt::Pass`, near the other constant (`TAINT_FLAG_KEY`), add:
+  Inside `class ConstFoldEnvPass < Optimize::Pass`, near the other constant (`TAINT_FLAG_KEY`), add:
 
   ```ruby
   # Read-only ENV methods that cannot mutate ENV. A send on ENV with one
@@ -193,13 +193,13 @@
   ```ruby
   def test_env_to_h_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.to_h; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -214,13 +214,13 @@
   ```ruby
   def test_env_key_question_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.key?("B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -238,14 +238,14 @@
   def test_env_values_at_two_args_still_taints_v1
     # v1 scope: argc>=2 safe methods are NOT narrowed; still taint.
     src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
     before_r = r.instructions.map(&:opcode)
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -265,14 +265,14 @@
     # opt_aset is not on the safe list — still taints.
     # Wrap in a def so the taint classifier has a function to scan.
     src = 'def r; ENV["A"]; end; def w; ENV["B"] = "x"; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
     before_r = r.instructions.map(&:opcode)
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end

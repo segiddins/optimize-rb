@@ -19,7 +19,7 @@
 ```
 optimizer/
   lib/
-    ruby_opt/
+    optimize/
       codec/
         iseq_envelope.rb    # MODIFIED in Task 1 (re-encode instructions from IR)
       ir/
@@ -56,27 +56,27 @@ optimizer/
 ### Task 1: Re-encode instructions from `IR::Instruction` on modification
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_list.rb` (if its verbatim-region path blocks re-encoded instructions; inspect before editing)
+- Modify: `optimizer/lib/optimize/codec/iseq_envelope.rb`
+- Modify: `optimizer/lib/optimize/codec/iseq_list.rb` (if its verbatim-region path blocks re-encoded instructions; inspect before editing)
 - Create: `optimizer/test/codec/encode_modifications_test.rb`
 
 **Context:** Today `IseqEnvelope.encode` writes `misc[:raw_body]` verbatim and `IseqList.encode` writes the entire iseq data region (including instruction bytes) verbatim. That's why the round-trip is byte-identical without the encoder actually doing work. This task makes the encoder respect `function.instructions`: if the instruction array has been mutated, the new bytes from `InstructionStream.encode` replace the original at the same offset.
 
-**Scope constraint:** The re-encoded instruction bytes MUST be the same length as the original. If they differ, raise `RubyOpt::Codec::EncoderSizeChange` with a clear message. Full re-serialization (supporting length changes for inlining) is a later plan.
+**Scope constraint:** The re-encoded instruction bytes MUST be the same length as the original. If they differ, raise `Optimize::Codec::EncoderSizeChange` with a clear message. Full re-serialization (supporting length changes for inlining) is a later plan.
 
 - [ ] **Step 1: Write the failing test** — `optimizer/test/codec/encode_modifications_test.rb`
 
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/ir/instruction"
+require "optimize/codec"
+require "optimize/ir/instruction"
 
 class EncodeModificationsTest < Minitest::Test
   def test_modifying_putobject_operand_changes_bytes
     src = "def f; 1 + 2; end; f"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     f = ir.children.find { |c| c.name == "f" }
     refute_nil f
@@ -85,7 +85,7 @@ class EncodeModificationsTest < Minitest::Test
     assert putobjects.size >= 2, "expected 2+ putobject ops, got #{f.instructions.inspect}"
     putobjects[1].operands[0] = 5
 
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     refute_equal original, modified, "expected re-encoded bytes to differ after mutation"
     # And the modified program still loads and runs
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
@@ -96,21 +96,21 @@ class EncodeModificationsTest < Minitest::Test
   def test_round_trip_is_still_identity_when_instructions_unmodified
     src = "[1, 2, 3].map { |n| n * 2 }"
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
     assert_equal original, re_encoded
   end
 
   def test_length_change_raises_encoder_size_change
     src = "def f; 1 + 2; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     f = ir.children.find { |c| c.name == "f" }
     # Drop an instruction — this will change the byte count.
     f.instructions.pop
-    assert_raises(RubyOpt::Codec::EncoderSizeChange) do
-      RubyOpt::Codec.encode(ir)
+    assert_raises(Optimize::Codec::EncoderSizeChange) do
+      Optimize::Codec.encode(ir)
     end
   end
 end
@@ -121,7 +121,7 @@ end
 Run: `mcp__ruby-bytecode__run_optimizer_tests` with `test_filter: "test/codec/encode_modifications_test.rb"`
 Expected: test_modifying_putobject_operand_changes_bytes fails (modified==original because raw bytes are used), test_length_change raises NameError (EncoderSizeChange not defined).
 
-- [ ] **Step 3: Define the new exception** in `optimizer/lib/ruby_opt/codec.rb`
+- [ ] **Step 3: Define the new exception** in `optimizer/lib/optimize/codec.rb`
 
 Add alongside the other exceptions:
 
@@ -135,10 +135,10 @@ Add alongside the other exceptions:
 
 - [ ] **Step 4: Modify `IseqEnvelope.encode` to re-encode instructions from IR**
 
-Read `optimizer/lib/ruby_opt/codec/iseq_envelope.rb` end-to-end first. The encode path currently writes `function.misc[:raw_body]` verbatim. The new behavior:
+Read `optimizer/lib/optimize/codec/iseq_envelope.rb` end-to-end first. The encode path currently writes `function.misc[:raw_body]` verbatim. The new behavior:
 
 1. Re-encode `function.instructions` via `InstructionStream.encode(function.instructions, object_table, all_functions)`. Note: `InstructionStream.encode`'s existing signature may not take `object_table` / `all_functions`; use whatever it needs to serialize.
-2. Compare the re-encoded bytes' length to `function.misc[:raw_bytecode].bytesize`. If different, raise `RubyOpt::Codec::EncoderSizeChange` with message `"instruction re-encode changed size: was #{original_len}, got #{new_len} in iseq #{function.name}"`.
+2. Compare the re-encoded bytes' length to `function.misc[:raw_bytecode].bytesize`. If different, raise `Optimize::Codec::EncoderSizeChange` with message `"instruction re-encode changed size: was #{original_len}, got #{new_len} in iseq #{function.name}"`.
 3. Splice the new instruction bytes into `function.misc[:raw_bytecode]` (or into the region `IseqList` emits) at the correct offset.
 
 The surrounding iseq data region (local_table, catch_table, line_info, etc.) still comes from the raw region — only the instruction bytes change. The existing round-trip tests MUST continue to pass because InstructionStream round-trips byte-for-byte on unmodified input.
@@ -164,14 +164,14 @@ If a prior round-trip test fails, the new encode path has a bug — most likely 
 jj commit -m "Re-encode instructions from IR on modification"
 ```
 
-(files: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`, `optimizer/lib/ruby_opt/codec/iseq_list.rb` if modified, `optimizer/lib/ruby_opt/codec.rb`, `optimizer/test/codec/encode_modifications_test.rb`)
+(files: `optimizer/lib/optimize/codec/iseq_envelope.rb`, `optimizer/lib/optimize/codec/iseq_list.rb` if modified, `optimizer/lib/optimize/codec.rb`, `optimizer/test/codec/encode_modifications_test.rb`)
 
 ---
 
 ### Task 2: `IR::BasicBlock`
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/ir/basic_block.rb`
+- Create: `optimizer/lib/optimize/ir/basic_block.rb`
 - Create: `optimizer/test/ir/basic_block_test.rb`
 
 **Context:** A basic block is a maximal straight-line sequence of YARV instructions with one entry and one exit (branch, return/`leave`, or fallthrough into the next block). Leaders are identified by: first instruction of the iseq, target of any branch, instruction immediately following a branch or `leave`. This task defines the data structure; the next task builds the CFG that wires blocks together.
@@ -181,16 +181,16 @@ jj commit -m "Re-encode instructions from IR on modification"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/ir/basic_block"
-require "ruby_opt/ir/instruction"
+require "optimize/ir/basic_block"
+require "optimize/ir/instruction"
 
 class BasicBlockTest < Minitest::Test
   def test_holds_instructions_in_order
     insns = [
-      RubyOpt::IR::Instruction.new(opcode: :putobject, operands: [1], line: 1),
-      RubyOpt::IR::Instruction.new(opcode: :leave, operands: [], line: 1),
+      Optimize::IR::Instruction.new(opcode: :putobject, operands: [1], line: 1),
+      Optimize::IR::Instruction.new(opcode: :leave, operands: [], line: 1),
     ]
-    bb = RubyOpt::IR::BasicBlock.new(id: 0, instructions: insns)
+    bb = Optimize::IR::BasicBlock.new(id: 0, instructions: insns)
     assert_equal 0, bb.id
     assert_equal 2, bb.instructions.size
     assert_equal :leave, bb.terminator.opcode
@@ -198,15 +198,15 @@ class BasicBlockTest < Minitest::Test
 
   def test_terminator_is_last_instruction
     insns = [
-      RubyOpt::IR::Instruction.new(opcode: :putobject, operands: [1], line: 1),
-      RubyOpt::IR::Instruction.new(opcode: :branchif, operands: [10], line: 1),
+      Optimize::IR::Instruction.new(opcode: :putobject, operands: [1], line: 1),
+      Optimize::IR::Instruction.new(opcode: :branchif, operands: [10], line: 1),
     ]
-    bb = RubyOpt::IR::BasicBlock.new(id: 1, instructions: insns)
+    bb = Optimize::IR::BasicBlock.new(id: 1, instructions: insns)
     assert_equal :branchif, bb.terminator.opcode
   end
 
   def test_empty_block_has_nil_terminator
-    bb = RubyOpt::IR::BasicBlock.new(id: 2, instructions: [])
+    bb = Optimize::IR::BasicBlock.new(id: 2, instructions: [])
     assert_nil bb.terminator
   end
 end
@@ -221,7 +221,7 @@ Run via MCP with `test_filter: "test/ir/basic_block_test.rb"`.
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module IR
     # One basic block in a function's CFG: a maximal straight-line
     # sequence of instructions with one entry (first instruction) and
@@ -257,15 +257,15 @@ Expected: 3 new runs pass; total suite 41 runs.
 jj commit -m "Add IR::BasicBlock"
 ```
 
-(files: `optimizer/lib/ruby_opt/ir/basic_block.rb`, `optimizer/test/ir/basic_block_test.rb`)
+(files: `optimizer/lib/optimize/ir/basic_block.rb`, `optimizer/test/ir/basic_block_test.rb`)
 
 ---
 
 ### Task 3: CFG construction + `Function#cfg`
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/ir/cfg.rb`
-- Modify: `optimizer/lib/ruby_opt/ir/function.rb`
+- Create: `optimizer/lib/optimize/ir/cfg.rb`
+- Modify: `optimizer/lib/optimize/ir/function.rb`
 - Create: `optimizer/test/ir/cfg_test.rb`
 
 **Context:** The CFG is the control-flow graph of a function — a list of basic blocks plus directed edges. Build it by scanning the instruction list, identifying leaders (first instruction; target of any branch; instruction after a branch or terminator), and slicing the instruction list into blocks. Edges come from branch operands and fall-throughs.
@@ -283,13 +283,13 @@ Branch operand encoding: YARV instructions use signed instruction-index offsets.
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/ir/cfg"
+require "optimize/codec"
+require "optimize/ir/cfg"
 
 class CfgTest < Minitest::Test
   def test_straight_line_function_has_one_block
     src = "def f; 1 + 2; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     f = ir.children.find { |c| c.name == "f" }
@@ -301,7 +301,7 @@ class CfgTest < Minitest::Test
 
   def test_conditional_produces_two_successors
     src = "def f(x); if x then 1 else 2 end; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     f = ir.children.find { |c| c.name == "f" }
@@ -316,7 +316,7 @@ class CfgTest < Minitest::Test
 
   def test_predecessors_are_inverse_of_successors
     src = "def f(x); if x then 1 else 2 end; end"
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile(src).to_binary
     )
     f = ir.children.find { |c| c.name == "f" }
@@ -333,13 +333,13 @@ end
 
 - [ ] **Step 2: Run, expect failures.**
 
-- [ ] **Step 3: Implement `CFG`** — `optimizer/lib/ruby_opt/ir/cfg.rb`
+- [ ] **Step 3: Implement `CFG`** — `optimizer/lib/optimize/ir/cfg.rb`
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/ir/basic_block"
+require "optimize/ir/basic_block"
 
-module RubyOpt
+module Optimize
   module IR
     # Control-flow graph of a function. Blocks are computed once from the
     # function's instruction list; successors/predecessors are queried via
@@ -447,15 +447,15 @@ module RubyOpt
 end
 ```
 
-- [ ] **Step 4: Add `#cfg` to `IR::Function`** — `optimizer/lib/ruby_opt/ir/function.rb`
+- [ ] **Step 4: Add `#cfg` to `IR::Function`** — `optimizer/lib/optimize/ir/function.rb`
 
 Append a method to the Struct (or reopen it):
 
 ```ruby
 # At the bottom of the file, replace the plain Struct.new(...) assignment with:
-require "ruby_opt/ir/cfg"
+require "optimize/ir/cfg"
 
-module RubyOpt
+module Optimize
   module IR
     Function.class_eval do
       def cfg
@@ -490,14 +490,14 @@ Expected: 3 new cfg tests + 3 bb tests all pass; total suite 44 runs, 0 failures
 jj commit -m "Build CFG and expose Function#cfg"
 ```
 
-(files: `optimizer/lib/ruby_opt/ir/cfg.rb`, `optimizer/lib/ruby_opt/ir/function.rb`, `optimizer/test/ir/cfg_test.rb`, plus `optimizer/lib/ruby_opt/codec/instruction_stream.rb` if Step 5 fix (a) was applied)
+(files: `optimizer/lib/optimize/ir/cfg.rb`, `optimizer/lib/optimize/ir/function.rb`, `optimizer/test/ir/cfg_test.rb`, plus `optimizer/lib/optimize/codec/instruction_stream.rb` if Step 5 fix (a) was applied)
 
 ---
 
-### Task 4: `RubyOpt::Contract`
+### Task 4: `Optimize::Contract`
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/contract.rb`
+- Create: `optimizer/lib/optimize/contract.rb`
 - Create: `optimizer/test/contract_test.rb`
 
 **Context:** The contract is the hardcoded set of assumptions the optimizer makes, from the design spec. Passes consult it but don't configure it — accepting the optimizer means accepting all clauses. This task codifies it as a simple module with named predicates.
@@ -507,11 +507,11 @@ jj commit -m "Build CFG and expose Function#cfg"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/contract"
+require "optimize/contract"
 
 class ContractTest < Minitest::Test
   def test_all_five_clauses_are_asserted
-    c = RubyOpt::Contract
+    c = Optimize::Contract
     assert c.no_bop_redefinition?
     assert c.no_prepend_after_load?
     assert c.rbs_signatures_truthful?
@@ -520,12 +520,12 @@ class ContractTest < Minitest::Test
   end
 
   def test_clauses_returns_all_five
-    assert_equal 5, RubyOpt::Contract.clauses.size
-    assert_includes RubyOpt::Contract.clauses, :no_bop_redefinition
+    assert_equal 5, Optimize::Contract.clauses.size
+    assert_includes Optimize::Contract.clauses, :no_bop_redefinition
   end
 
   def test_describe_returns_human_readable_strings
-    text = RubyOpt::Contract.describe
+    text = Optimize::Contract.describe
     assert_kind_of String, text
     assert_match(/BOP/i, text)
     assert_match(/prepend/i, text)
@@ -543,7 +543,7 @@ end
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   # The hardcoded ground rules the optimizer assumes. Accepting the
   # optimizer means accepting all five. Breaking any is a miscompile,
   # not a slowdown.
@@ -581,14 +581,14 @@ end
 jj commit -m "Add hardcoded Contract module"
 ```
 
-(files: `optimizer/lib/ruby_opt/contract.rb`, `optimizer/test/contract_test.rb`)
+(files: `optimizer/lib/optimize/contract.rb`, `optimizer/test/contract_test.rb`)
 
 ---
 
-### Task 5: `RubyOpt::Log`
+### Task 5: `Optimize::Log`
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/log.rb`
+- Create: `optimizer/lib/optimize/log.rb`
 - Create: `optimizer/test/log_test.rb`
 
 **Context:** Every "I could have optimized this but didn't" decision from a pass gets logged with source location, pass name, and reason. The talk uses this as demo material. Structure is simple — an append-only array of `Entry` structs exposed via `Log#entries`.
@@ -598,11 +598,11 @@ jj commit -m "Add hardcoded Contract module"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/log"
+require "optimize/log"
 
 class LogTest < Minitest::Test
   def test_records_entries_with_pass_name_and_reason
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     log.skip(pass: :inlining, reason: :receiver_not_resolvable, file: "a.rb", line: 12)
     log.skip(pass: :const_fold, reason: :mutable_receiver, file: "a.rb", line: 15)
     assert_equal 2, log.entries.size
@@ -614,7 +614,7 @@ class LogTest < Minitest::Test
   end
 
   def test_for_pass_filters_entries
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     log.skip(pass: :inlining, reason: :a, file: "x", line: 1)
     log.skip(pass: :arith, reason: :b, file: "x", line: 2)
     inlining_only = log.for_pass(:inlining)
@@ -623,7 +623,7 @@ class LogTest < Minitest::Test
   end
 
   def test_empty_log_has_no_entries
-    assert_empty RubyOpt::Log.new.entries
+    assert_empty Optimize::Log.new.entries
   end
 end
 ```
@@ -635,7 +635,7 @@ end
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   class Log
     Entry = Struct.new(:pass, :reason, :file, :line, keyword_init: true)
 
@@ -666,14 +666,14 @@ end
 jj commit -m "Add structured optimizer Log"
 ```
 
-(files: `optimizer/lib/ruby_opt/log.rb`, `optimizer/test/log_test.rb`)
+(files: `optimizer/lib/optimize/log.rb`, `optimizer/test/log_test.rb`)
 
 ---
 
-### Task 6: `RubyOpt::Pass` base + `NoopPass`
+### Task 6: `Optimize::Pass` base + `NoopPass`
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/pass.rb`
+- Create: `optimizer/lib/optimize/pass.rb`
 - Create: `optimizer/test/pass_test.rb`
 
 **Context:** A pass operates on an `IR::Function` and optionally mutates its instructions. The base class defines the contract (one method: `apply`), gives passes access to the type env / contract / log, and provides a name. `NoopPass` is proof-of-life — it exists so Task 7's pipeline test can exercise pass orchestration without waiting on real passes.
@@ -683,19 +683,19 @@ jj commit -m "Add structured optimizer Log"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/pass"
-require "ruby_opt/log"
-require "ruby_opt/codec"
+require "optimize/pass"
+require "optimize/log"
+require "optimize/codec"
 
 class PassTest < Minitest::Test
   def test_noop_pass_does_not_change_instructions
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("1 + 2").to_binary
     )
     f = ir.children.first # outer iseq
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::NoopPass.new.apply(f, type_env: nil, log: log)
+    log = Optimize::Log.new
+    Optimize::NoopPass.new.apply(f, type_env: nil, log: log)
     after = f.instructions.map(&:opcode)
     assert_equal before, after
     assert_empty log.entries
@@ -703,24 +703,24 @@ class PassTest < Minitest::Test
 
   def test_base_pass_apply_raises_not_implemented
     assert_raises(NotImplementedError) do
-      RubyOpt::Pass.new.apply(nil, type_env: nil, log: nil)
+      Optimize::Pass.new.apply(nil, type_env: nil, log: nil)
     end
   end
 
   def test_pass_has_a_name
-    assert_equal :noop, RubyOpt::NoopPass.new.name
+    assert_equal :noop, Optimize::NoopPass.new.name
   end
 end
 ```
 
 - [ ] **Step 2: Run, expect LoadError.**
 
-- [ ] **Step 3: Implement `Pass` + `NoopPass`** — `optimizer/lib/ruby_opt/pass.rb`
+- [ ] **Step 3: Implement `Pass` + `NoopPass`** — `optimizer/lib/optimize/pass.rb`
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   # Abstract base class for optimizer passes. Subclasses override #apply
   # and optionally #name.
   class Pass
@@ -728,9 +728,9 @@ module RubyOpt
     # `function.instructions` or `function.children` but must log any
     # skipped optimization decisions to `log`.
     #
-    # @param function [RubyOpt::IR::Function]
-    # @param type_env [RubyOpt::TypeEnv, nil]
-    # @param log     [RubyOpt::Log]
+    # @param function [Optimize::IR::Function]
+    # @param type_env [Optimize::TypeEnv, nil]
+    # @param log     [Optimize::Log]
     def apply(function, type_env:, log:)
       raise NotImplementedError
     end
@@ -762,14 +762,14 @@ end
 jj commit -m "Add Pass base class and NoopPass"
 ```
 
-(files: `optimizer/lib/ruby_opt/pass.rb`, `optimizer/test/pass_test.rb`)
+(files: `optimizer/lib/optimize/pass.rb`, `optimizer/test/pass_test.rb`)
 
 ---
 
-### Task 7: `RubyOpt::Pipeline`
+### Task 7: `Optimize::Pipeline`
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/pipeline.rb`
+- Create: `optimizer/lib/optimize/pipeline.rb`
 - Create: `optimizer/test/pipeline_test.rb`
 
 **Context:** Runs a fixed ordered list of passes over an `IR::Function` and all its descendants, threading through a shared `Log`. Catches pass exceptions, logs them as skips (pass name + reason `:pass_raised`), and continues with remaining passes so one bad pass doesn't abort the file.
@@ -779,12 +779,12 @@ jj commit -m "Add Pass base class and NoopPass"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/pipeline"
-require "ruby_opt/pass"
-require "ruby_opt/codec"
+require "optimize/pipeline"
+require "optimize/pass"
+require "optimize/codec"
 
 class PipelineTest < Minitest::Test
-  class TrackingPass < RubyOpt::Pass
+  class TrackingPass < Optimize::Pass
     attr_reader :visited
 
     def initialize(name_sym)
@@ -801,7 +801,7 @@ class PipelineTest < Minitest::Test
     end
   end
 
-  class RaisingPass < RubyOpt::Pass
+  class RaisingPass < Optimize::Pass
     def apply(function, type_env:, log:)
       raise "boom"
     end
@@ -812,7 +812,7 @@ class PipelineTest < Minitest::Test
   end
 
   def ir
-    RubyOpt::Codec.decode(
+    Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile("def a; 1; end; def b; 2; end").to_binary
     )
   end
@@ -820,18 +820,18 @@ class PipelineTest < Minitest::Test
   def test_runs_passes_in_order_over_each_function
     t1 = TrackingPass.new(:first)
     t2 = TrackingPass.new(:second)
-    pipeline = RubyOpt::Pipeline.new([t1, t2])
+    pipeline = Optimize::Pipeline.new([t1, t2])
     log = pipeline.run(ir, type_env: nil)
     # Each pass visits every Function (outer + a + b)
     assert_equal 3, t1.visited.size
     assert_equal 3, t2.visited.size
-    assert_kind_of RubyOpt::Log, log
+    assert_kind_of Optimize::Log, log
   end
 
   def test_raising_pass_logs_and_continues
     raiser = RaisingPass.new
     tracker = TrackingPass.new(:tracker)
-    pipeline = RubyOpt::Pipeline.new([raiser, tracker])
+    pipeline = Optimize::Pipeline.new([raiser, tracker])
     log = pipeline.run(ir, type_env: nil)
 
     raised_entries = log.for_pass(:raising)
@@ -846,20 +846,20 @@ end
 
 - [ ] **Step 2: Run, expect LoadError.**
 
-- [ ] **Step 3: Implement `Pipeline`** — `optimizer/lib/ruby_opt/pipeline.rb`
+- [ ] **Step 3: Implement `Pipeline`** — `optimizer/lib/optimize/pipeline.rb`
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/log"
+require "optimize/log"
 
-module RubyOpt
+module Optimize
   class Pipeline
     def initialize(passes)
       @passes = passes
     end
 
     # Run all passes over every Function in the IR tree.
-    # Returns the RubyOpt::Log accumulated during the run.
+    # Returns the Optimize::Log accumulated during the run.
     def run(ir, type_env:)
       log = Log.new
       each_function(ir) do |function|
@@ -899,14 +899,14 @@ end
 jj commit -m "Add Pipeline for ordered pass execution"
 ```
 
-(files: `optimizer/lib/ruby_opt/pipeline.rb`, `optimizer/test/pipeline_test.rb`)
+(files: `optimizer/lib/optimize/pipeline.rb`, `optimizer/test/pipeline_test.rb`)
 
 ---
 
-### Task 8: `RubyOpt::RbsParser` — extract `@rbs` inline comments
+### Task 8: `Optimize::RbsParser` — extract `@rbs` inline comments
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/rbs_parser.rb`
+- Create: `optimizer/lib/optimize/rbs_parser.rb`
 - Create: `optimizer/test/rbs_parser_test.rb`
 
 **Context:** Inline `@rbs` comments attach type info to Ruby source without separate `.rbs` files. Syntax (from rbs-inline): a line comment starting with `# @rbs` immediately preceding a method def declares that method's signature. For this plan we support only the simplest form — a single-line `@rbs` attached to a top-level method or instance method:
@@ -925,7 +925,7 @@ We use `prism` (already in the Gemfile) to walk the AST and find `DefNode`s, the
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/rbs_parser"
+require "optimize/rbs_parser"
 
 class RbsParserTest < Minitest::Test
   def test_captures_top_level_def_signature
@@ -933,7 +933,7 @@ class RbsParserTest < Minitest::Test
       # @rbs (Integer, Integer) -> Integer
       def add(a, b); a + b; end
     RUBY
-    sigs = RubyOpt::RbsParser.parse(src, "test.rb")
+    sigs = Optimize::RbsParser.parse(src, "test.rb")
     assert_equal 1, sigs.size
     s = sigs.first
     assert_equal :add, s.method_name
@@ -951,7 +951,7 @@ class RbsParserTest < Minitest::Test
         end
       end
     RUBY
-    sigs = RubyOpt::RbsParser.parse(src, "test.rb")
+    sigs = Optimize::RbsParser.parse(src, "test.rb")
     s = sigs.find { |x| x.method_name == :distance_to }
     refute_nil s
     assert_equal "Point", s.receiver_class
@@ -965,26 +965,26 @@ class RbsParserTest < Minitest::Test
       # @rbs (Integer) -> Integer
       def annotated(a); a; end
     RUBY
-    sigs = RubyOpt::RbsParser.parse(src, "test.rb")
+    sigs = Optimize::RbsParser.parse(src, "test.rb")
     assert_equal 1, sigs.size
     assert_equal :annotated, sigs.first.method_name
   end
 
   def test_returns_empty_array_when_no_annotations
-    assert_empty RubyOpt::RbsParser.parse("def hi; end", "test.rb")
+    assert_empty Optimize::RbsParser.parse("def hi; end", "test.rb")
   end
 end
 ```
 
 - [ ] **Step 2: Run, expect LoadError.**
 
-- [ ] **Step 3: Implement `RbsParser`** — `optimizer/lib/ruby_opt/rbs_parser.rb`
+- [ ] **Step 3: Implement `RbsParser`** — `optimizer/lib/optimize/rbs_parser.rb`
 
 ```ruby
 # frozen_string_literal: true
 require "prism"
 
-module RubyOpt
+module Optimize
   # Minimal parser for inline `@rbs` comments.
   #
   # Recognized form (one-line signature immediately preceding a def):
@@ -1094,14 +1094,14 @@ end
 jj commit -m "Add RbsParser for inline @rbs signatures"
 ```
 
-(files: `optimizer/lib/ruby_opt/rbs_parser.rb`, `optimizer/test/rbs_parser_test.rb`)
+(files: `optimizer/lib/optimize/rbs_parser.rb`, `optimizer/test/rbs_parser_test.rb`)
 
 ---
 
-### Task 9: `RubyOpt::TypeEnv`
+### Task 9: `Optimize::TypeEnv`
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/type_env.rb`
+- Create: `optimizer/lib/optimize/type_env.rb`
 - Create: `optimizer/test/type_env_test.rb`
 
 **Context:** Wraps the output of `RbsParser` with a query interface passes will consume. For this plan we ship only the one query passes are known to need: `signature_for(receiver_class, method_name) -> Signature`. Class-of / call-resolution helpers come in pass plans as they're needed.
@@ -1111,7 +1111,7 @@ jj commit -m "Add RbsParser for inline @rbs signatures"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/type_env"
+require "optimize/type_env"
 
 class TypeEnvTest < Minitest::Test
   def test_lookup_by_class_and_method_returns_signature
@@ -1124,7 +1124,7 @@ class TypeEnvTest < Minitest::Test
         def distance_to(other); 0.0; end
       end
     RUBY
-    env = RubyOpt::TypeEnv.from_source(src, "test.rb")
+    env = Optimize::TypeEnv.from_source(src, "test.rb")
 
     top = env.signature_for(receiver_class: nil, method_name: :add)
     refute_nil top
@@ -1136,26 +1136,26 @@ class TypeEnvTest < Minitest::Test
   end
 
   def test_lookup_with_no_signature_returns_nil
-    env = RubyOpt::TypeEnv.from_source("def hi; end", "test.rb")
+    env = Optimize::TypeEnv.from_source("def hi; end", "test.rb")
     assert_nil env.signature_for(receiver_class: nil, method_name: :hi)
   end
 
   def test_empty_env_for_empty_source
-    env = RubyOpt::TypeEnv.from_source("", "test.rb")
-    assert_kind_of RubyOpt::TypeEnv, env
+    env = Optimize::TypeEnv.from_source("", "test.rb")
+    assert_kind_of Optimize::TypeEnv, env
   end
 end
 ```
 
 - [ ] **Step 2: Run, expect LoadError.**
 
-- [ ] **Step 3: Implement `TypeEnv`** — `optimizer/lib/ruby_opt/type_env.rb`
+- [ ] **Step 3: Implement `TypeEnv`** — `optimizer/lib/optimize/type_env.rb`
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/rbs_parser"
+require "optimize/rbs_parser"
 
-module RubyOpt
+module Optimize
   class TypeEnv
     def self.from_source(source, file)
       new(RbsParser.parse(source, file))
@@ -1187,14 +1187,14 @@ end
 jj commit -m "Add TypeEnv over RbsParser output"
 ```
 
-(files: `optimizer/lib/ruby_opt/type_env.rb`, `optimizer/test/type_env_test.rb`)
+(files: `optimizer/lib/optimize/type_env.rb`, `optimizer/test/type_env_test.rb`)
 
 ---
 
 ### Task 10: Magic-comment opt-out helper
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/harness.rb` (partial — just the helper)
+- Create: `optimizer/lib/optimize/harness.rb` (partial — just the helper)
 - Create: `optimizer/test/harness_test.rb` (partial)
 
 **Context:** Files opt out of optimization with `# rbs-optimize: false` anywhere in the first ~5 lines of the file. This task implements the detection helper in isolation, tested without hooking `load_iseq`.
@@ -1204,39 +1204,39 @@ jj commit -m "Add TypeEnv over RbsParser output"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/harness"
+require "optimize/harness"
 
 class HarnessOptOutTest < Minitest::Test
   def test_opt_out_detected_in_top_comment
     src = "# rbs-optimize: false\nputs 1\n"
-    assert RubyOpt::Harness.opted_out?(src)
+    assert Optimize::Harness.opted_out?(src)
   end
 
   def test_default_is_opted_in
-    assert_equal false, RubyOpt::Harness.opted_out?("puts 1\n")
+    assert_equal false, Optimize::Harness.opted_out?("puts 1\n")
   end
 
   def test_opt_out_in_deep_comment_is_ignored
     src = "puts 1\n" * 20 + "# rbs-optimize: false\n"
-    assert_equal false, RubyOpt::Harness.opted_out?(src),
+    assert_equal false, Optimize::Harness.opted_out?(src),
       "only the top of the file is scanned for the opt-out"
   end
 
   def test_matches_with_loose_whitespace
-    assert RubyOpt::Harness.opted_out?("#rbs-optimize:false\n")
-    assert RubyOpt::Harness.opted_out?("#   rbs-optimize:   false   \n")
+    assert Optimize::Harness.opted_out?("#rbs-optimize:false\n")
+    assert Optimize::Harness.opted_out?("#   rbs-optimize:   false   \n")
   end
 end
 ```
 
 - [ ] **Step 2: Run, expect LoadError.**
 
-- [ ] **Step 3: Implement the helper** — `optimizer/lib/ruby_opt/harness.rb` (first cut)
+- [ ] **Step 3: Implement the helper** — `optimizer/lib/optimize/harness.rb` (first cut)
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Harness
     OPT_OUT_RE = /\A#\s*rbs-optimize\s*:\s*false\s*\z/
 
@@ -1259,14 +1259,14 @@ end
 jj commit -m "Add Harness.opted_out? helper"
 ```
 
-(files: `optimizer/lib/ruby_opt/harness.rb`, `optimizer/test/harness_test.rb`)
+(files: `optimizer/lib/optimize/harness.rb`, `optimizer/test/harness_test.rb`)
 
 ---
 
 ### Task 11: `load_iseq` override
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/harness.rb`
+- Modify: `optimizer/lib/optimize/harness.rb`
 - Modify: `optimizer/test/harness_test.rb`
 - Create: `optimizer/test/harness_fixtures/plain.rb`
 - Create: `optimizer/test/harness_fixtures/opted_out.rb`
@@ -1304,10 +1304,10 @@ class HarnessLoadIseqTest < Minitest::Test
   def setup
     @passes_seen = []
     passes = [TrackingNoopPass.new(@passes_seen)]
-    @harness = RubyOpt::Harness::LoadIseqHook.new(passes: passes)
+    @harness = Optimize::Harness::LoadIseqHook.new(passes: passes)
   end
 
-  class TrackingNoopPass < RubyOpt::Pass
+  class TrackingNoopPass < Optimize::Pass
     def initialize(tracker)
       @tracker = tracker
     end
@@ -1345,17 +1345,17 @@ class HarnessLoadIseqTest < Minitest::Test
 end
 ```
 
-These tests require `require "ruby_opt/pass"` at the top of the file if not already there.
+These tests require `require "optimize/pass"` at the top of the file if not already there.
 
-- [ ] **Step 3: Extend `optimizer/lib/ruby_opt/harness.rb`**
+- [ ] **Step 3: Extend `optimizer/lib/optimize/harness.rb`**
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/codec"
-require "ruby_opt/pipeline"
-require "ruby_opt/type_env"
+require "optimize/codec"
+require "optimize/pipeline"
+require "optimize/type_env"
 
-module RubyOpt
+module Optimize
   module Harness
     OPT_OUT_RE = /\A#\s*rbs-optimize\s*:\s*false\s*\z/
 
@@ -1413,7 +1413,7 @@ module RubyOpt
         modified = Codec.encode(ir)
         RubyVM::InstructionSequence.load_from_binary(modified)
       rescue => e
-        warn "[ruby_opt] harness fell back on #{path}: #{e.class}: #{e.message}"
+        warn "[optimize] harness fell back on #{path}: #{e.class}: #{e.message}"
         nil
       end
     end
@@ -1433,7 +1433,7 @@ If the `load_iseq` tests fail because Ruby's `load` caches the file and doesn't 
 jj commit -m "Add load_iseq harness with opt-out and fallback"
 ```
 
-(files: `optimizer/lib/ruby_opt/harness.rb`, `optimizer/test/harness_test.rb`, `optimizer/test/harness_fixtures/plain.rb`, `optimizer/test/harness_fixtures/opted_out.rb`)
+(files: `optimizer/lib/optimize/harness.rb`, `optimizer/test/harness_test.rb`, `optimizer/test/harness_fixtures/plain.rb`, `optimizer/test/harness_fixtures/opted_out.rb`)
 
 ---
 
@@ -1457,27 +1457,27 @@ Read the current `optimizer/README.md`, then replace the `## Status` and `## Lay
   plan.
 - **IR**: `IR::Function` (one per iseq), `IR::Instruction` (one per YARV op),
   `IR::BasicBlock` and `IR::CFG` for control-flow analysis.
-- **Passes**: base class (`RubyOpt::Pass`), orchestrator (`RubyOpt::Pipeline`),
-  hardcoded contract (`RubyOpt::Contract`), structured log (`RubyOpt::Log`).
+- **Passes**: base class (`Optimize::Pass`), orchestrator (`Optimize::Pipeline`),
+  hardcoded contract (`Optimize::Contract`), structured log (`Optimize::Log`).
   A `NoopPass` ships as proof-of-life. Real passes come in subsequent plans.
-- **Type env**: `RubyOpt::RbsParser` extracts inline `@rbs` signatures;
-  `RubyOpt::TypeEnv` exposes `#signature_for`.
-- **Harness**: `RubyOpt::Harness::LoadIseqHook` installs a `load_iseq`
+- **Type env**: `Optimize::RbsParser` extracts inline `@rbs` signatures;
+  `Optimize::TypeEnv` exposes `#signature_for`.
+- **Harness**: `Optimize::Harness::LoadIseqHook` installs a `load_iseq`
   override that runs the pipeline on every loaded file. Opt out with
   `# rbs-optimize: false` at the top of the file. Any failure falls back
   to MRI's built-in compilation.
 
 ## Layout
 
-- `lib/ruby_opt/codec/` — YARB binary surgery
-- `lib/ruby_opt/ir/` — `Function`, `Instruction`, `BasicBlock`, `CFG`
-- `lib/ruby_opt/pass.rb` — Pass base class + NoopPass
-- `lib/ruby_opt/pipeline.rb` — pass orchestration
-- `lib/ruby_opt/contract.rb` — the hardcoded ground rules
-- `lib/ruby_opt/log.rb` — structured optimizer log
-- `lib/ruby_opt/rbs_parser.rb` — inline `@rbs` extraction
-- `lib/ruby_opt/type_env.rb` — typed-environment queries
-- `lib/ruby_opt/harness.rb` — `load_iseq` override
+- `lib/optimize/codec/` — YARB binary surgery
+- `lib/optimize/ir/` — `Function`, `Instruction`, `BasicBlock`, `CFG`
+- `lib/optimize/pass.rb` — Pass base class + NoopPass
+- `lib/optimize/pipeline.rb` — pass orchestration
+- `lib/optimize/contract.rb` — the hardcoded ground rules
+- `lib/optimize/log.rb` — structured optimizer log
+- `lib/optimize/rbs_parser.rb` — inline `@rbs` extraction
+- `lib/optimize/type_env.rb` — typed-environment queries
+- `lib/optimize/harness.rb` — `load_iseq` override
 - `test/` — minitest suites, fixtures under `test/harness_fixtures/`
 ```
 

@@ -12,12 +12,12 @@
 
 ## File map
 
-- Modify: `optimizer/lib/ruby_opt/codec/object_table.rb`
+- Modify: `optimizer/lib/optimize/codec/object_table.rb`
   - `intern` (lines 202–215): accept `String`, freeze-and-dup on append.
   - `encode` (lines 139–183): dispatch `write_special_const` vs
     `write_string` in the append loop.
   - New private `write_string(writer, value)` next to `write_special_const`.
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
   - Replace the `index_for(value) || skip` branch (lines 68–76) with
     `intern(value)`. Leave the non-String defensive leg.
 - Modify: `optimizer/test/codec/object_table_intern_test.rb` (add string tests).
@@ -42,7 +42,7 @@ Append to `optimizer/test/codec/object_table_intern_test.rb`, before the final `
 ```ruby
   def test_intern_appends_string_and_round_trips
     src = "def f; 2 + 3; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     before_size = ot.objects.size
 
@@ -51,8 +51,8 @@ Append to `optimizer/test/codec/object_table_intern_test.rb`, before the final `
     assert_equal "hello", ot.objects[idx]
     assert_predicate ot.objects[idx], :frozen?
 
-    modified = RubyOpt::Codec.encode(ir)
-    reloaded = RubyOpt::Codec.decode(modified)
+    modified = Optimize::Codec.encode(ir)
+    reloaded = Optimize::Codec.decode(modified)
     assert_equal "hello", reloaded.misc[:object_table].objects[idx]
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
@@ -61,7 +61,7 @@ Append to `optimizer/test/codec/object_table_intern_test.rb`, before the final `
 
   def test_intern_string_returns_existing_index_when_literal_present
     src = 'def f; "already_here"; end; f'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     existing = ot.index_for("already_here")
     refute_nil existing, "literal must exist in the table"
@@ -71,7 +71,7 @@ Append to `optimizer/test/codec/object_table_intern_test.rb`, before the final `
   end
 
   def test_intern_still_rejects_arrays_and_hashes
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile("def f; 1; end; f").to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile("def f; 1; end; f").to_binary)
     ot = ir.misc[:object_table]
     assert_raises(ArgumentError) { ot.intern([1, 2]) }
     assert_raises(ArgumentError) { ot.intern({ a: 1 }) }
@@ -100,7 +100,7 @@ jj commit -m "test: red — ObjectTable#intern string round-trip" \
 ## Task 2: Green — relax `intern` and emit T_STRING
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/object_table.rb`
+- Modify: `optimizer/lib/optimize/codec/object_table.rb`
 
 - [ ] **Step 1: Dispatch in the encode-append loop**
 
@@ -197,7 +197,7 @@ Expected: all green.
 
 ```
 jj commit -m "codec: ObjectTable#intern accepts frozen strings; emit T_STRING in append path" \
-  optimizer/lib/ruby_opt/codec/object_table.rb \
+  optimizer/lib/optimize/codec/object_table.rb \
   optimizer/test/codec/object_table_intern_test.rb
 ```
 
@@ -206,7 +206,7 @@ jj commit -m "codec: ObjectTable#intern accepts frozen strings; emit T_STRING in
 ## Task 3: ConstFoldEnvPass — call `intern` instead of skipping
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
 - Modify: `optimizer/test/passes/const_fold_env_pass_test.rb`
 
 - [ ] **Step 1: Red — rewrite the `not_interned` test to assert folding**
@@ -220,13 +220,13 @@ In `optimizer/test/passes/const_fold_env_pass_test.rb` replace
     # After string-intern support, the pass MUST fold by interning the
     # snapshot value into the object table.
     src = 'def f; ENV["K"]; end; f'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     snap = { "K" => "xyzzy" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -239,7 +239,7 @@ In `optimizer/test/passes/const_fold_env_pass_test.rb` replace
     assert_equal 0, not_interned, ":env_value_not_interned should no longer fire for strings"
 
     # End-to-end: the re-encoded binary loads and returns the snapshot value.
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal "xyzzy", loaded.eval
   end
 ```
@@ -254,7 +254,7 @@ Expected: fails because the pass currently skips and leaves `opt_aref`.
 
 - [ ] **Step 3: Green — update the pass**
 
-In `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb` replace lines
+In `optimizer/lib/optimize/passes/const_fold_env_pass.rb` replace lines
 65–82 (the `replacement = ...` branch) with:
 
 ```ruby
@@ -292,7 +292,7 @@ Expected: all green. If anything else regressed, stop and diagnose.
 
 ```
 jj commit -m "const_fold_env: intern snapshot string so ENV[LIT] folds unconditionally" \
-  optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb \
+  optimizer/lib/optimize/passes/const_fold_env_pass.rb \
   optimizer/test/passes/const_fold_env_pass_test.rb
 ```
 

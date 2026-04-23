@@ -135,7 +135,7 @@ The log entry does not carry the operator or the group identity. As in v2, a rea
 Unchanged from v1/v2:
 
 ```ruby
-class RubyOpt::Passes::ArithReassocPass < RubyOpt::Pass
+class Optimize::Passes::ArithReassocPass < Optimize::Pass
   def name = :arith_reassoc
   def apply(function, type_env:, log:, object_table: nil)
 end
@@ -147,7 +147,7 @@ end
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       arith_reassoc_pass.rb              # MODIFIED — REASSOC_OPS → REASSOC_GROUPS + opt_minus
   test/
@@ -163,7 +163,7 @@ No new files. No new public interfaces. `REASSOC_OPS` is renamed in Task 1; the 
 
 1. **Task 1 (refactor):** all 134 existing tests green, zero new tests. Any test asserting on `REASSOC_OPS` (if any exist) is renamed to `REASSOC_GROUPS` and shape-updated.
 
-2. **Task 2 unit tests** (hand-built IR via `RubyVM::InstructionSequence.compile` → `RubyOpt::Codec.decode`; round-trip every case through `RubyOpt::Codec.encode` + `RubyVM::InstructionSequence.load_from_binary(...).eval` and compare to un-optimized evaluation):
+2. **Task 2 unit tests** (hand-built IR via `RubyVM::InstructionSequence.compile` → `Optimize::Codec.decode`; round-trip every case through `Optimize::Codec.encode` + `RubyVM::InstructionSequence.load_from_binary(...).eval` and compare to un-optimized evaluation):
 
    - `def f(x); x + 1 - 2 + 3; end; f(10)` → exactly one `opt_plus`, zero `opt_minus`, a literal `2`, `.eval == 12`. Baseline additive-group test.
    - `def f(x); x - 1 - 2 - 3; end; f(10)` → exactly one `opt_plus`, zero `opt_minus`, a literal `-6`, `.eval == 4`. Negative-literal emission test.

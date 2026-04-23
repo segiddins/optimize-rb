@@ -159,7 +159,7 @@ The log entry does not carry the operator, the group identity, or the `kind`. As
 Unchanged from v1/v2/v3:
 
 ```ruby
-class RubyOpt::Passes::ArithReassocPass < RubyOpt::Pass
+class Optimize::Passes::ArithReassocPass < Optimize::Pass
   def name = :arith_reassoc
   def apply(function, type_env:, log:, object_table: nil)
 end
@@ -171,7 +171,7 @@ end
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       arith_reassoc_pass.rb              # MODIFIED — kind: field + :ordered walker
   test/
@@ -187,7 +187,7 @@ No new public interfaces.
 
 ## Test strategy
 
-All unit tests hand-build IR via `RubyVM::InstructionSequence.compile` → `RubyOpt::Codec.decode`; round-trip every case through `RubyOpt::Codec.encode` + `RubyVM::InstructionSequence.load_from_binary(...).eval` and compare to un-optimized evaluation. Tests are routed through the `ruby-bytecode` MCP tools (no host shell).
+All unit tests hand-build IR via `RubyVM::InstructionSequence.compile` → `Optimize::Codec.decode`; round-trip every case through `Optimize::Codec.encode` + `RubyVM::InstructionSequence.load_from_binary(...).eval` and compare to un-optimized evaluation. Tests are routed through the `ruby-bytecode` MCP tools (no host shell).
 
 1. **Task 1 (refactor):** all 148 existing tests green, zero new tests. The `kind:` field is added with both entries at `:abelian` (multiplicative still single-op, behavior identical to v3).
 

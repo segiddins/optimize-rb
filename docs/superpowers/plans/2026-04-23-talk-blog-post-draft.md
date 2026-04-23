@@ -297,8 +297,8 @@ jj squash -u
 - `docs/superpowers/specs/2026-04-19-pass-inlining.md`, `…-pass-arith-specialization.md`, `…-pass-const-fold.md`
 - `docs/superpowers/specs/2026-04-22-rbs-type-env-v1-design.md`
 - `docs/superpowers/specs/2026-04-23-pipeline-fixed-point-iteration-design.md`
-- `optimizer/lib/ruby_opt/pipeline.rb` (for the real pass order in `Pipeline.default`)
-- Per-pass source files under `optimizer/lib/ruby_opt/passes/`
+- `optimizer/lib/optimize/pipeline.rb` (for the real pass order in `Pipeline.default`)
+- Per-pass source files under `optimizer/lib/optimize/passes/`
 
 - [ ] **Step 5.1: Draft the architecture overview.**
 

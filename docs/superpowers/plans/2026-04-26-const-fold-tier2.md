@@ -18,11 +18,11 @@ Approved: 2026-04-26 (pre-approved in session prompt)
 ## Files
 
 New:
-- `optimizer/lib/ruby_opt/passes/const_fold_tier2_pass.rb`
+- `optimizer/lib/optimize/passes/const_fold_tier2_pass.rb`
 - `optimizer/test/passes/const_fold_tier2_pass_test.rb`
 
 Edit:
-- `optimizer/lib/ruby_opt/pipeline.rb` (insert pass)
+- `optimizer/lib/optimize/pipeline.rb` (insert pass)
 - `docs/TODO.md` (status table + ranked list)
 
 ## Execution

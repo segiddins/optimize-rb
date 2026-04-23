@@ -20,7 +20,7 @@
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       arith_reassoc_pass.rb              # MODIFIED Task 1 (kind: dispatch) + Task 2 (:ordered walker)
   test/
@@ -43,11 +43,11 @@ No new source files. No pipeline wiring changes (`Pipeline.default` already carr
 All 148 existing tests must stay green after this task.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`
 
 - [ ] **Step 1: Add `kind:` to both `REASSOC_GROUPS` entries**
 
-Edit `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`, replacing the `REASSOC_GROUPS` constant (currently lines 19–22) with:
+Edit `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`, replacing the `REASSOC_GROUPS` constant (currently lines 19–22) with:
 
 ```ruby
       REASSOC_GROUPS = [
@@ -80,7 +80,7 @@ Run via `mcp__ruby-bytecode__run_optimizer_tests` with no filter. Expected: 148 
 
 - [ ] **Step 3: Rename `try_rewrite_chain` to `try_rewrite_chain_abelian`**
 
-In `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`, rename the existing private method `try_rewrite_chain` (currently starting at line 144) to `try_rewrite_chain_abelian`. The method body is unchanged. Its one caller is inside `rewrite_once` (line 78).
+In `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`, rename the existing private method `try_rewrite_chain` (currently starting at line 144) to `try_rewrite_chain_abelian`. The method body is unchanged. Its one caller is inside `rewrite_once` (line 78).
 
 - [ ] **Step 4: Add a new `try_rewrite_chain` dispatcher**
 
@@ -119,7 +119,7 @@ Run via `mcp__ruby-bytecode__run_optimizer_tests`. Expected: 148 passes. Both ex
 jj commit -m "ArithReassocPass: add kind: field + dispatch (no behavior change)"
 ```
 
-(If running in parallel with other subagents, substitute `jj split -m "ArithReassocPass: add kind: field + dispatch (no behavior change)" -- optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`.)
+(If running in parallel with other subagents, substitute `jj split -m "ArithReassocPass: add kind: field + dispatch (no behavior change)" -- optimizer/lib/optimize/passes/arith_reassoc_pass.rb`.)
 
 ---
 
@@ -130,7 +130,7 @@ jj commit -m "ArithReassocPass: add kind: field + dispatch (no behavior change)"
 Test-driven: write one unit test, run it (fails), implement just enough to pass, repeat. Commit at natural checkpoints inside this task (the plan marks three — baseline fold, boundary bail, guards — after which the remaining tests should pass without further implementation changes).
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`
 - Modify: `optimizer/test/passes/arith_reassoc_pass_test.rb`
 - Create: `optimizer/test/codec/corpus/arith_multdiv.rb`
 
@@ -145,16 +145,16 @@ Append to `optimizer/test/passes/arith_reassoc_pass_test.rb`, inside the `ArithR
 
   def test_mult_div_same_op_div_chain_folds
     src = "def f(x); x / 2 / 3; end; f(60)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_div }
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_mult }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 6 }
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 10, loaded.eval
   end
 ```
@@ -165,7 +165,7 @@ Run via `mcp__ruby-bytecode__run_optimizer_tests` with filter `test_mult_div_sam
 
 - [ ] **Step 3: Flip the multiplicative entry to `:ordered` with `opt_div` in its ops**
 
-Edit `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`. Replace the multiplicative `REASSOC_GROUPS` entry (the second entry added in Task 1) with:
+Edit `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`. Replace the multiplicative `REASSOC_GROUPS` entry (the second entry added in Task 1) with:
 
 ```ruby
         { ops: { opt_mult: :*, opt_div: :/ }, identity: 1, primary_op: :opt_mult, kind: :ordered },
@@ -175,7 +175,7 @@ At this point running the full suite will route multiplicative chains into `try_
 
 - [ ] **Step 4: Implement `try_rewrite_chain_ordered`**
 
-Replace the stub `try_rewrite_chain_ordered` in `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb` with the full implementation:
+Replace the stub `try_rewrite_chain_ordered` in `optimizer/lib/optimize/passes/arith_reassoc_pass.rb` with the full implementation:
 
 ```ruby
       def try_rewrite_chain_ordered(insts, chain, function, log, object_table, group:)
@@ -336,17 +336,17 @@ Append to `arith_reassoc_pass_test.rb`:
 ```ruby
   def test_mult_div_trailing_divisor_run_folds
     src = "def f(x); x * 2 * 3 / 4 / 5; end; f(100)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_div }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 20 }
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 20 }
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 30, loaded.eval
   end
 ```
@@ -362,23 +362,23 @@ Append:
 ```ruby
   def test_mult_div_crossing_boundary_bails_no_change
     src = "def f(x); x * 2 / 3 * 4; end; f(6)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.any? { |e| e[:reason] == :no_change },
       "expected :no_change log entry, got reasons: #{log.entries.map { |e| e[:reason] }.inspect}")
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 16, loaded.eval
   end
 ```
 
-Note: this test reads `log.entries`. If `RubyOpt::Log` does not expose an `entries` accessor, substitute the existing accessor used elsewhere in the file (search the test file for `log.entries` or similar patterns used by v3 tests). If none exists, the test can instead assert the shape stayed identical via `assert_equal before, f.instructions.map(&:opcode)` alone and skip the log-reason assertion. Prefer the log assertion when possible.
+Note: this test reads `log.entries`. If `Optimize::Log` does not expose an `entries` accessor, substitute the existing accessor used elsewhere in the file (search the test file for `log.entries` or similar patterns used by v3 tests). If none exists, the test can instead assert the shape stayed identical via `assert_equal before, f.instructions.map(&:opcode)` alone and skip the log-reason assertion. Prefer the log assertion when possible.
 
 - [ ] **Step 10: Run and confirm pass**
 
@@ -394,18 +394,18 @@ Append:
     # does not allow 6/6 to further reduce within this pass (const-fold will
     # mop that up in the default pipeline, exercised by a separate test).
     src = "def f(x); 2 * 3 / 6 * x; end; f(5)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     # After arith_reassoc alone: 6 / 6 * x. Two committed literals (both 6).
-    sixes = f.instructions.count { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    sixes = f.instructions.count { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 6 }
     assert_equal 2, sixes
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_div }
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 5, loaded.eval
   end
 ```
@@ -431,12 +431,12 @@ Append:
     # / 0 must not be folded away. Chain left alone; CRuby's opt_div still
     # traps at runtime at the original site (unchanged by the pass).
     src = "def f(x); x / 2 / 0; end"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.any? { |e| e[:reason] == :unsafe_divisor },
@@ -458,20 +458,20 @@ Append:
 ```ruby
   def test_mult_div_negative_divisor_bails
     src = "def f(x); x / -3 / -2; end; f(12)"
-    ir_unopt = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
-    ir_opt   = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir_unopt = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir_opt   = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot_opt   = ir_opt.misc[:object_table]
     f_opt    = find_iseq(ir_opt, "f")
     before = f_opt.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f_opt, type_env: nil, log: log, object_table: ot_opt)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f_opt, type_env: nil, log: log, object_table: ot_opt)
 
     assert_equal before, f_opt.instructions.map(&:opcode)
     assert(log.entries.any? { |e| e[:reason] == :unsafe_divisor })
 
     # Runtime equivalence.
-    loaded_unopt = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_unopt))
-    loaded_opt   = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_opt))
+    loaded_unopt = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir_unopt))
+    loaded_opt   = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir_opt))
     assert_equal loaded_unopt.eval, loaded_opt.eval
   end
 ```
@@ -485,12 +485,12 @@ Append:
     # String divisor is caught by the unsafe_divisor pre-scan (it fires
     # before the generic mixed_literal_types scan).
     src = 'def f(x); x / 2 / "foo"; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.any? { |e| e[:reason] == :unsafe_divisor })
@@ -505,12 +505,12 @@ Append:
   def test_mult_div_mixed_literal_types_bails
     # Float multiplier (not a divisor) → :mixed_literal_types.
     src = "def f(x); x * 2 * 1.5; end"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.any? { |e| e[:reason] == :mixed_literal_types })
@@ -525,12 +525,12 @@ Append:
   def test_mult_div_would_exceed_intern_range_bails
     # (1 << 31) * (1 << 31) = 2^62, bit_length is 63, fails < 62.
     src = "def f(x); x * (1 << 31) * (1 << 31); end"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.any? { |e| e[:reason] == :would_exceed_intern_range })
@@ -545,16 +545,16 @@ Append:
   def test_mult_div_non_literals_preserved_in_position
     # :ordered does not reorder non-literals. 2*3 coalesces at the tail.
     src = "def f(x, y); x * y * 2 * 3; end; f(5, 4)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
     assert_equal 2, f.instructions.count { |i| i.opcode == :opt_mult }
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
-    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
+    refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 6 }
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 120, loaded.eval
   end
 ```
@@ -566,14 +566,14 @@ Append:
 ```ruby
   def test_mult_div_idempotent
     src = "def f(x); x * 2 * 3 / 4 / 5; end; f(100)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
 
-    pass = RubyOpt::Passes::ArithReassocPass.new
-    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    pass = Optimize::Passes::ArithReassocPass.new
+    pass.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     after_first = f.instructions.map(&:opcode)
-    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    pass.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     after_second = f.instructions.map(&:opcode)
 
     assert_equal after_first, after_second, "pass must be idempotent on a folded chain"
@@ -593,12 +593,12 @@ Append:
     # outer fixpoint interacts with const-fold's one-pass run. We only
     # assert soundness: same answer as CRuby.
     src = "def f(x); x + 6 / 2 + 1; end; f(10)"
-    ir_unopt = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
-    ir_opt   = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
-    RubyOpt::Pipeline.default.run(ir_opt, type_env: nil)
+    ir_unopt = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir_opt   = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    Optimize::Pipeline.default.run(ir_opt, type_env: nil)
 
-    loaded_unopt = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_unopt))
-    loaded_opt   = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir_opt))
+    loaded_unopt = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir_unopt))
+    loaded_opt   = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir_opt))
     assert_equal loaded_unopt.eval, loaded_opt.eval
     assert_equal 14, loaded_opt.eval  # 10 + (6/2) + 1 = 14
   end
@@ -701,7 +701,7 @@ jj commit -m "ArithReassocPass: corpus fixture for opt_mult + opt_div"
 Edit the `ArithReassocPass` bullet (currently lines 29–46 of `optimizer/README.md`) to add a new sentence before `` `**` and mixed-precedence chains with `opt_div` are out of scope `` and remove the "out of scope" reference to `opt_div`. Replace the bullet with:
 
 ```
-- `RubyOpt::Passes::ArithReassocPass` — arithmetic reassociation driven by
+- `Optimize::Passes::ArithReassocPass` — arithmetic reassociation driven by
   the `REASSOC_GROUPS` table. Two groups today: the additive group
   (`opt_plus` identity 0, `opt_minus` with sign `-`, primary `opt_plus`,
   kind `:abelian`) and the multiplicative group (`opt_mult` identity 1,
@@ -761,6 +761,6 @@ jj commit -m "Document ArithReassocPass opt_div + :ordered kind; record v4 basel
 - **Parallel commits:** if dispatched as a subagent working in parallel with siblings, use `jj split -m "<msg>" -- <files>` with the exact file list from the task's `Files:` block. Never `jj commit` in parallel mode.
 - **Test runs:** always via `mcp__ruby-bytecode__run_optimizer_tests`. Never host `rake test`, `bundle exec rake`, or shell-out.
 - **Ruby evaluation for ad-hoc checks:** via `mcp__ruby-bytecode__run_ruby`. Never host `ruby -e`.
-- **Log accessor:** the tests above use `log.entries`. If `RubyOpt::Log` exposes a different API for inspection (e.g. `log.skips` or `log.events`), substitute it consistently across all new tests. Check `optimizer/lib/ruby_opt/log.rb` before starting Task 2.
+- **Log accessor:** the tests above use `log.entries`. If `Optimize::Log` exposes a different API for inspection (e.g. `log.skips` or `log.events`), substitute it consistently across all new tests. Check `optimizer/lib/optimize/log.rb` before starting Task 2.
 - **Instruction layout:** v3 changed the emission shape from "all pushes first, all ops last" to interleaved "push, op, push, op, …". The `:ordered` walker follows the v3 interleaved shape. If any pre-existing v2 test asserted on the old shape and was updated in v3, that update still stands — do not revert.
 - **`putobject` with negative or large integers:** `LiteralValue.emit` handles interning and special-const boundaries. The `fits_intern_range?(bit_length < 62)` guard gates every committed literal; do not widen without verifying the bignum-codec follow-up first.

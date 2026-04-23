@@ -18,7 +18,7 @@
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     codec/
       local_table.rb                        # NEW Task 1 — decode/encode local_table blob
       iseq_list.rb                          # MODIFIED Task 2 — route local_table through module; re-encode from IR
@@ -57,19 +57,19 @@ jj commit -m "Plan: Inlining Pass v2 (one-arg FCALL, local-table growth) — des
 **Context:** Today `local_table` is stored as opaque bytes in `misc[:local_table_raw]` and the count lives in `misc[:local_table_size]`. Per `research/cruby/ibf-format.md` §4.1, the format is `local_table_size` small-value object-table indices (one per entry). We need a symmetric decode/encode that round-trips byte-identically across the existing fixture corpus.
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/local_table.rb`
+- Create: `optimizer/lib/optimize/codec/local_table.rb`
 - Create: `optimizer/test/codec/local_table_test.rb`
 
 - [ ] **Step 1: Implement the module.**
 
-Create `optimizer/lib/ruby_opt/codec/local_table.rb`:
+Create `optimizer/lib/optimize/codec/local_table.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/codec/binary_reader"
-require "ruby_opt/codec/binary_writer"
+require "optimize/codec/binary_reader"
+require "optimize/codec/binary_writer"
 
-module RubyOpt
+module Optimize
   module Codec
     # Parse and emit the local_table section of an iseq body.
     #
@@ -114,15 +114,15 @@ Create `optimizer/test/codec/local_table_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/local_table"
+require "optimize/codec"
+require "optimize/codec/local_table"
 
 class LocalTableCodecTest < Minitest::Test
   def test_round_trip_identity_for_corpus
     Dir[File.expand_path("corpus/*.rb", __dir__)].each do |fixture|
       src = File.read(fixture)
       bin = RubyVM::InstructionSequence.compile(src).to_binary
-      ir  = RubyOpt::Codec.decode(bin)
+      ir  = Optimize::Codec.decode(bin)
       assert_each_iseq_local_table_roundtrips(ir.root)
     end
   end
@@ -130,16 +130,16 @@ class LocalTableCodecTest < Minitest::Test
   def test_decode_produces_indices_for_method_with_one_local
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     take = find_iseq(ir.root, "take")
     refute_nil take
     size = take.misc[:local_table_size]
     assert_equal 1, size
-    entries = RubyOpt::Codec::LocalTable.decode(take.misc[:local_table_raw], size)
+    entries = Optimize::Codec::LocalTable.decode(take.misc[:local_table_raw], size)
     assert_equal 1, entries.size
     # The entry is an object-table index whose resolution is the symbol :x.
     ot = ir.root.misc[:object_table] || ir.misc[:object_table]
-    ot ||= RubyOpt::Codec.last_object_table_for(bin) # fall back if stashed elsewhere
+    ot ||= Optimize::Codec.last_object_table_for(bin) # fall back if stashed elsewhere
     # Resolution smoke test: at minimum the index is non-negative.
     assert entries.first.is_a?(Integer) && entries.first >= 0
   end
@@ -149,8 +149,8 @@ class LocalTableCodecTest < Minitest::Test
   def assert_each_iseq_local_table_roundtrips(fn)
     size = fn.misc[:local_table_size] || 0
     raw  = fn.misc[:local_table_raw] || "".b
-    entries = RubyOpt::Codec::LocalTable.decode(raw, size)
-    re_encoded = RubyOpt::Codec::LocalTable.encode(entries)
+    entries = Optimize::Codec::LocalTable.decode(raw, size)
+    re_encoded = Optimize::Codec::LocalTable.encode(entries)
     # Content bytes must match the prefix of raw (raw may include trailing pad).
     assert_equal raw.byteslice(0, re_encoded.bytesize).bytes, re_encoded.bytes,
       "local_table content mismatch in #{fn.name} (size=#{size})"
@@ -170,7 +170,7 @@ end
 
 - [ ] **Step 3: Run the test.**
 
-Invoke `mcp__ruby-bytecode__run_optimizer_tests` with test file `optimizer/test/codec/local_table_test.rb`. Expected: both tests pass. If `test_decode_produces_indices_for_method_with_one_local` can't access the object_table via the paths tried, read `optimizer/lib/ruby_opt/codec.rb` to find the actual accessor and patch the test. Don't skip the assertion; update the path.
+Invoke `mcp__ruby-bytecode__run_optimizer_tests` with test file `optimizer/test/codec/local_table_test.rb`. Expected: both tests pass. If `test_decode_produces_indices_for_method_with_one_local` can't access the object_table via the paths tried, read `optimizer/lib/optimize/codec.rb` to find the actual accessor and patch the test. Don't skip the assertion; update the path.
 
 - [ ] **Step 4: Commit.**
 
@@ -182,15 +182,15 @@ jj commit -m "Codec: structured decode/encode for local_table entries"
 
 ## Task 2: `LocalTable.grow!` and wiring through the Function
 
-**Context:** The inlining pass needs one mutation primitive: append an entry (object-table index) to a function's local table and keep `misc[:local_table_size]` and `misc[:local_table_raw]` in sync. The encoder at `optimizer/lib/ruby_opt/codec/iseq_list.rb:385-389` already writes `misc[:local_table_raw]` verbatim, so as long as `grow!` updates the raw bytes, the encoder picks up the new table automatically. `iseq_envelope.rb:399` already propagates `misc[:local_table_size]` into the body record.
+**Context:** The inlining pass needs one mutation primitive: append an entry (object-table index) to a function's local table and keep `misc[:local_table_size]` and `misc[:local_table_raw]` in sync. The encoder at `optimizer/lib/optimize/codec/iseq_list.rb:385-389` already writes `misc[:local_table_raw]` verbatim, so as long as `grow!` updates the raw bytes, the encoder picks up the new table automatically. `iseq_envelope.rb:399` already propagates `misc[:local_table_size]` into the body record.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/local_table.rb` (add `grow!`)
+- Modify: `optimizer/lib/optimize/codec/local_table.rb` (add `grow!`)
 - Create test cases in: `optimizer/test/codec/local_table_test.rb`
 
 - [ ] **Step 1: Add `LocalTable.grow!`.**
 
-Append to `optimizer/lib/ruby_opt/codec/local_table.rb` inside the `LocalTable` module:
+Append to `optimizer/lib/optimize/codec/local_table.rb` inside the `LocalTable` module:
 
 ```ruby
     # Append one entry to a function's local_table. Returns the new
@@ -232,19 +232,19 @@ Append to `optimizer/test/codec/local_table_test.rb`:
   def test_grow_appends_entry_and_increments_size
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     take = find_iseq(ir.root, "take")
     orig_size = take.misc[:local_table_size]
-    orig_entries = RubyOpt::Codec::LocalTable.decode(
+    orig_entries = Optimize::Codec::LocalTable.decode(
       take.misc[:local_table_raw], orig_size,
     )
     sentinel_idx = orig_entries.first # re-use an existing object-table index
 
-    new_slot = RubyOpt::Codec::LocalTable.grow!(take, sentinel_idx)
+    new_slot = Optimize::Codec::LocalTable.grow!(take, sentinel_idx)
 
     assert_equal orig_size, new_slot
     assert_equal orig_size + 1, take.misc[:local_table_size]
-    new_entries = RubyOpt::Codec::LocalTable.decode(
+    new_entries = Optimize::Codec::LocalTable.decode(
       take.misc[:local_table_raw], take.misc[:local_table_size],
     )
     assert_equal orig_entries + [sentinel_idx], new_entries
@@ -254,13 +254,13 @@ Append to `optimizer/test/codec/local_table_test.rb`:
     # Grow then re-encode the full binary; load_from_binary must succeed.
     src = "def take(x); x; end; take(1)"
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
     take = find_iseq(ir.root, "take")
-    existing_idx = RubyOpt::Codec::LocalTable.decode(
+    existing_idx = Optimize::Codec::LocalTable.decode(
       take.misc[:local_table_raw], take.misc[:local_table_size],
     ).first
-    RubyOpt::Codec::LocalTable.grow!(take, existing_idx)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    Optimize::Codec::LocalTable.grow!(take, existing_idx)
+    re_encoded = Optimize::Codec.encode(ir)
     # Smoke test: the VM accepts our re-encoded binary. We don't eval it
     # (the grown slot is unused in the body and LINDEX rewrites are the
     # inlining pass's job — execution would be wrong here). Loading alone
@@ -288,7 +288,7 @@ jj commit -m "Codec::LocalTable: grow! primitive for appending a local slot"
 **Context:** Extend v1's `disqualify_callee` and call-site checks to accept `lead_num==1, local_table_size==1`. Stop rejecting one-arg calldata; start rejecting multi-arg. The actual splice rewrite lives in Task 4 — here we just add tests that exercise the new skip reasons and expand the acceptance predicate. No inlining happens yet; v2-shape call sites fall through unchanged and log `:unsupported_call_shape` for now.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Modify: `optimizer/test/passes/inlining_pass_test.rb`
 
 - [ ] **Step 1: Write failing tests for new skip reasons.**
@@ -299,12 +299,12 @@ Append these cases to `optimizer/test/passes/inlining_pass_test.rb`:
   def test_v2_skips_callee_with_multi_local
     # `y = x + 1; y` has local_table_size = 2 (x and y).
     src = "def wrap(x); y = x + 1; y; end; def use_it(n); wrap(n); end; use_it(3)"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     wrap   = find_iseq(ir, "wrap")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { wrap: wrap },
     )
@@ -315,12 +315,12 @@ Append these cases to `optimizer/test/passes/inlining_pass_test.rb`:
 
   def test_v2_skips_callee_that_writes_its_arg
     src = "def reassign(x); x = 5; x; end; def use_it(n); reassign(n); end; use_it(1)"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it   = find_iseq(ir, "use_it")
     reassign = find_iseq(ir, "reassign")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { reassign: reassign },
     )
@@ -330,12 +330,12 @@ Append these cases to `optimizer/test/passes/inlining_pass_test.rb`:
 
   def test_v2_skips_callee_with_two_args
     src = "def add(a, b); a + b; end; def use_it(n); add(n, 1); end; use_it(1)"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     add    = find_iseq(ir, "add")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { add: add },
     )
@@ -351,7 +351,7 @@ Invoke `mcp__ruby-bytecode__run_optimizer_tests` on `inlining_pass_test.rb`. The
 
 - [ ] **Step 3: Widen the pass predicate.**
 
-Edit `optimizer/lib/ruby_opt/passes/inlining_pass.rb`. In `disqualify_callee`:
+Edit `optimizer/lib/optimize/passes/inlining_pass.rb`. In `disqualify_callee`:
 
 ```ruby
       def disqualify_callee(callee)
@@ -427,7 +427,7 @@ jj commit -m "InliningPass: widen callee predicate for v2 (one-arg + one local)"
 - Level-1 ops (`getlocal_WC_1`, `setlocal_WC_1`, and `getlocal`/`setlocal` with level > 0) reference the outer EP and are unaffected by the caller's growth. Predicate already excludes callees that use these.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Modify: `optimizer/test/passes/inlining_pass_test.rb`
 
 - [ ] **Step 1: Re-verify the call-site instruction order (small sanity check).**
@@ -451,13 +451,13 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
 ```ruby
   def test_v2_inlines_one_arg_literal_fcall
     src = "def double(x); x * 2; end; def use_it; double(3); end; use_it"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double },
     )
@@ -470,13 +470,13 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
     assert_equal 1, use_it.misc[:local_table_size]
 
     # Round-trip still executes correctly.
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 6, loaded.eval
   end
 
   def test_v2_inlines_one_arg_forwarded_fcall
     src = "def double(x); x * 2; end; def use_it(n); double(n); end; use_it(7)"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
@@ -484,8 +484,8 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
     # `use_it` starts with local_table_size == 1 (the `n` param).
     assert_equal 1, use_it.misc[:local_table_size]
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double },
     )
@@ -495,7 +495,7 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
     # `use_it` grew by one local for the inlined arg slot.
     assert_equal 2, use_it.misc[:local_table_size]
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 14, loaded.eval
   end
 
@@ -503,13 +503,13 @@ Append to `optimizer/test/passes/inlining_pass_test.rb`:
     # `double(n + 1)` pushes with `getlocal; putobject; opt_plus` — three
     # instructions, not one. v2 rejects.
     src = "def double(x); x * 2; end; def use_it(n); double(n + 1); end; use_it(1)"
-    ir  = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot  = ir.misc[:object_table]
     use_it = find_iseq(ir, "use_it")
     double = find_iseq(ir, "double")
 
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::InliningPass.new.apply(
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
       use_it, type_env: nil, log: log,
       object_table: ot, callee_map: { double: double },
     )
@@ -524,10 +524,10 @@ Invoke `mcp__ruby-bytecode__run_optimizer_tests`. The three new tests all fail: 
 
 - [ ] **Step 4: Implement the splice.**
 
-Edit `optimizer/lib/ruby_opt/passes/inlining_pass.rb`. At the top of the file, add:
+Edit `optimizer/lib/optimize/passes/inlining_pass.rb`. At the top of the file, add:
 
 ```ruby
-require "ruby_opt/codec/local_table"
+require "optimize/codec/local_table"
 ```
 
 Widen the whitelist for arg-push shapes. Add as a constant:
@@ -689,7 +689,7 @@ Replace `try_inline` with a dispatch on `cd.argc`:
       end
 ```
 
-The `IR::Instruction.new` invocation assumes the existing IR node constructor. Before implementing, open `optimizer/lib/ruby_opt/ir/instruction.rb` to confirm the keyword-arg names (`opcode:`, `operands:`, `line:`). Patch the synthesised lines above if the real constructor uses different kwargs (e.g. positional args, or a different `line:`/`lineno:` key).
+The `IR::Instruction.new` invocation assumes the existing IR node constructor. Before implementing, open `optimizer/lib/optimize/ir/instruction.rb` to confirm the keyword-arg names (`opcode:`, `operands:`, `line:`). Patch the synthesised lines above if the real constructor uses different kwargs (e.g. positional args, or a different `line:`/`lineno:` key).
 
 - [ ] **Step 5: Run the v2 tests.**
 
@@ -697,7 +697,7 @@ Invoke `mcp__ruby-bytecode__run_optimizer_tests` on `inlining_pass_test.rb`. Exp
 
 Diagnostic notes if it fails:
 
-- If `load_from_binary` raises or `loaded.eval` returns a wrong value in `test_v2_inlines_one_arg_forwarded_fcall`: inspect whether the LINDEX-shift pass correctly updated every pre-existing `getlocal_WC_0`/`setlocal_WC_0` in `use_it`. A common bug: mutating `inst.operands[0]` might be a no-op if operands is frozen or if the IR uses a different operand-storage mechanism (e.g. a dedicated struct). If so, you'll need to construct replacement instructions via `IR::Instruction.new` — check `optimizer/lib/ruby_opt/ir/instruction.rb` for the ctor, and match whatever pattern existing passes use to mutate operands.
+- If `load_from_binary` raises or `loaded.eval` returns a wrong value in `test_v2_inlines_one_arg_forwarded_fcall`: inspect whether the LINDEX-shift pass correctly updated every pre-existing `getlocal_WC_0`/`setlocal_WC_0` in `use_it`. A common bug: mutating `inst.operands[0]` might be a no-op if operands is frozen or if the IR uses a different operand-storage mechanism (e.g. a dedicated struct). If so, you'll need to construct replacement instructions via `IR::Instruction.new` — check `optimizer/lib/optimize/ir/instruction.rb` for the ctor, and match whatever pattern existing passes use to mutate operands.
 - If only the `literal_fcall` test passes but the `forwarded_fcall` test fails, the shift logic is the suspect (literal arg push doesn't have a LINDEX to shift).
 - If both fail with a `load_from_binary` error, suspect the setlocal opcode choice — `setlocal_WC_0` takes ONE operand (just LINDEX), while `setlocal` takes TWO (LINDEX + LEVEL). The plan uses `setlocal_WC_0` for the single-operand form.
 
@@ -743,9 +743,9 @@ Append to `optimizer/test/pipeline_test.rb`:
   def test_inlining_v2_end_to_end
     src = File.read(File.expand_path("codec/corpus/inlining_one_arg.rb", __dir__))
     bin = RubyVM::InstructionSequence.compile(src).to_binary
-    ir  = RubyOpt::Codec.decode(bin)
+    ir  = Optimize::Codec.decode(bin)
 
-    log = RubyOpt::Pipeline.default.run(ir, type_env: nil)
+    log = Optimize::Pipeline.default.run(ir, type_env: nil)
 
     use_it = ir.children.find { |c| c.name == "use_it" }
     refute_nil use_it
@@ -753,7 +753,7 @@ Append to `optimizer/test/pipeline_test.rb`:
       "expected `use_it` to have its call to `double` inlined"
     assert log.entries.any? { |e| e.pass == :inlining && e.reason == :inlined }
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 14, loaded.eval
   end
 ```

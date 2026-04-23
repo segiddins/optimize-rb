@@ -18,17 +18,17 @@
 - (none — this is an in-place refactor)
 
 **Modified:**
-- `optimizer/lib/ruby_opt/log.rb` — add `rewrite`, `rewrite_count`, `convergence` map.
-- `optimizer/lib/ruby_opt/pass.rb` — add `one_shot?` default.
-- `optimizer/lib/ruby_opt/passes/inlining_pass.rb` — override `one_shot?`; migrate `:inlined` sites to `rewrite`.
-- `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb` — migrate `:reassociated` sites to `rewrite`.
-- `optimizer/lib/ruby_opt/passes/const_fold_pass.rb` — migrate `:folded` sites to `rewrite`.
-- `optimizer/lib/ruby_opt/passes/const_fold_tier2_pass.rb` — migrate `:folded` sites to `rewrite`.
-- `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb` — migrate `:folded` sites to `rewrite`.
-- `optimizer/lib/ruby_opt/passes/identity_elim_pass.rb` — migrate `:identity_eliminated` to `rewrite`.
-- `optimizer/lib/ruby_opt/passes/dead_branch_fold_pass.rb` — migrate `:branch_folded`, `:short_circuit_folded` to `rewrite`.
-- `optimizer/lib/ruby_opt/pipeline.rb` — fixed-point loop, overflow class.
-- `optimizer/lib/ruby_opt/demo/markdown_renderer.rb` — convergence header line.
+- `optimizer/lib/optimize/log.rb` — add `rewrite`, `rewrite_count`, `convergence` map.
+- `optimizer/lib/optimize/pass.rb` — add `one_shot?` default.
+- `optimizer/lib/optimize/passes/inlining_pass.rb` — override `one_shot?`; migrate `:inlined` sites to `rewrite`.
+- `optimizer/lib/optimize/passes/arith_reassoc_pass.rb` — migrate `:reassociated` sites to `rewrite`.
+- `optimizer/lib/optimize/passes/const_fold_pass.rb` — migrate `:folded` sites to `rewrite`.
+- `optimizer/lib/optimize/passes/const_fold_tier2_pass.rb` — migrate `:folded` sites to `rewrite`.
+- `optimizer/lib/optimize/passes/const_fold_env_pass.rb` — migrate `:folded` sites to `rewrite`.
+- `optimizer/lib/optimize/passes/identity_elim_pass.rb` — migrate `:identity_eliminated` to `rewrite`.
+- `optimizer/lib/optimize/passes/dead_branch_fold_pass.rb` — migrate `:branch_folded`, `:short_circuit_folded` to `rewrite`.
+- `optimizer/lib/optimize/pipeline.rb` — fixed-point loop, overflow class.
+- `optimizer/lib/optimize/demo/markdown_renderer.rb` — convergence header line.
 - `optimizer/test/pipeline_test.rb` — new cascade, overflow, no-change cases.
 - `optimizer/test/log_test.rb` — new `rewrite` / `rewrite_count` / `convergence` cases.
 - `docs/demo_artifacts/*.md` — regenerated artifacts for any fixture whose output changed.
@@ -49,12 +49,12 @@
 ## Task 1: Log — add `rewrite`, `rewrite_count`, `convergence`
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/log.rb`
+- Modify: `optimizer/lib/optimize/log.rb`
 - Test: `optimizer/test/log_test.rb`
 
 - [ ] **Step 1: Read the existing `Log` class to confirm current shape**
 
-Read `optimizer/lib/ruby_opt/log.rb` (23 lines) and `optimizer/test/log_test.rb`. Confirm `Entry = Struct.new(:pass, :reason, :file, :line, keyword_init: true)` and that `#skip` appends to `@entries`.
+Read `optimizer/lib/optimize/log.rb` (23 lines) and `optimizer/test/log_test.rb`. Confirm `Entry = Struct.new(:pass, :reason, :file, :line, keyword_init: true)` and that `#skip` appends to `@entries`.
 
 - [ ] **Step 2: Write failing test for `rewrite` and `rewrite_count`**
 
@@ -62,7 +62,7 @@ Add to `optimizer/test/log_test.rb`:
 
 ```ruby
 def test_rewrite_appends_entry_and_bumps_rewrite_count
-  log = RubyOpt::Log.new
+  log = Optimize::Log.new
   assert_equal 0, log.rewrite_count
 
   log.rewrite(pass: :const_fold, reason: :folded, file: "f.rb", line: 3)
@@ -74,14 +74,14 @@ def test_rewrite_appends_entry_and_bumps_rewrite_count
 end
 
 def test_skip_does_not_bump_rewrite_count
-  log = RubyOpt::Log.new
+  log = Optimize::Log.new
   log.skip(pass: :const_fold, reason: :would_raise, file: "f.rb", line: 3)
   assert_equal 0, log.rewrite_count
   assert_equal 1, log.entries.size
 end
 
 def test_convergence_map_round_trips
-  log = RubyOpt::Log.new
+  log = Optimize::Log.new
   log.record_convergence("fnA", 3)
   log.record_convergence("fnB", 1)
   assert_equal({ "fnA" => 3, "fnB" => 1 }, log.convergence)
@@ -95,12 +95,12 @@ Expected: FAIL — `NoMethodError: undefined method 'rewrite'` / `'rewrite_count
 
 - [ ] **Step 4: Implement the new methods**
 
-Replace `optimizer/lib/ruby_opt/log.rb` with:
+Replace `optimizer/lib/optimize/log.rb` with:
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   class Log
     Entry = Struct.new(:pass, :reason, :file, :line, keyword_init: true)
 
@@ -177,7 +177,7 @@ One file per commit keeps the diff reviewable.
 
 - [ ] **Step 1: Locate rewrite sites**
 
-Run: `grep -n "log.skip" optimizer/lib/ruby_opt/passes/inlining_pass.rb`.
+Run: `grep -n "log.skip" optimizer/lib/optimize/passes/inlining_pass.rb`.
 Confirm: only `reason: :inlined` indicates a successful inline (lines 118, 185, 291 in the current file). Every other reason is a decline.
 
 - [ ] **Step 2: Edit**
@@ -199,7 +199,7 @@ jj commit -m "refactor(inlining): log :inlined via Log#rewrite"
 
 - [ ] **Step 1: Locate rewrite sites**
 
-Run: `grep -n "reason: :reassociated" optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`. Confirm 2 sites (around lines 320, 387).
+Run: `grep -n "reason: :reassociated" optimizer/lib/optimize/passes/arith_reassoc_pass.rb`. Confirm 2 sites (around lines 320, 387).
 
 - [ ] **Step 2: Edit**
 
@@ -220,7 +220,7 @@ jj commit -m "refactor(arith_reassoc): log :reassociated via Log#rewrite"
 
 - [ ] **Step 1: Locate rewrite sites**
 
-Run: `grep -n "reason:" optimizer/lib/ruby_opt/passes/const_fold_pass.rb`. The `:folded` reason is a rewrite; `:non_integer_literal` and `:would_raise` are declines.
+Run: `grep -n "reason:" optimizer/lib/optimize/passes/const_fold_pass.rb`. The `:folded` reason is a rewrite; `:non_integer_literal` and `:would_raise` are declines.
 
 - [ ] **Step 2: Edit**
 
@@ -258,7 +258,7 @@ jj commit -m "refactor(const_fold_tier2): log :folded via Log#rewrite"
 
 - [ ] **Step 1: Locate rewrite sites**
 
-Run: `grep -n "reason: :folded" optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`. Every `:folded` is a rewrite. Non-folded reasons (`:env_value_not_string`, `:fetch_key_absent`, `:env_write_observed`) are declines.
+Run: `grep -n "reason: :folded" optimizer/lib/optimize/passes/const_fold_env_pass.rb`. Every `:folded` is a rewrite. Non-folded reasons (`:env_value_not_string`, `:fetch_key_absent`, `:env_write_observed`) are declines.
 
 - [ ] **Step 2: Edit**
 
@@ -324,8 +324,8 @@ Expected: all green. If anything fails, diagnose — a test that asserted `log.f
 ## Task 3: `Pass#one_shot?` + `InliningPass` override
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pass.rb`
-- Modify: `optimizer/lib/ruby_opt/passes/inlining_pass.rb`
+- Modify: `optimizer/lib/optimize/pass.rb`
+- Modify: `optimizer/lib/optimize/passes/inlining_pass.rb`
 - Test: `optimizer/test/pipeline_test.rb` (smoke)
 
 - [ ] **Step 1: Write failing test**
@@ -334,19 +334,19 @@ Append to `optimizer/test/pipeline_test.rb`:
 
 ```ruby
 def test_pass_defaults_to_not_one_shot
-  refute RubyOpt::Pass.new.one_shot?
+  refute Optimize::Pass.new.one_shot?
 end
 
 def test_inlining_pass_is_one_shot
-  require "ruby_opt/passes/inlining_pass"
-  assert RubyOpt::Passes::InliningPass.new.one_shot?
+  require "optimize/passes/inlining_pass"
+  assert Optimize::Passes::InliningPass.new.one_shot?
 end
 
 def test_other_passes_are_not_one_shot
-  require "ruby_opt/passes/arith_reassoc_pass"
-  require "ruby_opt/passes/const_fold_pass"
-  refute RubyOpt::Passes::ArithReassocPass.new.one_shot?
-  refute RubyOpt::Passes::ConstFoldPass.new.one_shot?
+  require "optimize/passes/arith_reassoc_pass"
+  require "optimize/passes/const_fold_pass"
+  refute Optimize::Passes::ArithReassocPass.new.one_shot?
+  refute Optimize::Passes::ConstFoldPass.new.one_shot?
 end
 ```
 
@@ -357,7 +357,7 @@ Expected: FAIL — `NoMethodError: undefined method 'one_shot?'`.
 
 - [ ] **Step 3: Implement in `Pass`**
 
-Edit `optimizer/lib/ruby_opt/pass.rb`, add to `Pass`:
+Edit `optimizer/lib/optimize/pass.rb`, add to `Pass`:
 
 ```ruby
 def one_shot?
@@ -367,7 +367,7 @@ end
 
 - [ ] **Step 4: Override in `InliningPass`**
 
-Edit `optimizer/lib/ruby_opt/passes/inlining_pass.rb`, add in the class body:
+Edit `optimizer/lib/optimize/passes/inlining_pass.rb`, add in the class body:
 
 ```ruby
 def one_shot?
@@ -391,7 +391,7 @@ jj commit -m "feat(pass): add one_shot? predicate; InliningPass overrides true"
 ## Task 4: `Pipeline::FixedPointOverflow` + fixed-point loop
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
 - Test: `optimizer/test/pipeline_test.rb`
 
 - [ ] **Step 1: Write failing test for cascade**
@@ -401,7 +401,7 @@ Append to `optimizer/test/pipeline_test.rb`:
 ```ruby
 # A pass that rewrites instruction X→Y on each function that still contains X,
 # logging :cascade_a. Idempotent once X is gone.
-class CascadePassA < RubyOpt::Pass
+class CascadePassA < Optimize::Pass
   def apply(function, type_env:, log:, **_extras)
     return unless (function.instructions || []).any? { |i| i.opcode == :x_marker }
     function.instructions.each do |i|
@@ -414,7 +414,7 @@ class CascadePassA < RubyOpt::Pass
 end
 
 # A pass that rewrites Y→Z, logging :cascade_b. Idempotent once Y is gone.
-class CascadePassB < RubyOpt::Pass
+class CascadePassB < Optimize::Pass
   def apply(function, type_env:, log:, **_extras)
     return unless (function.instructions || []).any? { |i| i.opcode == :y_marker }
     function.instructions.each do |i|
@@ -427,7 +427,7 @@ class CascadePassB < RubyOpt::Pass
 end
 
 def cascade_ir_with_marker
-  ir = RubyOpt::Codec.decode(
+  ir = Optimize::Codec.decode(
     RubyVM::InstructionSequence.compile("def f; 1; end").to_binary
   )
   # Stick an :x_marker on each function so the cascade has something to chew on.
@@ -441,7 +441,7 @@ end
 
 def test_fixed_point_loop_cascades_across_passes
   ir = cascade_ir_with_marker
-  pipeline = RubyOpt::Pipeline.new([CascadePassA.new, CascadePassB.new])
+  pipeline = Optimize::Pipeline.new([CascadePassA.new, CascadePassB.new])
   log = pipeline.run(ir, type_env: nil)
   # cascade_a ran once per function that had :x_marker.
   refute_empty log.for_pass(:cascade_a)
@@ -455,7 +455,7 @@ def test_fixed_point_loop_converges_with_no_rewrites
   # Two no-op passes: single sweep, break immediately.
   t1 = TrackingPass.new(:first)
   t2 = TrackingPass.new(:second)
-  pipeline = RubyOpt::Pipeline.new([t1, t2])
+  pipeline = Optimize::Pipeline.new([t1, t2])
   pipeline.run(ir, type_env: nil)
   # Each pass visited each function exactly once (no iteration needed).
   assert_equal 4, t1.visited.size
@@ -463,7 +463,7 @@ def test_fixed_point_loop_converges_with_no_rewrites
 end
 
 # A pass that always records a rewrite without changing IR — simulates a bug.
-class ForeverRewritingPass < RubyOpt::Pass
+class ForeverRewritingPass < Optimize::Pass
   def apply(function, type_env:, log:, **_extras)
     log.rewrite(pass: :forever, reason: :always, file: function.path || "", line: 0)
   end
@@ -472,15 +472,15 @@ class ForeverRewritingPass < RubyOpt::Pass
 end
 
 def test_fixed_point_loop_raises_on_overflow
-  pipeline = RubyOpt::Pipeline.new([ForeverRewritingPass.new])
-  assert_raises(RubyOpt::Pipeline::FixedPointOverflow) do
+  pipeline = Optimize::Pipeline.new([ForeverRewritingPass.new])
+  assert_raises(Optimize::Pipeline::FixedPointOverflow) do
     pipeline.run(ir, type_env: nil)
   end
 end
 
 def test_one_shot_pass_runs_exactly_once_even_if_iterative_passes_loop
   # Build a one-shot tracking pass and a cascade pair so iteration > 1.
-  one_shot = Class.new(RubyOpt::Pass) do
+  one_shot = Class.new(Optimize::Pass) do
     attr_reader :call_count
     def initialize; @call_count = Hash.new(0); end
     def one_shot?; true; end
@@ -491,7 +491,7 @@ def test_one_shot_pass_runs_exactly_once_even_if_iterative_passes_loop
   end.new
 
   ir = cascade_ir_with_marker
-  pipeline = RubyOpt::Pipeline.new([one_shot, CascadePassA.new, CascadePassB.new])
+  pipeline = Optimize::Pipeline.new([one_shot, CascadePassA.new, CascadePassB.new])
   pipeline.run(ir, type_env: nil)
   # Each function saw the one-shot pass exactly once, even though the
   # iterative passes looped.
@@ -506,7 +506,7 @@ Expected: FAIL — `cascade_b` empty (it never fires without the loop); `FixedPo
 
 - [ ] **Step 3: Add `FixedPointOverflow` and `MAX_ITERATIONS`**
 
-Edit `optimizer/lib/ruby_opt/pipeline.rb`, inside `class Pipeline` (top):
+Edit `optimizer/lib/optimize/pipeline.rb`, inside `class Pipeline` (top):
 
 ```ruby
 MAX_ITERATIONS = 8
@@ -672,12 +672,12 @@ and sum_of_squares unchanged except for benchmark-line noise."
 ## Task 7: Convergence count in walkthrough header
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/demo/markdown_renderer.rb`
-- Modify: `optimizer/lib/ruby_opt/demo/iseq_snapshots.rb` (expose convergence from full run)
+- Modify: `optimizer/lib/optimize/demo/markdown_renderer.rb`
+- Modify: `optimizer/lib/optimize/demo/iseq_snapshots.rb` (expose convergence from full run)
 
 - [ ] **Step 1: Expose convergence on `IseqSnapshots::Result`**
 
-Edit `optimizer/lib/ruby_opt/demo/iseq_snapshots.rb`:
+Edit `optimizer/lib/optimize/demo/iseq_snapshots.rb`:
 
 Change `Result = Struct.new(:before, :after_full, :per_pass, keyword_init: true)` to:
 
@@ -724,19 +724,19 @@ In `optimizer/test/demo/markdown_renderer_test.rb` (create if absent; check firs
 ```ruby
 def test_heading_includes_convergence_when_present
   bench = Struct.new(:plain_ips, :optimized_ips).new(1000.0, 1010.0)
-  md = RubyOpt::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: { "compute" => 3 })
+  md = Optimize::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: { "compute" => 3 })
   assert_includes md, "converged in"
   assert_includes md, "3 iterations"
 end
 
 def test_heading_omits_convergence_when_absent
   bench = Struct.new(:plain_ips, :optimized_ips).new(1000.0, 1010.0)
-  md = RubyOpt::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: {})
+  md = Optimize::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: {})
   refute_includes md, "converged"
 end
 ```
 
-If `optimizer/test/demo/markdown_renderer_test.rb` doesn't exist, stub it with the standard `require "test_helper"; require "ruby_opt/demo/markdown_renderer"` header plus a `class MarkdownRendererTest < Minitest::Test` wrapper.
+If `optimizer/test/demo/markdown_renderer_test.rb` doesn't exist, stub it with the standard `require "test_helper"; require "optimize/demo/markdown_renderer"` header plus a `class MarkdownRendererTest < Minitest::Test` wrapper.
 
 - [ ] **Step 3: Run test to verify fail**
 
@@ -745,7 +745,7 @@ Expected: FAIL — `wrong number of arguments` or method signature mismatch on `
 
 - [ ] **Step 4: Update `MarkdownRenderer`**
 
-Edit `optimizer/lib/ruby_opt/demo/markdown_renderer.rb`:
+Edit `optimizer/lib/optimize/demo/markdown_renderer.rb`:
 
 ```ruby
 def render(stem:, source:, walkthrough:, snapshots:, bench:)

@@ -4,7 +4,7 @@
 
 **Goal:** Fix `InstructionStream.{decode,encode}` so backward branches (`while` loops) round-trip, then restore the `sum_of_squares` demo fixture as the motivating end-to-end test.
 
-**Architecture:** Add two private sign-conversion helpers (`u64_to_i64` / `i64_to_u64`) on `RubyOpt::Codec::InstructionStream` and apply them only at the two `:OFFSET` call sites. `binary_reader.rb` / `binary_writer.rb` primitives stay unsigned — signedness is a property of the `:OFFSET` operand type, not the IBF wire format. A negative offset always encodes as the 9-byte small_value form, matching CRuby's `ibf_dump_small_value` byte-for-byte.
+**Architecture:** Add two private sign-conversion helpers (`u64_to_i64` / `i64_to_u64`) on `Optimize::Codec::InstructionStream` and apply them only at the two `:OFFSET` call sites. `binary_reader.rb` / `binary_writer.rb` primitives stay unsigned — signedness is a property of the `:OFFSET` operand type, not the IBF wire format. A negative offset always encodes as the 9-byte small_value form, matching CRuby's `ibf_dump_small_value` byte-for-byte.
 
 **Tech Stack:** Ruby 4.x, Minitest, `RubyVM::InstructionSequence.{compile,to_binary,load_from_binary}`, `rake`, `bin/demo`, `jj` for VCS.
 
@@ -15,7 +15,7 @@
 ## File Structure
 
 **Modified:**
-- `optimizer/lib/ruby_opt/codec/instruction_stream.rb` — add `U64_MASK` / `INT64_MIN` / `INT64_MAX` constants, `u64_to_i64` / `i64_to_u64` helpers; use in `:OFFSET` branches of `decode` (line 324) and `encode` (line 417).
+- `optimizer/lib/optimize/codec/instruction_stream.rb` — add `U64_MASK` / `INT64_MIN` / `INT64_MAX` constants, `u64_to_i64` / `i64_to_u64` helpers; use in `:OFFSET` branches of `decode` (line 324) and `encode` (line 417).
 - `optimizer/test/codec/round_trip_test.rb` — add synthetic negative-offset test and `while`-round-trip test.
 - `docs/todo.md` — strike the two "Known bugs / blockers" entries for codec backward branches; mark the `sum_of_squares` follow-up under Roadmap gap #2 as shipped.
 
@@ -25,7 +25,7 @@
 - `docs/demo_artifacts/sum_of_squares.md` — regenerated via `bin/demo sum_of_squares`.
 
 **Not touched (intentional):**
-- `optimizer/lib/ruby_opt/codec/binary_reader.rb` / `binary_writer.rb` — primitives stay unsigned.
+- `optimizer/lib/optimize/codec/binary_reader.rb` / `binary_writer.rb` — primitives stay unsigned.
 - `optimizer/Rakefile` — `demo:verify` globs `examples/*.walkthrough.yml`, so the new fixture is picked up without edits.
 
 ---
@@ -33,7 +33,7 @@
 ## Task 1: Add signed↔unsigned helpers on `InstructionStream`
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/instruction_stream.rb` (add constants + helpers just below the `module InstructionStream` opener at line 10)
+- Modify: `optimizer/lib/optimize/codec/instruction_stream.rb` (add constants + helpers just below the `module InstructionStream` opener at line 10)
 - Test: `optimizer/test/codec/round_trip_test.rb` (new helper-boundary test)
 
 - [ ] **Step 1: Write the failing test**
@@ -43,35 +43,35 @@ Append at the end of `RoundTripTest` in `optimizer/test/codec/round_trip_test.rb
 ```ruby
   def test_u64_to_i64_boundaries
     # Positive values within i64 round-trip identity.
-    assert_equal 0,                 RubyOpt::Codec::InstructionStream.u64_to_i64(0)
-    assert_equal 1,                 RubyOpt::Codec::InstructionStream.u64_to_i64(1)
-    assert_equal (1 << 63) - 1,     RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 63) - 1)
+    assert_equal 0,                 Optimize::Codec::InstructionStream.u64_to_i64(0)
+    assert_equal 1,                 Optimize::Codec::InstructionStream.u64_to_i64(1)
+    assert_equal (1 << 63) - 1,     Optimize::Codec::InstructionStream.u64_to_i64((1 << 63) - 1)
 
     # The high bit flips to negative.
-    assert_equal(-(1 << 63),        RubyOpt::Codec::InstructionStream.u64_to_i64(1 << 63))
-    assert_equal(-1,                RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 64) - 1))
-    assert_equal(-2,                RubyOpt::Codec::InstructionStream.u64_to_i64((1 << 64) - 2))
+    assert_equal(-(1 << 63),        Optimize::Codec::InstructionStream.u64_to_i64(1 << 63))
+    assert_equal(-1,                Optimize::Codec::InstructionStream.u64_to_i64((1 << 64) - 1))
+    assert_equal(-2,                Optimize::Codec::InstructionStream.u64_to_i64((1 << 64) - 2))
   end
 
   def test_i64_to_u64_boundaries
     # Non-negative values pass through.
-    assert_equal 0,             RubyOpt::Codec::InstructionStream.i64_to_u64(0)
-    assert_equal (1 << 63) - 1, RubyOpt::Codec::InstructionStream.i64_to_u64((1 << 63) - 1)
+    assert_equal 0,             Optimize::Codec::InstructionStream.i64_to_u64(0)
+    assert_equal (1 << 63) - 1, Optimize::Codec::InstructionStream.i64_to_u64((1 << 63) - 1)
 
     # Negative values become (2^64 + n).
-    assert_equal (1 << 64) - 1, RubyOpt::Codec::InstructionStream.i64_to_u64(-1)
-    assert_equal (1 << 64) - 2, RubyOpt::Codec::InstructionStream.i64_to_u64(-2)
-    assert_equal 1 << 63,       RubyOpt::Codec::InstructionStream.i64_to_u64(-(1 << 63))
+    assert_equal (1 << 64) - 1, Optimize::Codec::InstructionStream.i64_to_u64(-1)
+    assert_equal (1 << 64) - 2, Optimize::Codec::InstructionStream.i64_to_u64(-2)
+    assert_equal 1 << 63,       Optimize::Codec::InstructionStream.i64_to_u64(-(1 << 63))
 
     # Out-of-range raises.
-    assert_raises(ArgumentError) { RubyOpt::Codec::InstructionStream.i64_to_u64(1 << 63) }
-    assert_raises(ArgumentError) { RubyOpt::Codec::InstructionStream.i64_to_u64(-(1 << 63) - 1) }
+    assert_raises(ArgumentError) { Optimize::Codec::InstructionStream.i64_to_u64(1 << 63) }
+    assert_raises(ArgumentError) { Optimize::Codec::InstructionStream.i64_to_u64(-(1 << 63) - 1) }
   end
 
   def test_round_trip_helpers_compose
     [-5, -1, 0, 1, 5, (1 << 62), -(1 << 62)].each do |i|
-      u = RubyOpt::Codec::InstructionStream.i64_to_u64(i)
-      assert_equal i, RubyOpt::Codec::InstructionStream.u64_to_i64(u),
+      u = Optimize::Codec::InstructionStream.i64_to_u64(i)
+      assert_equal i, Optimize::Codec::InstructionStream.u64_to_i64(u),
         "round-trip failed for i=#{i} via u=#{u}"
     end
   end
@@ -83,11 +83,11 @@ Append at the end of `RoundTripTest` in `optimizer/test/codec/round_trip_test.rb
 cd optimizer && bundle exec rake test TESTOPTS="--name=/test_u64_to_i64_boundaries|test_i64_to_u64_boundaries|test_round_trip_helpers_compose/"
 ```
 
-Expected: NoMethodError / `undefined method 'u64_to_i64' for module RubyOpt::Codec::InstructionStream`.
+Expected: NoMethodError / `undefined method 'u64_to_i64' for module Optimize::Codec::InstructionStream`.
 
 - [ ] **Step 3: Add constants and helpers**
 
-In `optimizer/lib/ruby_opt/codec/instruction_stream.rb`, directly after the `module InstructionStream` line (line 10), insert:
+In `optimizer/lib/optimize/codec/instruction_stream.rb`, directly after the `module InstructionStream` line (line 10), insert:
 
 ```ruby
       # Sign conversion for :OFFSET operands. IBF's small_value primitive is
@@ -128,7 +128,7 @@ jj commit -m "feat(codec): add u64_to_i64 / i64_to_u64 helpers for signed OFFSET
 ## Task 2: Decode signed OFFSET
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/instruction_stream.rb:322-324` (the `:OFFSET` decode branch)
+- Modify: `optimizer/lib/optimize/codec/instruction_stream.rb:322-324` (the `:OFFSET` decode branch)
 - Test: `optimizer/test/codec/round_trip_test.rb` (synthetic backward-branch decode test)
 
 - [ ] **Step 1: Write the failing test**
@@ -144,7 +144,7 @@ Append to `RoundTripTest`:
 
     # Before the fix: this decode raises with
     #   "OFFSET raw=<huge> in branch* targets slot <huge> with no corresponding instruction"
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
     refute_nil ir
 
     # Sanity: at least one branch instruction must point backward (target index
@@ -170,7 +170,7 @@ Expected: RuntimeError, message matches `/OFFSET raw=.* targets slot .* with no 
 
 - [ ] **Step 3: Apply sign extension at the decode call site**
 
-In `optimizer/lib/ruby_opt/codec/instruction_stream.rb`, replace the `:OFFSET` decode branch (currently lines 322-324):
+In `optimizer/lib/optimize/codec/instruction_stream.rb`, replace the `:OFFSET` decode branch (currently lines 322-324):
 
 ```ruby
             when :OFFSET
@@ -215,7 +215,7 @@ jj commit -m "fix(codec): sign-extend :OFFSET operands on decode so backward bra
 ## Task 3: Encode signed OFFSET
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec/instruction_stream.rb:411-418` (the `:OFFSET` encode branch)
+- Modify: `optimizer/lib/optimize/codec/instruction_stream.rb:411-418` (the `:OFFSET` encode branch)
 - Test: `optimizer/test/codec/round_trip_test.rb` (synthetic backward-branch encode + byte-identity test)
 
 - [ ] **Step 1: Write the failing test**
@@ -229,8 +229,8 @@ Append to `RoundTripTest`:
     src = "def loop_me(n); i = 0; while i < n; i += 1; end; i; end"
     original = RubyVM::InstructionSequence.compile(src).to_binary
 
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
     assert_equal original, re_encoded,
       "round-trip byte mismatch for while-loop iseq"
 
@@ -243,13 +243,13 @@ Append to `RoundTripTest`:
     # Confirm encode surfaces out-of-range errors at the helper, not deep in
     # write_small_value with a misleading "must be non-negative" message.
     insns = [
-      RubyOpt::IR::Instruction.new(opcode: :jump, operands: [0], line: nil),
+      Optimize::IR::Instruction.new(opcode: :jump, operands: [0], line: nil),
     ]
     # We don't actually invoke encode directly on a hand-built iseq here (too
     # much scaffolding); instead exercise i64_to_u64 via a computed offset
     # wider than INT64_MAX. This is the same guard encode relies on.
     assert_raises(ArgumentError) do
-      RubyOpt::Codec::InstructionStream.i64_to_u64((1 << 63))
+      Optimize::Codec::InstructionStream.i64_to_u64((1 << 63))
     end
   end
 ```
@@ -264,7 +264,7 @@ Expected: `ArgumentError: small_value must be non-negative, got -<N>` raised fro
 
 - [ ] **Step 3: Apply sign conversion at the encode call site**
 
-In `optimizer/lib/ruby_opt/codec/instruction_stream.rb`, replace the `:OFFSET` encode branch (currently lines 411-418):
+In `optimizer/lib/optimize/codec/instruction_stream.rb`, replace the `:OFFSET` encode branch (currently lines 411-418):
 
 ```ruby
             when :OFFSET
@@ -345,8 +345,8 @@ Append to `RoundTripTest`:
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
 
-    ir = RubyOpt::Codec.decode(original)
-    re_encoded = RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    re_encoded = Optimize::Codec.encode(ir)
 
     loaded = RubyVM::InstructionSequence.load_from_binary(re_encoded)
     assert_equal 55, loaded.eval, "round-tripped while loop must still compute 1+2+...+10"
@@ -427,7 +427,7 @@ Expected: `55\n385`.
 
 - [ ] **Step 3: Confirm the iseq decodes cleanly**
 
-Use `mcp__ruby-bytecode__iseq_to_binary` on the file, then verify `RubyOpt::Codec.decode` does not raise. Can be done with a throwaway script or interactively — no commit needed for this step.
+Use `mcp__ruby-bytecode__iseq_to_binary` on the file, then verify `Optimize::Codec.decode` does not raise. Can be done with a throwaway script or interactively — no commit needed for this step.
 
 - [ ] **Step 4: Commit**
 

@@ -19,7 +19,7 @@ Approved: 2026-04-27 (pre-approved in session prompt)
 ## Files
 
 Edit:
-- `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb` — new
+- `optimizer/lib/optimize/passes/const_fold_env_pass.rb` — new
   `fetch_send?(inst, ot)` helper; extend the `while` loop with the
   fetch arm; new log reason `:fetch_key_absent`.
 - `optimizer/test/passes/const_fold_env_pass_test.rb` — new tests.

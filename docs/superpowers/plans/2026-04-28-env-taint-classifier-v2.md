@@ -14,7 +14,7 @@
 
 ## File map
 
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
   - Rewrite `consumer_safe?` to forward-scan instead of branching on i+1/i+2 positions.
   - Update the method-header comment to reflect v2 semantics.
   - No changes to `safe_send?` (reused), `SAFE_ENV_READ_METHODS`, fold loop, or `scan_tree_for_taint`.
@@ -43,13 +43,13 @@
   ```ruby
   def test_env_values_at_two_args_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -66,13 +66,13 @@
   ```ruby
   def test_env_values_at_three_args_does_not_taint_tree
     src = 'def r; ENV["A"]; end; def g; ENV.values_at("A", "B", "C"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2", "C" => "3" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -93,14 +93,14 @@
     # ENV.store is not in SAFE_ENV_READ_METHODS — v2's argc-generic scan
     # still taints on it (mid check is what gates safety).
     src = 'def r; ENV["A"]; end; def w; ENV.store("B", "x"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
     before_r = r.instructions.map(&:opcode)
 
-    pass = RubyOpt::Passes::ConstFoldEnvPass.new
+    pass = Optimize::Passes::ConstFoldEnvPass.new
     each_function(ir) do |fn|
       pass.apply(fn, type_env: nil, log: log, object_table: ot, env_snapshot: snap)
     end
@@ -131,7 +131,7 @@
 ## Task 2: Green — forward-scan classifier + wire-up + docs
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
 - Modify: `docs/TODO.md`
 
 Per the repo's TDD commit rhythm, green + wire-up + docs land in one commit.

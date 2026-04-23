@@ -117,7 +117,7 @@ Pass name: `:arith_reassoc` (unchanged).
 Unchanged from v1:
 
 ```ruby
-class RubyOpt::Passes::ArithReassocPass < RubyOpt::Pass
+class Optimize::Passes::ArithReassocPass < Optimize::Pass
   def name = :arith_reassoc
   def apply(function, type_env:, log:, object_table: nil)
 end
@@ -129,7 +129,7 @@ end
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       arith_reassoc_pass.rb              # MODIFIED — table refactor + opt_mult row + overflow guard
   test/

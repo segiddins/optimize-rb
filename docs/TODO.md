@@ -32,7 +32,7 @@ sites after the inline-body aliasing bug is corrected).
   and `Point#distance_to` object-y method). Neither is wired. We've only
   benchmarked the synthetic `2*3/6*x → x` payoff.
 - ~~**Claude Code gag pass.** §7 of talk-structure. Not specced.~~
-  *Shipped 2026-04-23 as `RubyOpt::Demo::Claude`. Spec:
+  *Shipped 2026-04-23 as `Optimize::Demo::Claude`. Spec:
   `docs/superpowers/specs/2026-04-23-claude-code-gag-pass-design.md`.
   Plan: `docs/superpowers/plans/2026-04-23-claude-code-gag-pass.md`.*
 
@@ -50,7 +50,7 @@ sites after the inline-body aliasing bug is corrected).
    **Partially shipped 2026-04-22** (one fixture). Spec:
    `docs/superpowers/specs/2026-04-22-demo-programs-benchmark-harness-design.md`.
    Plan: `docs/superpowers/plans/2026-04-22-demo-programs-benchmark-harness.md`.
-   Shipped: `RubyOpt::Demo::{Walkthrough,DisasmNormalizer,IseqSnapshots,Benchmark,MarkdownRenderer,Runner}`
+   Shipped: `Optimize::Demo::{Walkthrough,DisasmNormalizer,IseqSnapshots,Benchmark,MarkdownRenderer,Runner}`
    + `bin/demo` driver + YAML sidecars + `rake demo:verify` freshness
    check. `docs/demo_artifacts/point_distance.md` committed — shows a
    visible inlining diff at the `p.distance_to(q)` call site under
@@ -90,7 +90,7 @@ sites after the inline-body aliasing bug is corrected).
    **Shipped 2026-04-23.** Spec:
    `docs/superpowers/specs/2026-04-23-claude-code-gag-pass-design.md`.
    Plan: `docs/superpowers/plans/2026-04-23-claude-code-gag-pass.md`.
-   `RubyOpt::Demo::Claude` drives a 3-try retry loop (structural +
+   `Optimize::Demo::Claude` drives a 3-try retry loop (structural +
    multi-case semantic validation fed back to `claude -p` each retry)
    over two fixtures. Not in `Pipeline.default`. Regeneration is opt-in
    via `rake demo:regenerate_claude` (needs `CLAUDE_CODE_SSO_TOKEN` or

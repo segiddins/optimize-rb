@@ -50,7 +50,7 @@ Complexity is O(n²) in the worst case on a single block of `n` instructions. Th
 
 ## Skip conditions
 
-Each skip is logged via the existing `RubyOpt::Log` interface with the usual `{pass: :const_fold, reason:, file:, line:}` shape. Skip conditions:
+Each skip is logged via the existing `Optimize::Log` interface with the usual `{pass: :const_fold, reason:, file:, line:}` shape. Skip conditions:
 
 - `:would_raise` — the operation would raise at runtime (`1/0`, `1%0`). Folding would suppress an observable `ZeroDivisionError`, so the pass leaves the triple alone. Detection: wrap the fold's call in `rescue StandardError => e` and, on any rescue, skip and log.
 - `:non_integer_literal` — one or both of the two top-of-window instructions is a literal but not an Integer literal (e.g. `putobject nil`, strings, symbols). Deferred to later tiers.
@@ -71,9 +71,9 @@ The pass is **last** in the pipeline, matching the final spec layout (inlining �
 ## Interface
 
 ```ruby
-module RubyOpt
+module Optimize
   module Passes
-    class ConstFoldPass < RubyOpt::Pass
+    class ConstFoldPass < Optimize::Pass
       def apply(function, type_env:, log:)
         # ...
       end
@@ -137,7 +137,7 @@ Not in scope (explicit deferrals):
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       const_fold_pass.rb          # NEW
     pipeline.rb                   # MODIFIED (default pipeline uses ConstFoldPass)

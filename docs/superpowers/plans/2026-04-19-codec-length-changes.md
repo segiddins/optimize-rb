@@ -19,7 +19,7 @@
 ```
 optimizer/
   lib/
-    ruby_opt/
+    optimize/
       ir/
         function.rb            # MODIFIED (catch_entries, line_entries, arg_positions, stack_max fields)
         catch_entry.rb         # NEW Task 1
@@ -46,10 +46,10 @@ optimizer/
 ### Task 1: Catch table — decode into IR, re-encode from IR
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/ir/catch_entry.rb`
-- Create: `optimizer/lib/ruby_opt/codec/catch_table.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
-- Modify: `optimizer/lib/ruby_opt/ir/function.rb`
+- Create: `optimizer/lib/optimize/ir/catch_entry.rb`
+- Create: `optimizer/lib/optimize/codec/catch_table.rb`
+- Modify: `optimizer/lib/optimize/codec/iseq_envelope.rb`
+- Modify: `optimizer/lib/optimize/ir/function.rb`
 - Create: `optimizer/test/codec/catch_table_test.rb`
 
 **Context:** The catch table records exception handlers (`rescue`, `ensure`, `retry`, `break`, `redo`, `next` targets). Each entry has a type tag, start/end/cont positions into the instruction stream, a stack depth, and (for rescue/ensure) a reference to a child iseq that runs as the handler. Positions are currently buried in `misc[:raw_body]`. To support length changes we need them in IR, referencing `IR::Instruction` objects by identity.
@@ -61,7 +61,7 @@ optimizer/
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class CatchTableTest < Minitest::Test
   def test_rescue_method_round_trips_through_catch_entries
@@ -75,7 +75,7 @@ class CatchTableTest < Minitest::Test
       safe_divide(10, 0)
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     safe_divide = ir.children.find { |c| c.name == "safe_divide" }
     refute_nil safe_divide
@@ -89,7 +89,7 @@ class CatchTableTest < Minitest::Test
     assert_includes safe_divide.instructions, rescue_entry.end_inst
 
     # Byte-identical round-trip still passes.
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 end
 ```
@@ -98,12 +98,12 @@ end
 
 Run: `mcp__ruby-bytecode__run_optimizer_tests` with `test_filter: "test/codec/catch_table_test.rb"`.
 
-- [ ] **Step 3: Define `IR::CatchEntry`** — `optimizer/lib/ruby_opt/ir/catch_entry.rb`
+- [ ] **Step 3: Define `IR::CatchEntry`** — `optimizer/lib/optimize/ir/catch_entry.rb`
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module IR
     # One entry in a function's catch table. Positions are references
     # to IR::Instruction objects by identity, so mutations to the
@@ -126,13 +126,13 @@ module RubyOpt
 end
 ```
 
-- [ ] **Step 4: Implement `Codec::CatchTable`** — `optimizer/lib/ruby_opt/codec/catch_table.rb`
+- [ ] **Step 4: Implement `Codec::CatchTable`** — `optimizer/lib/optimize/codec/catch_table.rb`
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/ir/catch_entry"
+require "optimize/ir/catch_entry"
 
-module RubyOpt
+module Optimize
   module Codec
     # Decode/encode a single iseq's catch table.
     #
@@ -202,7 +202,7 @@ end
 
 - [ ] **Step 5: Wire it into `IseqEnvelope.decode` / `encode`**
 
-Read `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`. After decoding the instructions (which produces `instructions` array + a `slot_to_inst` mapping derived from `InstructionStream.decode`'s per-instruction slot-offset table), call `CatchTable.decode` using the catch table offset + count from the body record. Store the result in `function.catch_entries` — add this as a new field on `IR::Function`.
+Read `optimizer/lib/optimize/codec/iseq_envelope.rb`. After decoding the instructions (which produces `instructions` array + a `slot_to_inst` mapping derived from `InstructionStream.decode`'s per-instruction slot-offset table), call `CatchTable.decode` using the catch table offset + count from the body record. Store the result in `function.catch_entries` — add this as a new field on `IR::Function`.
 
 On encode, before writing the body record, call `CatchTable.encode` to produce the catch table bytes (using `inst_to_slot` derived from the current instructions). Position it in the new data region layout (see Task 5 for that integration; for now, just emit into the existing raw data region path).
 
@@ -210,7 +210,7 @@ Note: `InstructionStream.decode` probably doesn't currently expose a `slot_to_in
 
 - [ ] **Step 6: Add `catch_entries` field to `IR::Function`**
 
-Modify `optimizer/lib/ruby_opt/ir/function.rb` — add `:catch_entries` to the Struct members (keyword_init). Default to `nil` in decode paths that don't yet populate it (forward-compat).
+Modify `optimizer/lib/optimize/ir/function.rb` — add `:catch_entries` to the Struct members (keyword_init). Default to `nil` in decode paths that don't yet populate it (forward-compat).
 
 - [ ] **Step 7: Run tests via MCP**
 
@@ -231,10 +231,10 @@ jj commit -m "Decode/encode catch table via IR"
 ### Task 2: Line info (insns_info) — decode into IR, re-encode from IR
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/ir/line_entry.rb`
-- Create: `optimizer/lib/ruby_opt/codec/line_info.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
-- Modify: `optimizer/lib/ruby_opt/ir/function.rb`
+- Create: `optimizer/lib/optimize/ir/line_entry.rb`
+- Create: `optimizer/lib/optimize/codec/line_info.rb`
+- Modify: `optimizer/lib/optimize/codec/iseq_envelope.rb`
+- Modify: `optimizer/lib/optimize/ir/function.rb`
 - Create: `optimizer/test/codec/line_info_test.rb`
 
 **Context:** `insns_info` is an array of entries that map instruction positions to (line_no, node_id, event_flags). `IR::Instruction` already carries a `:line` field populated on decode. This task elevates the full entry form into IR so we can re-serialize after instruction-count changes.
@@ -246,7 +246,7 @@ jj commit -m "Decode/encode catch table via IR"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class LineInfoTest < Minitest::Test
   def test_multiline_method_has_line_entries_per_instruction_group
@@ -259,7 +259,7 @@ class LineInfoTest < Minitest::Test
       multi
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     m = ir.children.find { |c| c.name == "multi" }
     refute_nil m
@@ -272,19 +272,19 @@ class LineInfoTest < Minitest::Test
     assert_operator m.line_entries.map(&:line_no).uniq.size, :>=, 3
 
     # Byte-identical round-trip
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 end
 ```
 
 - [ ] **Step 2: Run, expect NoMethodError for `#line_entries`.**
 
-- [ ] **Step 3: Define `IR::LineEntry`** — `optimizer/lib/ruby_opt/ir/line_entry.rb`
+- [ ] **Step 3: Define `IR::LineEntry`** — `optimizer/lib/optimize/ir/line_entry.rb`
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module IR
     # One entry in an iseq's line-info table.
     #
@@ -297,15 +297,15 @@ module RubyOpt
 end
 ```
 
-- [ ] **Step 4: Implement `Codec::LineInfo`** — `optimizer/lib/ruby_opt/codec/line_info.rb`
+- [ ] **Step 4: Implement `Codec::LineInfo`** — `optimizer/lib/optimize/codec/line_info.rb`
 
 Implement `LineInfo.decode(reader, size, slot_to_inst)` and `LineInfo.encode(writer, entries, inst_to_slot)` following the delta-compressed format in the IBF reference. The entries returned from decode are `IR::LineEntry` structs.
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/ir/line_entry"
+require "optimize/ir/line_entry"
 
-module RubyOpt
+module Optimize
   module Codec
     # Decode/encode an iseq's insns_info table. On-disk the format is
     # delta-compressed (successive position deltas + run-length encoded
@@ -386,9 +386,9 @@ jj commit -m "Decode/encode line info (insns_info) via IR"
 ### Task 3: Arg positions (opt_table + keyword defaults) — decode + re-encode from IR
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/arg_positions.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
-- Modify: `optimizer/lib/ruby_opt/ir/function.rb`
+- Create: `optimizer/lib/optimize/codec/arg_positions.rb`
+- Modify: `optimizer/lib/optimize/codec/iseq_envelope.rb`
+- Modify: `optimizer/lib/optimize/ir/function.rb`
 - Create: `optimizer/test/codec/arg_positions_test.rb`
 
 **Context:** Methods with optional arguments or keyword arguments carry two position tables. `opt_table` is an array of YARV slot positions, one per optional arg, pointing to the first instruction of that arg's default-value code. `keyword.default_values` similarly points at keyword-default evaluation. Both shift when the instruction stream resizes, so both must live in IR as `IR::Instruction` references.
@@ -400,7 +400,7 @@ Today these live as raw bytes inside the body record (see `misc[:arg_spec]` whic
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
+require "optimize/codec"
 
 class ArgPositionsTest < Minitest::Test
   def test_method_with_optional_args_round_trips_opt_table
@@ -412,7 +412,7 @@ class ArgPositionsTest < Minitest::Test
       f(1, 2, 3)
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
+    ir = Optimize::Codec.decode(original)
 
     f = ir.children.find { |c| c.name == "f" }
     refute_nil f
@@ -422,7 +422,7 @@ class ArgPositionsTest < Minitest::Test
         "opt_table entry does not reference a method instruction"
     end
 
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 
   def test_method_with_keyword_args_round_trips
@@ -433,8 +433,8 @@ class ArgPositionsTest < Minitest::Test
       g(name: "x")
     RUBY
     original = RubyVM::InstructionSequence.compile(src).to_binary
-    ir = RubyOpt::Codec.decode(original)
-    assert_equal original, RubyOpt::Codec.encode(ir)
+    ir = Optimize::Codec.decode(original)
+    assert_equal original, Optimize::Codec.encode(ir)
   end
 end
 ```
@@ -460,8 +460,8 @@ jj commit -m "Decode/encode arg positions (opt_table + keyword defaults) via IR"
 ### Task 4: Stack-max recomputation
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/codec/stack_max.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
+- Create: `optimizer/lib/optimize/codec/stack_max.rb`
+- Modify: `optimizer/lib/optimize/codec/iseq_envelope.rb`
 - Create: `optimizer/test/codec/stack_max_test.rb`
 
 **Context:** Every iseq has a `stack_max` field in its body record — the high-water mark of the operand stack during execution. MRI's `load_from_binary` uses this to preallocate frame slots and rejects the iseq if the stored value is too low. After length-changing edits, the correct `stack_max` may differ.
@@ -475,8 +475,8 @@ For this task, implement a conservative upper-bound: model the ops used in the c
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/codec/stack_max"
+require "optimize/codec"
+require "optimize/codec/stack_max"
 
 class StackMaxTest < Minitest::Test
   def test_matches_or_exceeds_ruby_computed_value
@@ -484,12 +484,12 @@ class StackMaxTest < Minitest::Test
     # the value Ruby assigned at compile time.
     Dir[File.expand_path("corpus/*.rb", __dir__)].each do |path|
       src = File.read(path)
-      ir = RubyOpt::Codec.decode(
+      ir = Optimize::Codec.decode(
         RubyVM::InstructionSequence.compile(src, path).to_binary
       )
       walk_ir(ir) do |function|
         original = function.misc[:stack_max] || 0
-        computed = RubyOpt::Codec::StackMax.compute(function)
+        computed = Optimize::Codec::StackMax.compute(function)
         assert_operator computed, :>=, original,
           "#{path} / #{function.name}: computed #{computed} < ruby's #{original}"
       end
@@ -512,7 +512,7 @@ end
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Codec
     module StackMax
       # Map opcode symbol -> [pop_count, push_count] or a lambda
@@ -583,10 +583,10 @@ jj commit -m "Recompute stack_max from IR via symbolic execution"
 > **The fix: split Task 5 into 5a–5d, each with a tight byte-diff assertion so the single thing that broke is always visible.** Execute them in order; do not skip ahead.
 
 **Files (across 5a–5d):**
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_list.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/line_info.rb` (filter dangling refs in 5d)
-- Modify: `optimizer/lib/ruby_opt/codec/catch_table.rb` (filter dangling refs in 5d)
+- Modify: `optimizer/lib/optimize/codec/iseq_envelope.rb`
+- Modify: `optimizer/lib/optimize/codec/iseq_list.rb`
+- Modify: `optimizer/lib/optimize/codec/line_info.rb` (filter dangling refs in 5d)
+- Modify: `optimizer/lib/optimize/codec/catch_table.rb` (filter dangling refs in 5d)
 
 ---
 
@@ -666,8 +666,8 @@ The remaining steps below are preserved from the original monolithic plan; Task 
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/ir/instruction"
+require "optimize/codec"
+require "optimize/ir/instruction"
 
 class LengthChangePreambleTest < Minitest::Test
   # Every corpus fixture still round-trips byte-identically under the
@@ -676,8 +676,8 @@ class LengthChangePreambleTest < Minitest::Test
     Dir[File.expand_path("corpus/*.rb", __dir__)].each do |path|
       src = File.read(path)
       original = RubyVM::InstructionSequence.compile(src, path).to_binary
-      ir = RubyOpt::Codec.decode(original)
-      re_encoded = RubyOpt::Codec.encode(ir)
+      ir = Optimize::Codec.decode(original)
+      re_encoded = Optimize::Codec.encode(ir)
       assert_equal original, re_encoded, "mismatch for #{File.basename(path)}"
     end
   end
@@ -757,8 +757,8 @@ jj commit -m "Emit iseq body and data region from IR"
 ### Task 6: Remove `EncoderSizeChange` + length-change integration tests
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/codec.rb`
-- Modify: `optimizer/lib/ruby_opt/codec/iseq_list.rb` (or wherever the constraint currently lives)
+- Modify: `optimizer/lib/optimize/codec.rb`
+- Modify: `optimizer/lib/optimize/codec/iseq_list.rb` (or wherever the constraint currently lives)
 - Modify: `optimizer/test/codec/length_change_test.rb`
 
 - [ ] **Step 1: Expand `optimizer/test/codec/length_change_test.rb`** with real length-change cases:
@@ -767,7 +767,7 @@ jj commit -m "Emit iseq body and data region from IR"
 class LengthChangeTest < Minitest::Test
   def test_deleting_an_instruction_re_encodes_to_a_loadable_iseq
     src = "def f; x = 1; x + 2; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = ir.children.find { |c| c.name == "f" }
     # Remove the `setlocal` for x — we keep the value on the stack
     # and rely on the + to consume it. This is a deliberately-minimal
@@ -777,19 +777,19 @@ class LengthChangeTest < Minitest::Test
     skip "no setlocal in test fixture" unless setlocal_idx
     f.instructions.delete_at(setlocal_idx)
 
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     assert_kind_of RubyVM::InstructionSequence, loaded
   end
 
   def test_inserting_a_nop_extends_the_iseq
     src = "def f; 1 + 2; end; f"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     f = ir.children.find { |c| c.name == "f" }
     f.instructions.unshift(
-      RubyOpt::IR::Instruction.new(opcode: :nop, operands: [], line: f.instructions.first.line)
+      Optimize::IR::Instruction.new(opcode: :nop, operands: [], line: f.instructions.first.line)
     )
-    modified = RubyOpt::Codec.encode(ir)
+    modified = Optimize::Codec.encode(ir)
     loaded = RubyVM::InstructionSequence.load_from_binary(modified)
     # Calling the outer iseq should still produce 3
     assert_equal 3, loaded.eval
@@ -799,8 +799,8 @@ class LengthChangeTest < Minitest::Test
     Dir[File.expand_path("corpus/*.rb", __dir__)].each do |path|
       src = File.read(path)
       original = RubyVM::InstructionSequence.compile(src, path).to_binary
-      ir = RubyOpt::Codec.decode(original)
-      assert_equal original, RubyOpt::Codec.encode(ir), "mismatch for #{File.basename(path)}"
+      ir = Optimize::Codec.decode(original)
+      assert_equal original, Optimize::Codec.encode(ir), "mismatch for #{File.basename(path)}"
     end
   end
 end
@@ -810,7 +810,7 @@ Remove the preamble test from Task 5 (it's superseded by `test_round_trip_is_byt
 
 - [ ] **Step 2: Remove the `EncoderSizeChange` constraint.**
 
-In `optimizer/lib/ruby_opt/codec/iseq_list.rb` (or wherever the constraint was added in Plan 1b Task 1), remove the length-comparison + raise. Keep the exception class defined in `codec.rb` for a deprecation cycle — mark it with a comment:
+In `optimizer/lib/optimize/codec/iseq_list.rb` (or wherever the constraint was added in Plan 1b Task 1), remove the length-comparison + raise. Keep the exception class defined in `codec.rb` for a deprecation cycle — mark it with a comment:
 
 ```ruby
 # Kept for backwards-compatibility with callers that rescue it. The

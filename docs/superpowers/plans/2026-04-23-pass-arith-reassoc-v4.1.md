@@ -15,7 +15,7 @@
 ## File Structure
 
 **Modified:**
-- `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb` — add case B2 in the `:ordered` walker's literal branch; capture `chain_line` is already in scope. No other pass-file changes.
+- `optimizer/lib/optimize/passes/arith_reassoc_pass.rb` — add case B2 in the `:ordered` walker's literal branch; capture `chain_line` is already in scope. No other pass-file changes.
 - `optimizer/test/passes/arith_reassoc_pass_test.rb` — append new test cases at the bottom of the class.
 - `docs/demo_artifacts/polynomial.md` — regenerated with the additional arith_reassoc + identity_elim cascade slides showing real diffs.
 - `docs/TODO.md` — strike the v4.1 entry, add shipped note.
@@ -46,7 +46,7 @@
 ## Task 1: Implement the exact-divisibility fold
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb` (insert one `elsif` case around line 249, plus a log call).
+- Modify: `optimizer/lib/optimize/passes/arith_reassoc_pass.rb` (insert one `elsif` case around line 249, plus a log call).
 - Test: `optimizer/test/passes/arith_reassoc_pass_test.rb` (append new test cases).
 
 ### Step 1: Write the failing tests
@@ -58,64 +58,64 @@ Append to `optimizer/test/passes/arith_reassoc_pass_test.rb`, inside the `ArithR
 
 def test_exact_divisibility_fold_x_times_k_over_k
   src = "def f(x); x * 12 / 12; end; f(7)"
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
-  log = RubyOpt::Log.new
-  RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+  log = Optimize::Log.new
+  Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
   # Expect `x * 1`: one opt_mult, zero opt_div, and a literal 1 in the stream.
   assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
   assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
-  refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 1 }
+  refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 1 }
 
   # And a log entry records the exact-divisibility step.
   refute_empty log.for_pass(:arith_reassoc).select { |e| e.reason == :exact_divisibility_fold },
                "expected at least one :exact_divisibility_fold log entry"
 
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal 7, loaded.eval
 end
 
 def test_exact_divisibility_fold_x_times_12_over_4
   src = "def f(x); x * 12 / 4; end; f(5)"
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
-  RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+  Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
   assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
   assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
-  refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 3 }
+  refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 3 }
 
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal 15, loaded.eval
 end
 
 def test_exact_divisibility_cascades_through_same_op_run
   src = "def f(x); x * 2 * 6 / 4; end; f(5)"
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
-  RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+  Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
   # `2 * 6` coalesces to 12 via the same-op run, then `12 / 4` folds to 3.
   assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
   assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
-  refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 3 }
+  refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 3 }
 
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal 15, loaded.eval
 end
 
 def test_non_exact_divisibility_preserves_chain
   src = "def f(x); x * 12 / 5; end; f(5)"
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
   before_opcodes = f.instructions.map(&:opcode)
-  log = RubyOpt::Log.new
-  RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+  log = Optimize::Log.new
+  Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
   # The chain can't fold (5 does not divide 12). Expect unchanged opcodes and
   # no :exact_divisibility_fold entry. The existing :no_change pathway fires.
@@ -127,12 +127,12 @@ def test_div_then_mult_not_folded
   # `x / 4 * 12` is NOT equivalent to `x * 3` under integer truncation
   # (e.g. x=5: (5/4)*12 = 12; 5*3 = 15). Regression guard.
   src = "def f(x); x / 4 * 12; end; f(20)"
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
   before_opcodes = f.instructions.map(&:opcode)
-  log = RubyOpt::Log.new
-  RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+  log = Optimize::Log.new
+  Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
   assert_equal before_opcodes, f.instructions.map(&:opcode),
                "div-then-mult must not be folded (unsound under integer truncation)"
@@ -145,16 +145,16 @@ def test_exact_divisibility_zero_accumulator_preserves_fold
   # absorbing-zero rule is separate (IdentityElim v2 future work) — just
   # assert our fold happened and produced `x * 0`.
   src = "def f(x); x * 0 * 5 / 5; end; f(7)"
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
-  RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+  Optimize::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
 
   assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
   assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
-  refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 0 }
+  refute_nil f.instructions.find { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == 0 }
 
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal 0, loaded.eval
 end
 ```
@@ -167,7 +167,7 @@ Expected: the new `test_exact_divisibility_*` cases fail (`x * 12 / 12` currentl
 
 ### Step 3: Implement the walker branch
 
-Open `optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb`. Find the literal branch of `stream.each` inside `try_rewrite_chain_ordered` (around line 244-262). The current shape:
+Open `optimizer/lib/optimize/passes/arith_reassoc_pass.rb`. Find the literal branch of `stream.each` inside `try_rewrite_chain_ordered` (around line 244-262). The current shape:
 
 ```ruby
 stream.each do |e|
@@ -262,7 +262,7 @@ One direction only; /-then-* is unsound under integer truncation
 because x / a loses information that x * (b/a) cannot recover.
 
 Spec: docs/superpowers/specs/2026-04-23-pass-arith-reassoc-v4.1-design.md" \
-  optimizer/lib/ruby_opt/passes/arith_reassoc_pass.rb \
+  optimizer/lib/optimize/passes/arith_reassoc_pass.rb \
   optimizer/test/passes/arith_reassoc_pass_test.rb
 ```
 

@@ -18,7 +18,7 @@
 
 ```
 optimizer/
-  lib/ruby_opt/
+  lib/optimize/
     passes/
       identity_elim_pass.rb               # NEW Task 1
     pipeline.rb                           # MODIFIED Task 2
@@ -37,7 +37,7 @@ optimizer/README.md                        # MODIFIED Task 3 (optional)
 **Context:** Implement `IdentityElimPass` in isolation — construct the pass, exercise it directly on `InstructionSequence.compile` → `Codec.decode` IR, assert transformations. Do NOT wire it into `Pipeline.default` yet; that's Task 2. This keeps the blast radius tiny if the pass has a bug — the existing 161 tests stay untouched until Task 2.
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/passes/identity_elim_pass.rb`
+- Create: `optimizer/lib/optimize/passes/identity_elim_pass.rb`
 - Create: `optimizer/test/passes/identity_elim_pass_test.rb`
 
 - [ ] **Step 1: Write the failing baseline test for `x * 1 → x`**
@@ -47,28 +47,28 @@ Create `optimizer/test/passes/identity_elim_pass_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/passes/identity_elim_pass"
-require "ruby_opt/passes/literal_value"
-require "ruby_opt/log"
+require "optimize/codec"
+require "optimize/passes/identity_elim_pass"
+require "optimize/passes/literal_value"
+require "optimize/log"
 
 class IdentityElimPassTest < Minitest::Test
   def test_mult_right_identity_eliminated
     src = "def f(x); x * 1; end; f(7)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_mult }
     assert_equal 0, f.instructions.count { |i|
-      RubyOpt::Passes::LiteralValue.literal?(i) &&
-        RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 1
+      Optimize::Passes::LiteralValue.literal?(i) &&
+        Optimize::Passes::LiteralValue.read(i, object_table: ot) == 1
     }
     assert(log.entries.any? { |e| e.reason == :identity_eliminated })
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 7, loaded.eval
   end
 
@@ -87,24 +87,24 @@ end
 
 - [ ] **Step 2: Run the test, confirm it fails with LoadError**
 
-Run via `mcp__ruby-bytecode__run_optimizer_tests` with filter `IdentityElimPassTest`. Expected: `LoadError` or `NameError` on `RubyOpt::Passes::IdentityElimPass` — the file does not exist yet.
+Run via `mcp__ruby-bytecode__run_optimizer_tests` with filter `IdentityElimPassTest`. Expected: `LoadError` or `NameError` on `Optimize::Passes::IdentityElimPass` — the file does not exist yet.
 
 - [ ] **Step 3: Create the pass**
 
-Create `optimizer/lib/ruby_opt/passes/identity_elim_pass.rb`:
+Create `optimizer/lib/optimize/passes/identity_elim_pass.rb`:
 
 ```ruby
 # frozen_string_literal: true
 require "set"
-require "ruby_opt/pass"
-require "ruby_opt/passes/literal_value"
-require "ruby_opt/passes/arith_reassoc_pass"
+require "optimize/pass"
+require "optimize/passes/literal_value"
+require "optimize/passes/arith_reassoc_pass"
 
-module RubyOpt
+module Optimize
   module Passes
     # Strip arithmetic identities: x * 1, 1 * x, x + 0, 0 + x, x - 0, x / 1.
     # See docs/superpowers/specs/2026-04-21-pass-identity-elim-design.md.
-    class IdentityElimPass < RubyOpt::Pass
+    class IdentityElimPass < Optimize::Pass
       IDENTITY_OPS = {
         opt_plus:  { identity: 0, sides: :either },
         opt_mult:  { identity: 1, sides: :either },
@@ -215,16 +215,16 @@ Append to `identity_elim_pass_test.rb`, before the `private` section:
   def test_fixpoint_cascade
     # x * 1 * 1 * 1 → x (three identities stripped in sequence)
     src = "def f(x); x * 1 * 1 * 1; end; f(42)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     assert_equal 0, f.instructions.count { |i| i.opcode == :opt_mult }
     assert_equal 3, log.entries.count { |e| e.reason == :identity_eliminated }
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
 
@@ -239,12 +239,12 @@ Append to `identity_elim_pass_test.rb`, before the `private` section:
   def test_absorbing_zero_not_eliminated
     # x * 0 is out of scope — would require side-effect analysis. Leave alone.
     src = "def f(x); x * 0; end; f(7)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.none? { |e| e.reason == :identity_eliminated })
   end
@@ -253,23 +253,23 @@ Append to `identity_elim_pass_test.rb`, before the `private` section:
     # Non-literal side is a method call (outside SAFE_PRODUCER_OPCODES) —
     # eliding the op would elide potential side effects in `foo`.
     src = "def f(x); x.succ * 1; end; f(6)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    RubyOpt::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    Optimize::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     assert_equal before, f.instructions.map(&:opcode)
   end
 
   def test_idempotent_on_already_collapsed
     src = "def f(x); x * 1; end; f(7)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    pass = RubyOpt::Passes::IdentityElimPass.new
-    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    pass = Optimize::Passes::IdentityElimPass.new
+    pass.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     first = f.instructions.map(&:opcode)
-    pass.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    pass.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
     second = f.instructions.map(&:opcode)
     assert_equal first, second
   end
@@ -279,30 +279,30 @@ Add shared helpers to the `private` section (above or below `find_iseq`):
 
 ```ruby
   def assert_collapses_to_x(src, result:)
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
 
     remaining_arith = f.instructions.count { |i| IDENTITY_ARITH_OPCODES.include?(i.opcode) }
     assert_equal 0, remaining_arith, "expected all IDENTITY_OPS opcodes stripped from #{src}"
     assert(log.entries.any? { |e| e.reason == :identity_eliminated })
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal result, loaded.eval
   end
 
   def assert_unchanged(src, expected_eval:)
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    log = RubyOpt::Log.new
-    RubyOpt::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    log = Optimize::Log.new
+    Optimize::Passes::IdentityElimPass.new.apply(f, type_env: nil, log: log, object_table: ot)
     assert_equal before, f.instructions.map(&:opcode)
     assert(log.entries.none? { |e| e.reason == :identity_eliminated })
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal expected_eval, loaded.eval
   end
 
@@ -321,7 +321,7 @@ If any test fails, fix the pass until all pass.
 jj commit -m "IdentityElimPass: strip x*1, x+0, x-0, x/1 with side-effect-free producers"
 ```
 
-Files: `optimizer/lib/ruby_opt/passes/identity_elim_pass.rb`, `optimizer/test/passes/identity_elim_pass_test.rb`.
+Files: `optimizer/lib/optimize/passes/identity_elim_pass.rb`, `optimizer/test/passes/identity_elim_pass_test.rb`.
 
 ---
 
@@ -330,20 +330,20 @@ Files: `optimizer/lib/ruby_opt/passes/identity_elim_pass.rb`, `optimizer/test/pa
 **Context:** Flip the pass into `Pipeline.default`, add a corpus fixture, and add the motivating pipeline-integration test (`2 * 3 / 6 * x → x`). This is the commit where the talk's three-pass narrative lands.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
 - Create: `optimizer/test/codec/corpus/identity_elim.rb`
 - Modify: `optimizer/test/passes/identity_elim_pass_test.rb`
 
 - [ ] **Step 1: Wire into `Pipeline.default`**
 
-Edit `optimizer/lib/ruby_opt/pipeline.rb`:
+Edit `optimizer/lib/optimize/pipeline.rb`:
 
 ```ruby
-require "ruby_opt/passes/arith_reassoc_pass"
-require "ruby_opt/passes/const_fold_pass"
-require "ruby_opt/passes/identity_elim_pass"
+require "optimize/passes/arith_reassoc_pass"
+require "optimize/passes/const_fold_pass"
+require "optimize/passes/identity_elim_pass"
 
-module RubyOpt
+module Optimize
   class Pipeline
     def self.default
       new([Passes::ArithReassocPass.new, Passes::ConstFoldPass.new, Passes::IdentityElimPass.new])
@@ -360,8 +360,8 @@ Append to `optimizer/test/passes/identity_elim_pass_test.rb`, before `private`:
     # The motivating case: ArithReassoc → ConstFold → IdentityElim must
     # collapse `2 * 3 / 6 * x` to just `getlocal x; leave`.
     src = "def f(x); 2 * 3 / 6 * x; end; f(42)"
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
-    RubyOpt::Pipeline.default.run(ir, type_env: nil)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    Optimize::Pipeline.default.run(ir, type_env: nil)
     f = find_iseq(ir, "f")
 
     # No arithmetic opcodes should remain.
@@ -371,7 +371,7 @@ Append to `optimizer/test/passes/identity_elim_pass_test.rb`, before `private`:
     assert_equal 0, remaining_arith,
       "expected no arith opcodes after pipeline; got #{f.instructions.map(&:opcode).inspect}"
 
-    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 42, loaded.eval
   end
 ```
@@ -442,7 +442,7 @@ If any existing test goes red because `Pipeline.default` now has three passes in
 jj commit -m "IdentityElimPass: wire into Pipeline.default + corpus fixture + pipeline integration test"
 ```
 
-Files: `optimizer/lib/ruby_opt/pipeline.rb`, `optimizer/test/codec/corpus/identity_elim.rb`, `optimizer/test/passes/identity_elim_pass_test.rb`.
+Files: `optimizer/lib/optimize/pipeline.rb`, `optimizer/test/codec/corpus/identity_elim.rb`, `optimizer/test/passes/identity_elim_pass_test.rb`.
 
 ---
 
@@ -458,7 +458,7 @@ Files: `optimizer/lib/ruby_opt/pipeline.rb`, `optimizer/test/codec/corpus/identi
 Append a new bullet to the passes list in `optimizer/README.md` (right after the `ConstFoldPass` bullet, since pipeline order is arith → fold → identity):
 
 ```
-- `RubyOpt::Passes::IdentityElimPass` — strips arithmetic identities the
+- `Optimize::Passes::IdentityElimPass` — strips arithmetic identities the
   upstream passes leave behind: `x * 1`, `1 * x`, `x + 0`, `0 + x`,
   `x - 0`, `x / 1`. Driven by the `IDENTITY_OPS` table, which encodes each
   operator's identity element and which sides are eligible (`:either` for

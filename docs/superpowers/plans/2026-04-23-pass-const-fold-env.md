@@ -5,7 +5,7 @@
 **Goal:** Ship Tier 4 const-fold — fold `ENV["LIT"]` to its snapshot value, with a whole-IR-tree taint gate that disables folding if any ENV write is observed. Extend `ConstFoldPass` with String-on-String `==`/`!=` so `ENV["FLAG"] == "true"` collapses to `true` in one pipeline pass.
 
 **Architecture:**
-- New `RubyOpt::Passes::ConstFoldEnvPass` in `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`.
+- New `Optimize::Passes::ConstFoldEnvPass` in `optimizer/lib/optimize/passes/const_fold_env_pass.rb`.
 - Additive kwarg `env_snapshot:` threaded through `Pipeline#run` and `pass.apply`.
 - Two scan phases inside the pass: (1) whole-tree taint scan over every function's instructions; (2) if untainted, fold the 3-tuple `opt_getconstant_path ENV; putchilledstring KEY; opt_aref` via `function.splice_instructions!`.
 - `ConstFoldPass` gets a small extension: `opt_eq`/`opt_neq` with two String operands fold to `putobject true`/`putobject false`.
@@ -13,7 +13,7 @@
 
 **Tech Stack:**
 - Ruby 4.0.2, Minitest.
-- Existing helpers: `RubyOpt::Passes::LiteralValue`, `RubyOpt::IR::Function#splice_instructions!`, `RubyOpt::Codec::ObjectTable#index_for`.
+- Existing helpers: `Optimize::Passes::LiteralValue`, `Optimize::IR::Function#splice_instructions!`, `Optimize::Codec::ObjectTable#index_for`.
 - All Ruby/test execution via the `ruby-bytecode` MCP tools, NOT host shell.
 - Source control: `jj` only. Finalize commits with `jj commit -m`, never `jj describe -m`.
 
@@ -58,11 +58,11 @@ pop
 
 | File | Role | Create / Modify |
 |---|---|---|
-| `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb` | New `ConstFoldEnvPass` — taint scan + 3-tuple fold. | Create |
+| `optimizer/lib/optimize/passes/const_fold_env_pass.rb` | New `ConstFoldEnvPass` — taint scan + 3-tuple fold. | Create |
 | `optimizer/test/passes/const_fold_env_pass_test.rb` | Unit tests for the new pass. | Create |
-| `optimizer/lib/ruby_opt/passes/const_fold_pass.rb` | Add String-on-String `==`/`!=` fold path. | Modify |
+| `optimizer/lib/optimize/passes/const_fold_pass.rb` | Add String-on-String `==`/`!=` fold path. | Modify |
 | `optimizer/test/passes/const_fold_pass_test.rb` | Tests for new string-eq path. | Modify |
-| `optimizer/lib/ruby_opt/pipeline.rb` | Add `env_snapshot:` kwarg; thread to `pass.apply`; register `ConstFoldEnvPass` before `ConstFoldPass` in `.default`. | Modify |
+| `optimizer/lib/optimize/pipeline.rb` | Add `env_snapshot:` kwarg; thread to `pass.apply`; register `ConstFoldEnvPass` before `ConstFoldPass` in `.default`. | Modify |
 | `optimizer/test/pipeline_test.rb` | End-to-end test — `ENV["FLAG"] == "true"` collapses to `true`. | Modify |
 | `docs/TODO.md` | Mark Tier 4 shipped; move items to "Refinements"/v2 as applicable. | Modify |
 
@@ -73,7 +73,7 @@ pop
 Purely additive plumbing — no behavior change yet. Every other task depends on this.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
 - Test: `optimizer/test/pipeline_test.rb`
 
 - [ ] **Step 1.1: Write a failing test that `env_snapshot:` reaches `apply`.**
@@ -83,18 +83,18 @@ Add to `optimizer/test/pipeline_test.rb`:
 ```ruby
 def test_pipeline_threads_env_snapshot_to_passes
   captured = []
-  recorder = Class.new(RubyOpt::Pass) do
+  recorder = Class.new(Optimize::Pass) do
     define_method(:apply) do |fn, type_env:, log:, object_table: nil, **extras|
       captured << extras[:env_snapshot]
     end
     def name = :recorder
   end
 
-  ir = RubyOpt::Codec.decode(
+  ir = Optimize::Codec.decode(
     RubyVM::InstructionSequence.compile("def f; 1; end").to_binary
   )
   snap = { "FOO" => "bar" }.freeze
-  RubyOpt::Pipeline.new([recorder.new]).run(ir, type_env: nil, env_snapshot: snap)
+  Optimize::Pipeline.new([recorder.new]).run(ir, type_env: nil, env_snapshot: snap)
 
   refute_empty captured
   assert_equal snap, captured.first
@@ -109,7 +109,7 @@ Expected: ArgumentError about unknown keyword on the `.run` call.
 
 - [ ] **Step 1.3: Modify `Pipeline#run` to accept `env_snapshot:` and thread it.**
 
-Edit `optimizer/lib/ruby_opt/pipeline.rb:25-48`:
+Edit `optimizer/lib/optimize/pipeline.rb:25-48`:
 
 ```ruby
 def run(ir, type_env:, env_snapshot: nil)
@@ -156,7 +156,7 @@ jj commit -m "pipeline: thread env_snapshot: kwarg through run → apply"
 Small additive change to an existing pass. Integer paths unchanged; only `opt_eq` / `opt_neq` get a String-String branch.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_pass.rb`
 - Test: `optimizer/test/passes/const_fold_pass_test.rb`
 
 - [ ] **Step 2.1: Write the failing test for String==String folds.**
@@ -166,32 +166,32 @@ Add to `optimizer/test/passes/const_fold_pass_test.rb`:
 ```ruby
 def test_folds_string_equality_triple_to_true
   src = 'def f; "abc" == "abc"; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
-  RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-  assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true })
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
+  assert(f.instructions.any? { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == true })
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal true, loaded.eval
 end
 
 def test_folds_string_equality_triple_to_false
   src = 'def f; "abc" == "def"; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
-  RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-  assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == false })
+  Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
+  assert(f.instructions.any? { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == false })
 end
 
 def test_folds_string_inequality_triple
   src = 'def f; "a" != "b"; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
-  RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
-  assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true })
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
+  assert(f.instructions.any? { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == true })
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal true, loaded.eval
 end
 
@@ -199,11 +199,11 @@ def test_leaves_mixed_type_equality_alone
   # "a" == 5 — both are literals but types differ; skip fold. Pre-existing
   # non_integer_literal log should fire because it's not Integer-Integer.
   src = 'def f; "a" == 5; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
   before = f.instructions.map(&:opcode)
-  RubyOpt::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+  Optimize::Passes::ConstFoldPass.new.apply(f, type_env: nil, log: Optimize::Log.new, object_table: ot)
   assert_equal before, f.instructions.map(&:opcode)
 end
 ```
@@ -214,7 +214,7 @@ Expected: `test_folds_string_equality_triple_to_true` etc. fail — the current 
 
 - [ ] **Step 2.3: Extend `try_fold_triple` in `const_fold_pass.rb`.**
 
-Edit `optimizer/lib/ruby_opt/passes/const_fold_pass.rb`, replacing the body of `try_fold_triple` (lines 64-91). Keep the Integer path unchanged; add a String-String branch for `opt_eq`/`opt_neq` only:
+Edit `optimizer/lib/optimize/passes/const_fold_pass.rb`, replacing the body of `try_fold_triple` (lines 64-91). Keep the Integer path unchanged; add a String-String branch for `opt_eq`/`opt_neq` only:
 
 ```ruby
 def try_fold_triple(a, b, op, function, log, object_table)
@@ -273,7 +273,7 @@ jj commit -m "const_fold: fold String==String and String!=String triples"
 Build the taint scanner first and test it in isolation. Folding comes in Task 4. This split keeps each change reviewable.
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Create: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
 - Test: `optimizer/test/passes/const_fold_env_pass_test.rb`
 
 - [ ] **Step 3.1: Write failing tests for the pass as a no-op under every condition except "safe-only uses".**
@@ -283,21 +283,21 @@ Create `optimizer/test/passes/const_fold_env_pass_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/codec"
-require "ruby_opt/log"
-require "ruby_opt/passes/const_fold_env_pass"
+require "optimize/codec"
+require "optimize/log"
+require "optimize/passes/const_fold_env_pass"
 
 class ConstFoldEnvPassTest < Minitest::Test
   # --- Task 3 (taint scanner) tests ---
 
   def test_no_snapshot_is_noop
-    ir = RubyOpt::Codec.decode(
+    ir = Optimize::Codec.decode(
       RubyVM::InstructionSequence.compile('def f; ENV["FOO"]; end').to_binary
     )
     f = find_iseq(ir, "f")
     before = f.instructions.map(&:opcode)
-    RubyOpt::Passes::ConstFoldEnvPass.new.apply(
-      f, type_env: nil, log: RubyOpt::Log.new,
+    Optimize::Passes::ConstFoldEnvPass.new.apply(
+      f, type_env: nil, log: Optimize::Log.new,
       object_table: ir.misc[:object_table], env_snapshot: nil,
     )
     assert_equal before, f.instructions.map(&:opcode)
@@ -309,10 +309,10 @@ class ConstFoldEnvPassTest < Minitest::Test
       def r; ENV["A"]; end
       def w; ENV["B"] = "x"; end
     RUBY
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
     w = find_iseq(ir, "w")
     before_r = r.instructions.map(&:opcode)
@@ -320,7 +320,7 @@ class ConstFoldEnvPassTest < Minitest::Test
 
     # Apply to every function (as pipeline would).
     each_function(ir) do |fn|
-      RubyOpt::Passes::ConstFoldEnvPass.new.apply(
+      Optimize::Passes::ConstFoldEnvPass.new.apply(
         fn, type_env: nil, log: log,
         object_table: ot, env_snapshot: snap,
       )
@@ -335,15 +335,15 @@ class ConstFoldEnvPassTest < Minitest::Test
   def test_env_fetch_taints_tree
     # ENV.fetch is opt_send_without_block with receiver ENV — tainted in v1.
     src = 'def r; ENV["A"]; end; def f; ENV.fetch("B"); end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     snap = { "A" => "1", "B" => "2" }.freeze
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     r = find_iseq(ir, "r")
     before_r = r.instructions.map(&:opcode)
 
     each_function(ir) do |fn|
-      RubyOpt::Passes::ConstFoldEnvPass.new.apply(
+      Optimize::Passes::ConstFoldEnvPass.new.apply(
         fn, type_env: nil, log: log,
         object_table: ot, env_snapshot: snap,
       )
@@ -357,13 +357,13 @@ class ConstFoldEnvPassTest < Minitest::Test
     # ENV[name] — opt_aref with non-literal key. Safe read, just not foldable.
     # Must not emit :env_write_observed.
     src = 'def f; x = "FOO"; ENV[x]; end'
-    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
-    log = RubyOpt::Log.new
+    log = Optimize::Log.new
     snap = { "FOO" => "1" }.freeze
 
     each_function(ir) do |fn|
-      RubyOpt::Passes::ConstFoldEnvPass.new.apply(
+      Optimize::Passes::ConstFoldEnvPass.new.apply(
         fn, type_env: nil, log: log,
         object_table: ot, env_snapshot: snap,
       )
@@ -391,17 +391,17 @@ class ConstFoldEnvPassTest < Minitest::Test
 end
 ```
 
-- [ ] **Step 3.2: Run these tests. Expect all to fail with `cannot load such file -- ruby_opt/passes/const_fold_env_pass`.**
+- [ ] **Step 3.2: Run these tests. Expect all to fail with `cannot load such file -- optimize/passes/const_fold_env_pass`.**
 
 - [ ] **Step 3.3: Create the pass with scanner + no-op fold loop.**
 
-Create `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`:
+Create `optimizer/lib/optimize/passes/const_fold_env_pass.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/pass"
+require "optimize/pass"
 
-module RubyOpt
+module Optimize
   module Passes
     # Tier 4 const-fold: ENV["LIT"] -> its snapshot value (or nil).
     #
@@ -411,7 +411,7 @@ module RubyOpt
     # other than the safe `opt_aref` with a string-literal key), every
     # fold site in the tree is skipped. The "anywhere in tree"
     # classification is memoized on the IR root via `function.misc`.
-    class ConstFoldEnvPass < RubyOpt::Pass
+    class ConstFoldEnvPass < Optimize::Pass
       TAINT_FLAG_KEY = :const_fold_env_tree_tainted
 
       def name = :const_fold_env
@@ -508,7 +508,7 @@ module RubyOpt
 end
 ```
 
-**⚠ Design note on `tree_root`:** The IR has no parent pointer. Checking `optimizer/lib/ruby_opt/ir/function.rb` confirms only `children` exists. Two options:
+**⚠ Design note on `tree_root`:** The IR has no parent pointer. Checking `optimizer/lib/optimize/ir/function.rb` confirms only `children` exists. Two options:
 
 1. **Cache on pass instance** (above): `@root ||= function`. Works because `Pipeline#each_function` yields the root first, and a fresh `ConstFoldEnvPass.new` is constructed per `Pipeline.default` call (verified in `pipeline.rb:11-17`). The pass-instance state is scoped to one pipeline run.
 2. **Rely on `ir.misc` directly** — instead of `tree_root(function).misc`, use a thread/global or shared state. More fragile.
@@ -543,7 +543,7 @@ jj commit -m "const_fold_env: scaffolding + whole-tree taint scanner"
 Now add the fold phase to the pass. Tree-taint gate from Task 3 already guards the fold.
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/passes/const_fold_env_pass.rb`
+- Modify: `optimizer/lib/optimize/passes/const_fold_env_pass.rb`
 - Modify: `optimizer/test/passes/const_fold_env_pass_test.rb`
 
 - [ ] **Step 4.1: Write failing tests for the fold path.**
@@ -554,14 +554,14 @@ Append to `optimizer/test/passes/const_fold_env_pass_test.rb` (before the `priva
 def test_folds_env_aref_when_value_already_interned
   # "hello" appears in the program so it's in the object table already.
   src = 'def f; ENV["K"] == "hello"; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
   snap = { "K" => "hello" }.freeze
-  log = RubyOpt::Log.new
+  log = Optimize::Log.new
 
   each_function(ir) do |fn|
-    RubyOpt::Passes::ConstFoldEnvPass.new.apply(
+    Optimize::Passes::ConstFoldEnvPass.new.apply(
       fn, type_env: nil, log: log,
       object_table: ot, env_snapshot: snap,
     )
@@ -574,20 +574,20 @@ def test_folds_env_aref_when_value_already_interned
   refute_includes opcodes, :opt_aref, "opt_aref should be gone"
   # The "hello" literal may now be pushed via putobject (our emit) OR
   # the original putchilledstring (the RHS of ==). Both are fine.
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal true, loaded.eval
 end
 
 def test_folds_missing_key_to_putnil
   src = 'def f; ENV["MISSING"]; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
   snap = {}.freeze
-  log = RubyOpt::Log.new
+  log = Optimize::Log.new
 
   each_function(ir) do |fn|
-    RubyOpt::Passes::ConstFoldEnvPass.new.apply(
+    Optimize::Passes::ConstFoldEnvPass.new.apply(
       fn, type_env: nil, log: log,
       object_table: ot, env_snapshot: snap,
     )
@@ -597,7 +597,7 @@ def test_folds_missing_key_to_putnil
   refute_includes opcodes, :opt_getconstant_path
   refute_includes opcodes, :opt_aref
   assert_includes opcodes, :putnil
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_nil loaded.eval
 end
 
@@ -605,15 +605,15 @@ def test_skips_fold_when_snapshot_value_not_in_object_table
   # "xyzzy" is in the snapshot but NOT anywhere in the compiled program.
   # intern() can't add strings → we skip this fold site and log.
   src = 'def f; ENV["K"]; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   f = find_iseq(ir, "f")
   snap = { "K" => "xyzzy" }.freeze
-  log = RubyOpt::Log.new
+  log = Optimize::Log.new
   before = f.instructions.map(&:opcode)
 
   each_function(ir) do |fn|
-    RubyOpt::Passes::ConstFoldEnvPass.new.apply(
+    Optimize::Passes::ConstFoldEnvPass.new.apply(
       fn, type_env: nil, log: log,
       object_table: ot, env_snapshot: snap,
     )
@@ -626,13 +626,13 @@ end
 
 def test_logs_folded_for_each_successful_fold
   src = 'def f; ENV["K"] == "hello"; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   snap = { "K" => "hello" }.freeze
-  log = RubyOpt::Log.new
+  log = Optimize::Log.new
 
   each_function(ir) do |fn|
-    RubyOpt::Passes::ConstFoldEnvPass.new.apply(
+    Optimize::Passes::ConstFoldEnvPass.new.apply(
       fn, type_env: nil, log: log,
       object_table: ot, env_snapshot: snap,
     )
@@ -737,7 +737,7 @@ def literal_string?(inst, object_table)
 end
 ```
 
-Also add `require "ruby_opt/passes/literal_value"` and `require "ruby_opt/ir/instruction"` at the top of the file (alongside the existing `require "ruby_opt/pass"`).
+Also add `require "optimize/passes/literal_value"` and `require "optimize/ir/instruction"` at the top of the file (alongside the existing `require "optimize/pass"`).
 
 - [ ] **Step 4.4: Run all Task-3 and Task-4 tests for `const_fold_env_pass`, confirm green.**
 
@@ -760,7 +760,7 @@ jj commit -m "const_fold_env: fold ENV[literal] 3-tuple to snapshot value"
 ## Task 5: Register in `Pipeline.default` and end-to-end test
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb`
+- Modify: `optimizer/lib/optimize/pipeline.rb`
 - Modify: `optimizer/test/pipeline_test.rb`
 
 - [ ] **Step 5.1: Write the end-to-end failing test.**
@@ -770,22 +770,22 @@ Add to `optimizer/test/pipeline_test.rb`:
 ```ruby
 def test_pipeline_collapses_env_feature_flag_to_boolean
   src = 'def f; ENV["FLAG"] == "true"; end'
-  ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+  ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
   ot = ir.misc[:object_table]
   snap = { "FLAG" => "true" }.freeze
 
-  RubyOpt::Pipeline.default.run(ir, type_env: nil, env_snapshot: snap)
+  Optimize::Pipeline.default.run(ir, type_env: nil, env_snapshot: snap)
 
   f = find_iseq_in_pipeline_test(ir, "f")
   # After the full pipeline: ENV["FLAG"] folds to "true", then "true"=="true" folds to true.
   # The function body (excluding trailer) should contain a `true` literal.
-  assert(f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == true },
+  assert(f.instructions.any? { |i| Optimize::Passes::LiteralValue.read(i, object_table: ot) == true },
          "expected ENV[FLAG] == 'true' to collapse to `true`")
   # And no ENV refs left.
   refute(f.instructions.any? { |i| i.opcode == :opt_getconstant_path })
   refute(f.instructions.any? { |i| i.opcode == :opt_aref })
 
-  loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+  loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
   assert_equal true, loaded.eval
 end
 
@@ -807,17 +807,17 @@ If `pipeline_test.rb` already has a `find_iseq` helper, use that instead.
 
 - [ ] **Step 5.3: Register `ConstFoldEnvPass` in `Pipeline.default`.**
 
-Edit `optimizer/lib/ruby_opt/pipeline.rb`:
+Edit `optimizer/lib/optimize/pipeline.rb`:
 
 ```ruby
-require "ruby_opt/log"
-require "ruby_opt/passes/inlining_pass"
-require "ruby_opt/passes/arith_reassoc_pass"
-require "ruby_opt/passes/const_fold_env_pass"  # NEW
-require "ruby_opt/passes/const_fold_pass"
-require "ruby_opt/passes/identity_elim_pass"
+require "optimize/log"
+require "optimize/passes/inlining_pass"
+require "optimize/passes/arith_reassoc_pass"
+require "optimize/passes/const_fold_env_pass"  # NEW
+require "optimize/passes/const_fold_pass"
+require "optimize/passes/identity_elim_pass"
 
-module RubyOpt
+module Optimize
   class Pipeline
     def self.default
       new([

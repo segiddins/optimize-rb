@@ -14,7 +14,7 @@ vs `Pipeline.default`), and renders a single markdown file per fixture
 into `docs/demo_artifacts/`.
 
 **Tech Stack:** Ruby 4.0, `RubyVM::InstructionSequence`, existing
-`RubyOpt::Pipeline` / `Codec` / `TypeEnv` / `Harness`, `benchmark-ips`
+`Optimize::Pipeline` / `Codec` / `TypeEnv` / `Harness`, `benchmark-ips`
 gem, `diff-lcs` gem, `psych` (stdlib YAML), Minitest.
 
 **Spec:** `docs/superpowers/specs/2026-04-22-demo-programs-benchmark-harness-design.md`
@@ -24,13 +24,13 @@ gem, `diff-lcs` gem, `psych` (stdlib YAML), Minitest.
 ## File Structure
 
 **Create:**
-- `optimizer/lib/ruby_opt/demo.rb` — namespace shim
-- `optimizer/lib/ruby_opt/demo/walkthrough.rb` — YAML sidecar loader + validator
-- `optimizer/lib/ruby_opt/demo/disasm_normalizer.rb` — strips PC columns and headers from disasm text
-- `optimizer/lib/ruby_opt/demo/iseq_snapshots.rb` — compiles a fixture through Pipeline prefixes and returns disasm strings
-- `optimizer/lib/ruby_opt/demo/benchmark.rb` — benchmark-ips subprocess wrapper
-- `optimizer/lib/ruby_opt/demo/markdown_renderer.rb` — assembles the five-section artifact
-- `optimizer/lib/ruby_opt/demo/runner.rb` — top-level orchestration per fixture
+- `optimizer/lib/optimize/demo.rb` — namespace shim
+- `optimizer/lib/optimize/demo/walkthrough.rb` — YAML sidecar loader + validator
+- `optimizer/lib/optimize/demo/disasm_normalizer.rb` — strips PC columns and headers from disasm text
+- `optimizer/lib/optimize/demo/iseq_snapshots.rb` — compiles a fixture through Pipeline prefixes and returns disasm strings
+- `optimizer/lib/optimize/demo/benchmark.rb` — benchmark-ips subprocess wrapper
+- `optimizer/lib/optimize/demo/markdown_renderer.rb` — assembles the five-section artifact
+- `optimizer/lib/optimize/demo/runner.rb` — top-level orchestration per fixture
 - `optimizer/bin/demo` — CLI entry point (executable)
 - `optimizer/examples/sum_of_squares.rb`
 - `optimizer/examples/point_distance.walkthrough.yml`
@@ -48,7 +48,7 @@ gem, `diff-lcs` gem, `psych` (stdlib YAML), Minitest.
 **Modify:**
 - `optimizer/Gemfile` — add `diff-lcs`, `benchmark-ips`
 - `optimizer/Gemfile.lock` — regenerate
-- `optimizer/lib/ruby_opt/pipeline.rb` — expose `attr_reader :passes`
+- `optimizer/lib/optimize/pipeline.rb` — expose `attr_reader :passes`
 - `optimizer/examples/point_distance.rb` — strip trailing driver loop
 - `optimizer/Rakefile` — add `demo:verify` task
 - `docs/todo.md` — strike the shipped item
@@ -108,7 +108,7 @@ jj commit -m "build: add benchmark-ips and diff-lcs for demo driver"
 ### Task 2: Expose Pipeline#passes
 
 **Files:**
-- Modify: `optimizer/lib/ruby_opt/pipeline.rb:35-37`
+- Modify: `optimizer/lib/optimize/pipeline.rb:35-37`
 - Test: `optimizer/test/pipeline_test.rb`
 
 The demo driver needs `Pipeline.default.passes.map(&:name)` to validate
@@ -123,12 +123,12 @@ Append to `optimizer/test/pipeline_test.rb` (add a new
 class PipelineAccessorTest < Minitest::Test
   def test_passes_accessor_returns_configured_passes
     passes = [Object.new, Object.new]
-    pipeline = RubyOpt::Pipeline.new(passes)
+    pipeline = Optimize::Pipeline.new(passes)
     assert_equal passes, pipeline.passes
   end
 
   def test_default_pipeline_pass_names_are_symbols
-    names = RubyOpt::Pipeline.default.passes.map(&:name)
+    names = Optimize::Pipeline.default.passes.map(&:name)
     assert(names.all? { |n| n.is_a?(Symbol) })
     assert_includes names, :inlining
   end
@@ -145,7 +145,7 @@ Expected: FAIL with `NoMethodError: undefined method 'passes'`.
 
 - [ ] **Step 3: Add the accessor**
 
-Edit `optimizer/lib/ruby_opt/pipeline.rb`, change:
+Edit `optimizer/lib/optimize/pipeline.rb`, change:
 ```ruby
     def initialize(passes)
       @passes = passes
@@ -179,8 +179,8 @@ jj commit -m "feat: Pipeline exposes #passes for demo driver validation"
 ### Task 3: Walkthrough YAML loader
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/demo.rb`
-- Create: `optimizer/lib/ruby_opt/demo/walkthrough.rb`
+- Create: `optimizer/lib/optimize/demo.rb`
+- Create: `optimizer/lib/optimize/demo/walkthrough.rb`
 - Test: `optimizer/test/demo/walkthrough_test.rb`
 
 - [ ] **Step 1: Write the failing test**
@@ -190,7 +190,7 @@ Create `optimizer/test/demo/walkthrough_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/walkthrough"
+require "optimize/demo/walkthrough"
 require "tmpdir"
 
 class WalkthroughTest < Minitest::Test
@@ -212,7 +212,7 @@ class WalkthroughTest < Minitest::Test
         - dead_branch_fold
     YAML
     with_yaml(body) do |path, _dir|
-      wt = RubyOpt::Demo::Walkthrough.load(path)
+      wt = Optimize::Demo::Walkthrough.load(path)
       assert_equal "x.rb", wt.fixture
       assert_equal "a = 1", wt.entry_setup
       assert_equal "a + 1", wt.entry_call
@@ -229,8 +229,8 @@ class WalkthroughTest < Minitest::Test
         - no_such_pass
     YAML
     with_yaml(body) do |path, _dir|
-      err = assert_raises(RubyOpt::Demo::Walkthrough::InvalidSidecar) do
-        RubyOpt::Demo::Walkthrough.load(path)
+      err = assert_raises(Optimize::Demo::Walkthrough::InvalidSidecar) do
+        Optimize::Demo::Walkthrough.load(path)
       end
       assert_match(/no_such_pass/, err.message)
     end
@@ -244,7 +244,7 @@ class WalkthroughTest < Minitest::Test
       walkthrough: [const_fold]
     YAML
     with_yaml(body) do |path, dir|
-      wt = RubyOpt::Demo::Walkthrough.load(path)
+      wt = Optimize::Demo::Walkthrough.load(path)
       assert_equal File.join(dir, "x.rb"), wt.fixture_path
     end
   end
@@ -256,8 +256,8 @@ class WalkthroughTest < Minitest::Test
       walkthrough: [const_fold]
     YAML
     with_yaml(body) do |path, _dir|
-      assert_raises(RubyOpt::Demo::Walkthrough::InvalidSidecar) do
-        RubyOpt::Demo::Walkthrough.load(path)
+      assert_raises(Optimize::Demo::Walkthrough::InvalidSidecar) do
+        Optimize::Demo::Walkthrough.load(path)
       end
     end
   end
@@ -274,12 +274,12 @@ Expected: FAIL with `cannot load such file`.
 
 - [ ] **Step 3: Create namespace shim**
 
-Create `optimizer/lib/ruby_opt/demo.rb`:
+Create `optimizer/lib/optimize/demo.rb`:
 
 ```ruby
 # frozen_string_literal: true
 
-module RubyOpt
+module Optimize
   module Demo
   end
 end
@@ -287,15 +287,15 @@ end
 
 - [ ] **Step 4: Implement Walkthrough**
 
-Create `optimizer/lib/ruby_opt/demo/walkthrough.rb`:
+Create `optimizer/lib/optimize/demo/walkthrough.rb`:
 
 ```ruby
 # frozen_string_literal: true
 require "psych"
-require "ruby_opt/demo"
-require "ruby_opt/pipeline"
+require "optimize/demo"
+require "optimize/pipeline"
 
-module RubyOpt
+module Optimize
   module Demo
     class Walkthrough
       class InvalidSidecar < StandardError; end
@@ -363,7 +363,7 @@ jj commit -m "feat(demo): Walkthrough loads and validates sidecar YAML"
 ### Task 4: Disasm normalizer
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/demo/disasm_normalizer.rb`
+- Create: `optimizer/lib/optimize/demo/disasm_normalizer.rb`
 - Test: `optimizer/test/demo/disasm_normalizer_test.rb`
 
 Strips the iseq header block, the PC column, and trailing source-line
@@ -377,7 +377,7 @@ Create `optimizer/test/demo/disasm_normalizer_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/disasm_normalizer"
+require "optimize/demo/disasm_normalizer"
 
 class DisasmNormalizerTest < Minitest::Test
   def test_strips_header_block
@@ -387,7 +387,7 @@ class DisasmNormalizerTest < Minitest::Test
       0000 putobject_INT2FIX_1_                                          (   1)[Li]
       0001 leave
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     refute_match(/disasm:/, normalized)
     refute_match(/local table/, normalized)
     assert_match(/putobject_INT2FIX_1_/, normalized)
@@ -400,7 +400,7 @@ class DisasmNormalizerTest < Minitest::Test
       0000 putobject_INT2FIX_1_
       0001 leave
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     refute_match(/^\d{4}\s/, normalized)
     assert_match(/putobject_INT2FIX_1_/, normalized)
   end
@@ -411,7 +411,7 @@ class DisasmNormalizerTest < Minitest::Test
       0000 putobject_INT2FIX_1_                                          (   1)[Li]
       0001 leave                                                         (   2)[Li]
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     refute_match(/\(\s*\d+\)\[/, normalized)
   end
 
@@ -422,7 +422,7 @@ class DisasmNormalizerTest < Minitest::Test
       == disasm: #<ISeq:inner@block>
       0000 leave
     DISASM
-    normalized = RubyOpt::Demo::DisasmNormalizer.normalize(raw)
+    normalized = Optimize::Demo::DisasmNormalizer.normalize(raw)
     assert_match(/== block: inner@block/, normalized)
   end
 end
@@ -438,13 +438,13 @@ Expected: FAIL (`cannot load such file`).
 
 - [ ] **Step 3: Implement normalizer**
 
-Create `optimizer/lib/ruby_opt/demo/disasm_normalizer.rb`:
+Create `optimizer/lib/optimize/demo/disasm_normalizer.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/demo"
+require "optimize/demo"
 
-module RubyOpt
+module Optimize
   module Demo
     module DisasmNormalizer
       HEADER_RE   = /\A==\s+disasm:\s+#<ISeq:(?<label>[^>]+)>/
@@ -499,7 +499,7 @@ jj commit -m "feat(demo): DisasmNormalizer strips PC column and header noise"
 ### Task 5: Iseq snapshot generator
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/demo/iseq_snapshots.rb`
+- Create: `optimizer/lib/optimize/demo/iseq_snapshots.rb`
 - Test: `optimizer/test/demo/iseq_snapshots_test.rb`
 
 Compiles a fixture source into: `before` (no passes), per-pass
@@ -513,7 +513,7 @@ Create `optimizer/test/demo/iseq_snapshots_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/iseq_snapshots"
+require "optimize/demo/iseq_snapshots"
 require "tmpdir"
 
 class IseqSnapshotsTest < Minitest::Test
@@ -534,7 +534,7 @@ class IseqSnapshotsTest < Minitest::Test
 
   def test_before_returns_disasm_text
     with_fixture do |path|
-      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+      snaps = Optimize::Demo::IseqSnapshots.generate(
         fixture_path: path, walkthrough: [],
       )
       assert_kind_of String, snaps.before
@@ -544,7 +544,7 @@ class IseqSnapshotsTest < Minitest::Test
 
   def test_after_full_uses_pipeline_default
     with_fixture do |path|
-      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+      snaps = Optimize::Demo::IseqSnapshots.generate(
         fixture_path: path, walkthrough: [],
       )
       assert_kind_of String, snaps.after_full
@@ -554,7 +554,7 @@ class IseqSnapshotsTest < Minitest::Test
 
   def test_per_pass_snapshots_match_prefixes
     with_fixture do |path|
-      snaps = RubyOpt::Demo::IseqSnapshots.generate(
+      snaps = Optimize::Demo::IseqSnapshots.generate(
         fixture_path: path,
         walkthrough: [:const_fold, :dead_branch_fold],
       )
@@ -568,7 +568,7 @@ class IseqSnapshotsTest < Minitest::Test
   def test_unknown_walkthrough_name_raises
     with_fixture do |path|
       assert_raises(ArgumentError) do
-        RubyOpt::Demo::IseqSnapshots.generate(
+        Optimize::Demo::IseqSnapshots.generate(
           fixture_path: path, walkthrough: [:no_such_pass],
         )
       end
@@ -587,16 +587,16 @@ Expected: FAIL (`cannot load such file`).
 
 - [ ] **Step 3: Implement IseqSnapshots**
 
-Create `optimizer/lib/ruby_opt/demo/iseq_snapshots.rb`:
+Create `optimizer/lib/optimize/demo/iseq_snapshots.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/demo"
-require "ruby_opt/codec"
-require "ruby_opt/pipeline"
-require "ruby_opt/type_env"
+require "optimize/demo"
+require "optimize/codec"
+require "optimize/pipeline"
+require "optimize/type_env"
 
-module RubyOpt
+module Optimize
   module Demo
     module IseqSnapshots
       Result = Struct.new(:before, :after_full, :per_pass, keyword_init: true)
@@ -661,7 +661,7 @@ jj commit -m "feat(demo): IseqSnapshots compiles fixture through pass prefixes"
 ### Task 6: Benchmark subprocess wrapper
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/demo/benchmark.rb`
+- Create: `optimizer/lib/optimize/demo/benchmark.rb`
 - Test: `optimizer/test/demo/benchmark_test.rb`
 
 Runs `benchmark-ips` twice — once with the harness off, once with
@@ -679,7 +679,7 @@ Create `optimizer/test/demo/benchmark_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/benchmark"
+require "optimize/demo/benchmark"
 require "tmpdir"
 
 class DemoBenchmarkTest < Minitest::Test
@@ -698,7 +698,7 @@ class DemoBenchmarkTest < Minitest::Test
 
   def test_compare_runs_both_labels_and_captures_output
     with_fixture do |path|
-      result = RubyOpt::Demo::Benchmark.compare(
+      result = Optimize::Demo::Benchmark.compare(
         fixture_path: path,
         entry_setup: "",
         entry_call: "noop",
@@ -728,15 +728,15 @@ Expected: FAIL (`cannot load such file`).
 
 - [ ] **Step 3: Implement Benchmark**
 
-Create `optimizer/lib/ruby_opt/demo/benchmark.rb`:
+Create `optimizer/lib/optimize/demo/benchmark.rb`:
 
 ```ruby
 # frozen_string_literal: true
 require "open3"
 require "tempfile"
-require "ruby_opt/demo"
+require "optimize/demo"
 
-module RubyOpt
+module Optimize
   module Demo
     module Benchmark
       Result = Struct.new(:stdout, :plain_ips, :optimized_ips, keyword_init: true)
@@ -784,9 +784,9 @@ module RubyOpt
 
       def build_script(label:, with_harness:, fixture_path:, entry_setup:, entry_call:, warmup:, time:)
         preamble = with_harness ? <<~HARNESS : ""
-          require "ruby_opt/harness"
-          require "ruby_opt/pipeline"
-          hook = RubyOpt::Harness::LoadIseqHook.new(passes: RubyOpt::Pipeline.default.passes)
+          require "optimize/harness"
+          require "optimize/pipeline"
+          hook = Optimize::Harness::LoadIseqHook.new(passes: Optimize::Pipeline.default.passes)
           hook.install
         HARNESS
 
@@ -847,7 +847,7 @@ jj commit -m "feat(demo): Benchmark.compare runs harness-off vs Pipeline.default
 ### Task 7: Markdown renderer
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/demo/markdown_renderer.rb`
+- Create: `optimizer/lib/optimize/demo/markdown_renderer.rb`
 - Test: `optimizer/test/demo/markdown_renderer_test.rb`
 
 Assembles the five sections from `IseqSnapshots::Result`,
@@ -860,13 +860,13 @@ Create `optimizer/test/demo/markdown_renderer_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/markdown_renderer"
-require "ruby_opt/demo/iseq_snapshots"
-require "ruby_opt/demo/benchmark"
+require "optimize/demo/markdown_renderer"
+require "optimize/demo/iseq_snapshots"
+require "optimize/demo/benchmark"
 
 class MarkdownRendererTest < Minitest::Test
   def build_snapshots(per_pass)
-    RubyOpt::Demo::IseqSnapshots::Result.new(
+    Optimize::Demo::IseqSnapshots::Result.new(
       before: "0000 putobject_INT2FIX_1_\n0001 leave\n",
       after_full: "0000 putobject_INT2FIX_2_\n0001 leave\n",
       per_pass: per_pass,
@@ -874,7 +874,7 @@ class MarkdownRendererTest < Minitest::Test
   end
 
   def build_bench
-    RubyOpt::Demo::Benchmark::Result.new(
+    Optimize::Demo::Benchmark::Result.new(
       stdout: "plain raw\noptimized raw\nComparison:\n  optimized: 2.0x  faster\n",
       plain_ips: 100.0,
       optimized_ips: 200.0,
@@ -885,7 +885,7 @@ class MarkdownRendererTest < Minitest::Test
     snaps = build_snapshots({
       const_fold: "0000 putobject_INT2FIX_2_\n0001 leave\n",
     })
-    md = RubyOpt::Demo::MarkdownRenderer.render(
+    md = Optimize::Demo::MarkdownRenderer.render(
       stem: "x",
       source: "def f; 1 + 1; end\n",
       walkthrough: [:const_fold],
@@ -905,7 +905,7 @@ class MarkdownRendererTest < Minitest::Test
     snaps = build_snapshots({
       const_fold: "0000 putobject_INT2FIX_2_\n0001 leave\n",
     })
-    md = RubyOpt::Demo::MarkdownRenderer.render(
+    md = Optimize::Demo::MarkdownRenderer.render(
       stem: "x", source: "def f; 1 + 1; end\n",
       walkthrough: [:const_fold],
       snapshots: snaps,
@@ -917,7 +917,7 @@ class MarkdownRendererTest < Minitest::Test
 
   def test_benchmark_headline_cites_ratio
     snaps = build_snapshots({})
-    md = RubyOpt::Demo::MarkdownRenderer.render(
+    md = Optimize::Demo::MarkdownRenderer.render(
       stem: "x", source: "def f; 1; end\n",
       walkthrough: [],
       snapshots: snaps,
@@ -938,16 +938,16 @@ Expected: FAIL (`cannot load such file`).
 
 - [ ] **Step 3: Implement MarkdownRenderer**
 
-Create `optimizer/lib/ruby_opt/demo/markdown_renderer.rb`:
+Create `optimizer/lib/optimize/demo/markdown_renderer.rb`:
 
 ```ruby
 # frozen_string_literal: true
 require "diff/lcs"
 require "diff/lcs/hunk"
-require "ruby_opt/demo"
-require "ruby_opt/demo/disasm_normalizer"
+require "optimize/demo"
+require "optimize/demo/disasm_normalizer"
 
-module RubyOpt
+module Optimize
   module Demo
     module MarkdownRenderer
       PASS_DESCRIPTIONS = {
@@ -1052,7 +1052,7 @@ jj commit -m "feat(demo): MarkdownRenderer assembles five-section artifact"
 ### Task 8: Runner orchestration
 
 **Files:**
-- Create: `optimizer/lib/ruby_opt/demo/runner.rb`
+- Create: `optimizer/lib/optimize/demo/runner.rb`
 - Test: `optimizer/test/demo/runner_test.rb`
 
 - [ ] **Step 1: Write the failing test**
@@ -1062,7 +1062,7 @@ Create `optimizer/test/demo/runner_test.rb`:
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/runner"
+require "optimize/demo/runner"
 require "tmpdir"
 
 class RunnerTest < Minitest::Test
@@ -1084,7 +1084,7 @@ class RunnerTest < Minitest::Test
       out_dir = File.join(dir, "artifacts")
       Dir.mkdir(out_dir)
 
-      path = RubyOpt::Demo::Runner.run(
+      path = Optimize::Demo::Runner.run(
         sidecar_path: sidecar,
         output_dir: out_dir,
         bench_warmup: 0.1,
@@ -1112,17 +1112,17 @@ Expected: FAIL (`cannot load such file`).
 
 - [ ] **Step 3: Implement Runner**
 
-Create `optimizer/lib/ruby_opt/demo/runner.rb`:
+Create `optimizer/lib/optimize/demo/runner.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/demo"
-require "ruby_opt/demo/walkthrough"
-require "ruby_opt/demo/iseq_snapshots"
-require "ruby_opt/demo/benchmark"
-require "ruby_opt/demo/markdown_renderer"
+require "optimize/demo"
+require "optimize/demo/walkthrough"
+require "optimize/demo/iseq_snapshots"
+require "optimize/demo/benchmark"
+require "optimize/demo/markdown_renderer"
 
-module RubyOpt
+module Optimize
   module Demo
     module Runner
       module_function
@@ -1189,7 +1189,7 @@ Create `optimizer/bin/demo`:
 # frozen_string_literal: true
 require "bundler/setup"
 require "fileutils"
-require "ruby_opt/demo/runner"
+require "optimize/demo/runner"
 
 EXAMPLES_DIR = File.expand_path("../examples", __dir__)
 OUTPUT_DIR   = File.expand_path("../../docs/demo_artifacts", __dir__)
@@ -1202,7 +1202,7 @@ def run_stem(stem)
   sidecar = sidecar_for(stem)
   raise "sidecar not found: #{sidecar}" unless File.exist?(sidecar)
   FileUtils.mkdir_p(OUTPUT_DIR)
-  path = RubyOpt::Demo::Runner.run(sidecar_path: sidecar, output_dir: OUTPUT_DIR)
+  path = Optimize::Demo::Runner.run(sidecar_path: sidecar, output_dir: OUTPUT_DIR)
   puts "wrote #{path}"
 end
 
@@ -1373,7 +1373,7 @@ jj commit -m "feat(examples): walkthrough sidecars for both demo fixtures"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/walkthrough"
+require "optimize/demo/walkthrough"
 
 class SidecarValidationTest < Minitest::Test
   EXAMPLES_DIR = File.expand_path("../../examples", __dir__)
@@ -1381,7 +1381,7 @@ class SidecarValidationTest < Minitest::Test
   Dir[File.join(EXAMPLES_DIR, "*.walkthrough.yml")].each do |sidecar|
     stem = File.basename(sidecar, ".walkthrough.yml")
     define_method("test_sidecar_valid_#{stem}") do
-      wt = RubyOpt::Demo::Walkthrough.load(sidecar)
+      wt = Optimize::Demo::Walkthrough.load(sidecar)
       assert File.exist?(wt.fixture_path),
              "fixture file #{wt.fixture_path} does not exist"
       refute_empty wt.walkthrough
@@ -1489,7 +1489,7 @@ end
 namespace :demo do
   desc "Regenerate demo artifacts in a tempdir and diff against committed files"
   task :verify do
-    require "ruby_opt/demo/runner"
+    require "optimize/demo/runner"
     examples_dir = File.expand_path("examples", __dir__)
     committed_dir = File.expand_path("../docs/demo_artifacts", __dir__)
     sidecars = Dir[File.join(examples_dir, "*.walkthrough.yml")]
@@ -1499,7 +1499,7 @@ namespace :demo do
       mismatches = []
       sidecars.each do |sc|
         stem = File.basename(sc, ".walkthrough.yml")
-        regenerated = RubyOpt::Demo::Runner.run(sidecar_path: sc, output_dir: tmp)
+        regenerated = Optimize::Demo::Runner.run(sidecar_path: sc, output_dir: tmp)
         committed = File.join(committed_dir, "#{stem}.md")
         unless File.exist?(committed)
           mismatches << "missing committed artifact: #{committed}"
@@ -1597,7 +1597,7 @@ jj commit -m "docs(todo): strike demo-programs item; point to artifacts"
   - Pass names (`:inlining`, `:arith_reassoc`, `:const_fold_tier2`,
     `:const_fold_env`, `:const_fold`, `:identity_elim`,
     `:dead_branch_fold`) match `Pipeline.default` pass `name`
-    methods (verified by grepping `optimizer/lib/ruby_opt/passes/`).
+    methods (verified by grepping `optimizer/lib/optimize/passes/`).
 
 ---
 

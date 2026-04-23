@@ -25,7 +25,7 @@ that the arith/const-fold cascade keeps working past the stash.
 
 ## Scope
 
-A new peephole pass `RubyOpt::Passes::DeadStashElimPass`. Narrow
+A new peephole pass `Optimize::Passes::DeadStashElimPass`. Narrow
 target:
 
 - Strictly adjacent `setlocal X; getlocal X` in the instruction stream
@@ -133,13 +133,13 @@ can now see through the former round-trip.
 ## Files
 
 **Created:**
-- `optimizer/lib/ruby_opt/passes/dead_stash_elim_pass.rb`
+- `optimizer/lib/optimize/passes/dead_stash_elim_pass.rb`
 - `optimizer/test/passes/dead_stash_elim_pass_test.rb`
 
 **Modified:**
-- `optimizer/lib/ruby_opt/pipeline.rb` (require + registration in
+- `optimizer/lib/optimize/pipeline.rb` (require + registration in
   `Pipeline.default`)
-- `optimizer/lib/ruby_opt/demo/markdown_renderer.rb` (one-line entry
+- `optimizer/lib/optimize/demo/markdown_renderer.rb` (one-line entry
   in `PASS_DESCRIPTIONS` — it's how walkthroughs label the pass)
 - `docs/demo_artifacts/polynomial.md` (regenerated)
 - `docs/TODO.md` (strike the polynomial-cascade-gap bullet that this

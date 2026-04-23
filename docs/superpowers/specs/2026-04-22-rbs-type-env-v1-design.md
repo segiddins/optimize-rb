@@ -38,7 +38,7 @@ Three new pieces, one upgraded pass, one data-flow addition.
 
 ### 1. `TypeEnv` upgrade
 
-Adds two queries on the existing `RubyOpt::TypeEnv`:
+Adds two queries on the existing `Optimize::TypeEnv`:
 
 - `signature_for_function(function) → Signature | nil` — returns the
   `@rbs` signature for the function's own definition. Used to seed
@@ -50,7 +50,7 @@ Adds two queries on the existing `RubyOpt::TypeEnv`:
 ### 2. `SlotTypeTable` (new)
 
 Per-function `local_slot_index → type_string` map. Lives in
-`optimizer/lib/ruby_opt/ir/slot_type_table.rb` (alongside other IR
+`optimizer/lib/optimize/ir/slot_type_table.rb` (alongside other IR
 bits). Three construction phases:
 
 1. **Signature seeding.** On entry, if the function has an `@rbs`

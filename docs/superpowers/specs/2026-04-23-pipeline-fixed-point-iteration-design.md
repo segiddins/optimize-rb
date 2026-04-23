@@ -35,7 +35,7 @@ YAML sidecars; altering `DisasmNormalizer`.
 
 ### Pass classification
 
-`RubyOpt::Pass` (base class, `optimizer/lib/ruby_opt/pass.rb`) gains a
+`Optimize::Pass` (base class, `optimizer/lib/optimize/pass.rb`) gains a
 `one_shot?` predicate, default `false`. `InliningPass` overrides to
 `true`. No other shipped pass needs the override.
 

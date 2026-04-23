@@ -4,9 +4,9 @@
 
 **Goal:** Ship a runnable demo driver that serializes an IR function to JSON, sends it to `claude -p`, validates structurally + semantically with up-to-3 retry loop feeding validator errors back, and renders the full transcript as a committed demo artifact for the talk's §7 close.
 
-**Architecture:** New namespace `RubyOpt::Demo::Claude` (outside `Pipeline.default`), driven by a new `bin/demo-claude` entry point. Six small focused files: `claude.rb` (orchestrator), `claude/serializer.rb`, `claude/validator.rb`, `claude/prompt.rb`, `claude/invoker.rb`, `claude/transcript.rb`. Tested via stubbed `Invoker` for the loop; real `claude -p` only runs during `rake demo:regenerate_claude` (opt-in).
+**Architecture:** New namespace `Optimize::Demo::Claude` (outside `Pipeline.default`), driven by a new `bin/demo-claude` entry point. Six small focused files: `claude.rb` (orchestrator), `claude/serializer.rb`, `claude/validator.rb`, `claude/prompt.rb`, `claude/invoker.rb`, `claude/transcript.rb`. Tested via stubbed `Invoker` for the loop; real `claude -p` only runs during `rake demo:regenerate_claude` (opt-in).
 
-**Tech Stack:** Ruby 4.0, existing `RubyOpt::Codec`, `RubyVM::InstructionSequence.load_from_binary`, `Open3.capture3` for the `claude` CLI, minitest, existing demo-artifact pattern.
+**Tech Stack:** Ruby 4.0, existing `Optimize::Codec`, `RubyVM::InstructionSequence.load_from_binary`, `Open3.capture3` for the `claude` CLI, minitest, existing demo-artifact pattern.
 
 **Spec:** `docs/superpowers/specs/2026-04-23-claude-code-gag-pass-design.md`
 
@@ -16,12 +16,12 @@
 
 **New files:**
 - `optimizer/examples/claude_gag.rb` — fixture (`def answer; 2 + 3; end`)
-- `optimizer/lib/ruby_opt/demo/claude.rb` — top-level orchestrator
-- `optimizer/lib/ruby_opt/demo/claude/serializer.rb` — IR ↔ JSON array
-- `optimizer/lib/ruby_opt/demo/claude/validator.rb` — structural + semantic
-- `optimizer/lib/ruby_opt/demo/claude/prompt.rb` — initial + retry prompts
-- `optimizer/lib/ruby_opt/demo/claude/invoker.rb` — `claude -p` shell I/O
-- `optimizer/lib/ruby_opt/demo/claude/transcript.rb` — markdown render
+- `optimizer/lib/optimize/demo/claude.rb` — top-level orchestrator
+- `optimizer/lib/optimize/demo/claude/serializer.rb` — IR ↔ JSON array
+- `optimizer/lib/optimize/demo/claude/validator.rb` — structural + semantic
+- `optimizer/lib/optimize/demo/claude/prompt.rb` — initial + retry prompts
+- `optimizer/lib/optimize/demo/claude/invoker.rb` — `claude -p` shell I/O
+- `optimizer/lib/optimize/demo/claude/transcript.rb` — markdown render
 - `optimizer/bin/demo-claude` — CLI entry point
 - `optimizer/test/demo/claude/serializer_test.rb`
 - `optimizer/test/demo/claude/validator_test.rb`
@@ -69,18 +69,18 @@ jj commit -m "feat(demo): claude_gag fixture"
 
 **Files:**
 - Create: `optimizer/test/demo/claude/serializer_test.rb`
-- Create: `optimizer/lib/ruby_opt/demo/claude/serializer.rb`
+- Create: `optimizer/lib/optimize/demo/claude/serializer.rb`
 
 - [ ] **Step 1: Write failing test for `serialize`.**
 
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/harness"
-require "ruby_opt/codec"
-require "ruby_opt/demo/claude/serializer"
+require "optimize/harness"
+require "optimize/codec"
+require "optimize/demo/claude/serializer"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class SerializerTest < Minitest::Test
@@ -131,17 +131,17 @@ end
 - [ ] **Step 2: Run the test, confirm it fails.**
 
 Run: `cd optimizer && bundle exec rake test TEST=test/demo/claude/serializer_test.rb`
-Expected: FAIL with `cannot load such file -- ruby_opt/demo/claude/serializer`
+Expected: FAIL with `cannot load such file -- optimize/demo/claude/serializer`
 
 - [ ] **Step 3: Implement `serialize`.**
 
-Create `optimizer/lib/ruby_opt/demo/claude/serializer.rb`:
+Create `optimizer/lib/optimize/demo/claude/serializer.rb`:
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/ir/instruction"
+require "optimize/ir/instruction"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       # IR <-> JSON-serializable array of [opcode_string, *operands] tuples.
@@ -226,7 +226,7 @@ jj commit -m "feat(demo/claude): serializer — IR to JSON array"
 
 **Files:**
 - Modify: `optimizer/test/demo/claude/serializer_test.rb`
-- Modify: `optimizer/lib/ruby_opt/demo/claude/serializer.rb`
+- Modify: `optimizer/lib/optimize/demo/claude/serializer.rb`
 
 - [ ] **Step 1: Add a failing round-trip test.**
 
@@ -332,23 +332,23 @@ jj commit -m "feat(demo/claude): serializer — deserialize with lax/strict mode
 
 **Files:**
 - Create: `optimizer/test/demo/claude/validator_test.rb`
-- Create: `optimizer/lib/ruby_opt/demo/claude/validator.rb`
+- Create: `optimizer/lib/optimize/demo/claude/validator.rb`
 
 - [ ] **Step 1: Write failing structural tests.**
 
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/serializer"
-require "ruby_opt/demo/claude/validator"
+require "optimize/demo/claude/serializer"
+require "optimize/demo/claude/validator"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class ValidatorTest < Minitest::Test
         def decode_source(src)
           iseq = RubyVM::InstructionSequence.compile(src)
-          envelope = RubyOpt::Codec.decode(iseq.to_binary)
+          envelope = Optimize::Codec.decode(iseq.to_binary)
           envelope.iseq_list.fetch(0)
         end
 
@@ -360,7 +360,7 @@ module RubyOpt
 
         def test_structural_reports_unknown_opcode
           fn = decode_source("2 + 3")
-          fn.instructions << RubyOpt::IR::Instruction.new(
+          fn.instructions << Optimize::IR::Instruction.new(
             opcode: :opt_fastmath, operands: [], line: nil
           )
           errors = Validator.structural(fn)
@@ -370,7 +370,7 @@ module RubyOpt
         def test_structural_reports_arity_mismatch
           fn = decode_source("2 + 3")
           # putobject takes exactly 1 operand
-          fn.instructions << RubyOpt::IR::Instruction.new(
+          fn.instructions << Optimize::IR::Instruction.new(
             opcode: :putobject, operands: [], line: nil
           )
           errors = Validator.structural(fn)
@@ -393,7 +393,7 @@ Expected: 3 errors.
 # frozen_string_literal: true
 require "set"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       module Validator
@@ -458,7 +458,7 @@ jj commit -m "feat(demo/claude): validator — structural opcode + arity"
 
 **Files:**
 - Modify: `optimizer/test/demo/claude/validator_test.rb`
-- Modify: `optimizer/lib/ruby_opt/demo/claude/validator.rb`
+- Modify: `optimizer/lib/optimize/demo/claude/validator.rb`
 
 - [ ] **Step 1: Add failing semantic tests.**
 
@@ -493,13 +493,13 @@ end
 Append to `validator.rb`:
 
 ```ruby
-require "ruby_opt/codec"
+require "optimize/codec"
 
 def self.semantic(function, expected:)
   errors = []
   begin
     envelope = function.envelope # assumes IR::Function#envelope returns the enclosing envelope
-    binary = RubyOpt::Codec.encode(envelope)
+    binary = Optimize::Codec.encode(envelope)
     iseq = RubyVM::InstructionSequence.load_from_binary(binary)
     result = iseq.eval
     unless result == expected
@@ -512,7 +512,7 @@ def self.semantic(function, expected:)
 end
 ```
 
-Note: if `IR::Function#envelope` back-reference doesn't exist, the test fixture needs to pass in an envelope. Check `optimizer/lib/ruby_opt/ir/function.rb` first. If the API is function-only, rework so `semantic` takes the envelope as a second required arg:
+Note: if `IR::Function#envelope` back-reference doesn't exist, the test fixture needs to pass in an envelope. Check `optimizer/lib/optimize/ir/function.rb` first. If the API is function-only, rework so `semantic` takes the envelope as a second required arg:
 
 ```ruby
 def self.semantic(envelope, expected:)
@@ -536,7 +536,7 @@ jj commit -m "feat(demo/claude): validator — semantic encode-load-run"
 
 **Files:**
 - Create: `optimizer/test/demo/claude/prompt_test.rb`
-- Create: `optimizer/lib/ruby_opt/demo/claude/prompt.rb`
+- Create: `optimizer/lib/optimize/demo/claude/prompt.rb`
 - Create: `optimizer/test/demo/claude/fixtures/initial_prompt.txt` (golden)
 - Create: `optimizer/test/demo/claude/fixtures/retry_prompt.txt` (golden)
 
@@ -545,9 +545,9 @@ jj commit -m "feat(demo/claude): validator — semantic encode-load-run"
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/prompt"
+require "optimize/demo/claude/prompt"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class PromptTest < Minitest::Test
@@ -618,7 +618,7 @@ Emit a corrected iseq as a JSON array. Reply with ONLY the JSON array.
 # frozen_string_literal: true
 require "json"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       module Prompt
@@ -681,16 +681,16 @@ jj commit -m "feat(demo/claude): prompt builder + golden fixtures"
 
 **Files:**
 - Create: `optimizer/test/demo/claude/invoker_test.rb`
-- Create: `optimizer/lib/ruby_opt/demo/claude/invoker.rb`
+- Create: `optimizer/lib/optimize/demo/claude/invoker.rb`
 
 - [ ] **Step 1: Write failing tests using a stubbed `Open3`.**
 
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/invoker"
+require "optimize/demo/claude/invoker"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class InvokerTest < Minitest::Test
@@ -738,7 +738,7 @@ end
 require "open3"
 require "json"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       # Thin wrapper around `claude -p --output-format json`.
@@ -796,16 +796,16 @@ jj commit -m "feat(demo/claude): invoker — claude -p shell wrapper"
 - Create: `optimizer/test/demo/claude/transcript_test.rb`
 - Create: `optimizer/test/demo/claude/fixtures/transcript_success.md`
 - Create: `optimizer/test/demo/claude/fixtures/transcript_gave_up.md`
-- Create: `optimizer/lib/ruby_opt/demo/claude/transcript.rb`
+- Create: `optimizer/lib/optimize/demo/claude/transcript.rb`
 
 - [ ] **Step 1: Write failing golden tests.**
 
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude/transcript"
+require "optimize/demo/claude/transcript"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class TranscriptTest < Minitest::Test
@@ -930,7 +930,7 @@ prompt3
 # frozen_string_literal: true
 require "json"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       class Transcript
@@ -1029,16 +1029,16 @@ jj commit -m "feat(demo/claude): transcript renderer + goldens"
 
 **Files:**
 - Create: `optimizer/test/demo/claude_integration_test.rb`
-- Create: `optimizer/lib/ruby_opt/demo/claude.rb`
+- Create: `optimizer/lib/optimize/demo/claude.rb`
 
 - [ ] **Step 1: Write failing integration test with stubbed Invoker.**
 
 ```ruby
 # frozen_string_literal: true
 require "test_helper"
-require "ruby_opt/demo/claude"
+require "optimize/demo/claude"
 
-module RubyOpt
+module Optimize
   module Demo
     class ClaudeIntegrationTest < Minitest::Test
       class FakeInvoker
@@ -1094,14 +1094,14 @@ end
 
 ```ruby
 # frozen_string_literal: true
-require "ruby_opt/codec"
-require "ruby_opt/demo/claude/serializer"
-require "ruby_opt/demo/claude/validator"
-require "ruby_opt/demo/claude/prompt"
-require "ruby_opt/demo/claude/invoker"
-require "ruby_opt/demo/claude/transcript"
+require "optimize/codec"
+require "optimize/demo/claude/serializer"
+require "optimize/demo/claude/validator"
+require "optimize/demo/claude/prompt"
+require "optimize/demo/claude/invoker"
+require "optimize/demo/claude/transcript"
 
-module RubyOpt
+module Optimize
   module Demo
     module Claude
       Outcome = Struct.new(:outcome, :iterations, :transcript, keyword_init: true)
@@ -1111,7 +1111,7 @@ module RubyOpt
       def run(fixture_path:, expected:, invoker: Invoker, max_iterations: 3)
         source = File.read(fixture_path)
         iseq = RubyVM::InstructionSequence.compile_file(fixture_path)
-        envelope = RubyOpt::Codec.decode(iseq.to_binary)
+        envelope = Optimize::Codec.decode(iseq.to_binary)
         function = envelope.iseq_list.fetch(0)
 
         iseq_json = Serializer.serialize(function)
@@ -1180,7 +1180,7 @@ module RubyOpt
 end
 ```
 
-Note: `envelope_with` and the `attr_accessor :iseq_list` on `IseqEnvelope` may or may not exist. Check `optimizer/lib/ruby_opt/codec/iseq_envelope.rb`; if not writable, either add an accessor or use `dup`-with-swap per whatever idiom the codec uses internally.
+Note: `envelope_with` and the `attr_accessor :iseq_list` on `IseqEnvelope` may or may not exist. Check `optimizer/lib/optimize/codec/iseq_envelope.rb`; if not writable, either add an accessor or use `dup`-with-swap per whatever idiom the codec uses internally.
 
 - [ ] **Step 4: Run — pass.**
 
@@ -1203,12 +1203,12 @@ jj commit -m "feat(demo/claude): orchestrator — 3-try retry loop"
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 require "bundler/setup"
-require "ruby_opt/demo/claude"
+require "optimize/demo/claude"
 
 fixture = File.expand_path("../examples/claude_gag.rb", __dir__)
 output  = File.expand_path("../../docs/demo_artifacts/claude_gag.md", __dir__)
 
-outcome = RubyOpt::Demo::Claude.run(fixture_path: fixture, expected: 5)
+outcome = Optimize::Demo::Claude.run(fixture_path: fixture, expected: 5)
 File.write(output, outcome.transcript.render)
 puts "wrote #{output}"
 puts "outcome: #{outcome.outcome}"
@@ -1382,7 +1382,7 @@ In the "Roadmap gap, ranked by talk-ROI" list, strike item 5:
 5. ~~**Claude Code gag pass.** §7 close. Scripted output is fine.~~
    **Shipped 2026-04-23.** Plan: `docs/superpowers/plans/2026-04-23-claude-code-gag-pass.md`.
    Spec: `docs/superpowers/specs/2026-04-23-claude-code-gag-pass-design.md`.
-   `RubyOpt::Demo::Claude` drives a 3-try retry loop (structural +
+   `Optimize::Demo::Claude` drives a 3-try retry loop (structural +
    semantic validator errors fed back to `claude -p` each retry) over
    the `claude_gag` fixture; transcript captured to
    `docs/demo_artifacts/claude_gag.md`. Not in `Pipeline.default`.

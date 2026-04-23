@@ -18,3 +18,7 @@
 !.claude/
 !.claude/**
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Ruby LSP
+.ruby-lsp/
