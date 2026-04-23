@@ -1,0 +1,16 @@
+fixture: sum_of_squares.rb
+entry_setup: ""
+entry_call: sum_of_squares(100)
+walkthrough:
+  - inlining
+  - const_fold_tier2
+  - const_fold
+  - identity_elim
+  - arith_reassoc
+  - dead_branch_fold
+# NOTE: most passes will show "(no change)" on this fixture today. No
+# shipped pass reasons about loops — DeadBranchFoldPass's window is
+# <literal>;branch*, not <comparison>;branchunless <backward>. The
+# fixture's role here is (a) prove codec correctness on a real `while`,
+# (b) surface the loop shape in the demo pipeline so future loop-aware
+# passes have a canonical place to land.
