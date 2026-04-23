@@ -67,8 +67,20 @@ Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture).
 3. ~~**Const-fold Tier 2 (frozen constants).** Needs the
    constant-assignment scanner but is otherwise self-contained.~~
    **Shipped 2026-04-26.** Plan: `docs/superpowers/plans/2026-04-26-const-fold-tier2.md`.
-4. **`opt_mod`** in the arith family. Non-commutative/associative —
-   skip-heavy, small fold set. May not justify its own slide.
+4. ~~**`opt_mod`** in the arith family.~~ **Shipped 2026-04-23.**
+   Added to `REASSOC_GROUPS` as a single-op `:ordered` entry with
+   `associative: false, commutative: false` flags (mult/div carries
+   `associative: true, commutative: true`). Walker generalised: same-op
+   literal run combiner derived from `group[:ops][group[:primary_op]]`
+   (`:*` for mult/div, `:%` for mod); for non-associative groups the run
+   folds only in the pure-literal prefix (`emitted.empty?`); for
+   non-commutative groups the walker commits the pending accumulator
+   before emitting any non-literal. Unsafe-divisor pre-scan extended to
+   cover `opt_mod` (same `Integer && > 0` guard as `opt_div`). Folds
+   `7 % 3 % x → 1 % x`, `10 % 7 % 3 % x → 0 % x`; leaves `x % 7 % 3`
+   alone (since `(y%7)%3 ≠ y%3`); rejects zero divisors. Tests:
+   `optimizer/test/passes/arith_reassoc_pass_test.rb` (6 new cases
+   under `# ---- opt_mod ----`).
 5. **Claude Code gag pass.** §7 close. Scripted output is fine.
 6. ~~**Tier 4 classifier v2 — argc-generic safe sends.** Extend
    `ConstFoldEnvPass#consumer_safe?` to look at `insts[i + 1 + argc]`
