@@ -57,7 +57,33 @@ Reasonable isn't good enough for the language itself. For Ruby, not breaking the
 
 ## §3 — YARV, properly
 
-{TBD-§3}
+Before I can talk about rewriting YARV, you have to be able to read it. If you've never stared at a `disasm` dump before, here's the decoder ring.
+
+YARV is a stack machine. There is no register file, no `%rax` equivalent, no let-bindings. Every instruction does some combination of pop-values-off-the-stack, read-operands-from-the-instruction-stream, and push-results-back. The per-frame state that isn't on the stack — locals, block parameter, `self` — lives in a block of slots hanging off an environment pointer, which `getlocal` / `setlocal` reach into by index. That's most of the machine. Exception handling and a handful of inline caches are the rest, and both are safely ignorable.
+
+The smallest useful example is probably `def add(a, b); a + b; end`:
+
+```
+== disasm: #<ISeq:add@(irb):1 (1,0)-(1,25)>
+local table (size: 2, argc: 2 [opts: 0, rest: -1, ...])
+[ 2] a@0<Arg>  [ 1] b@1<Arg>
+0000 getlocal_WC_0          a@0
+0002 getlocal_WC_0          b@1
+0004 opt_plus               <calldata!mid:+, argc:1, ARGS_SIMPLE>
+0006 leave
+```
+
+The `local table` header lists the frame's slots by name and index, and every `x@N` that shows up later in an operand column refers back to it. Three things in the body are worth noticing, and they recur in every listing from here on. First, `getlocal_WC_0` is `getlocal idx, 0` with the frame level operand baked in — the `_WC_N` suffix bakes the level in as `N`, and `_WC_0` (the current frame) is so overwhelmingly the common case that the interpreter gets its own specialized insn that skips decoding the level operand. You'll see `_WC_0` everywhere; `_WC_1` shows up when a nested scope reads a local from its parent. Its write-side partner is `setlocal_WC_0`, and the pair `setlocal_WC_0 x; getlocal_WC_0 x` — store and immediately reload — is exactly the shape the dead-stash pass sweeps away later. Second, `opt_plus` is not "integer add." It's a runtime-guarded call to `Integer#+` (or `Float#+`, or `String#+`) that takes a C fast path when the receiver is one of those core types *and* nobody has redefined `Integer#+` since the VM booted — otherwise it falls through to a generic `send`. The whole `opt_*` binop family works this way (`opt_minus`, `opt_mult`, `opt_div`, `opt_mod`, `opt_eq`, `opt_lt`, `opt_le`, `opt_gt`, `opt_ge`, `opt_ltlt`, and a few more), and that fallback is §2's contract, made concrete. Third, `leave` isn't `ret` — it's "pop TOS as the return value, handle pending interrupts, pop the frame." A small distinction, but it's the one that bites you the first time you try to splice two iseqs together and the result still runs `leave` in the middle.
+
+Iseqs nest. Every `def`, every `do...end`, every `class Foo`, and the top-level script itself compile to their own child `rb_iseq_t`. `disasm` interleaves them with `== disasm:` separator lines, so one blob of output is really several iseqs stacked on top of each other — the reason you'll see the same address `0000` show up more than once in a listing.
+
+A few more names that look like typos until you've seen them. `putobject_INT2FIX_0_` pushes the integer `0`; `putobject_INT2FIX_1_` pushes `1`. Both are `putobject` with the operand baked in — pushing `0` or `1` shows up so often (loop counters, `+ 1`, default arguments, boolean-ish returns) that saving a single operand read per push was worth giving them their own dispatch entries. `putobject 6` — no suffix — is the general form with `6` as an immediate.
+
+`putself` pushes the current `self`, which is the implicit receiver for any unqualified method call. `opt_send_without_block` is a regular call site specialized for the (extremely common) case where no literal block is attached. `opt_getconstant_path` is the fused lookup for a full constant path like `SCALE` or `A::B::C`, with an inline cache hanging off it; when you see a diff quietly replace `opt_getconstant_path <ic:0 SCALE>` with `putobject 6`, that's constant folding — the cache lookup and its invalidation machinery both gone, because a contract-validated constant can't change. `swap` flips the top two stack values, `pop` discards TOS, and the `swap; pop` that appears right after an `opt_new` is cleaning up the extra stack slot `opt_new` leaves behind: the new instance and the class end up on the stack together, and `swap; pop` discards the class. The `branch*` family is exactly what it reads like: `branchunless dst` jumps to `dst` when TOS is falsy, `branchif` jumps when it's truthy, `branchnil` when it's `nil` — all PC-relative, all popping their one argument. The reason a `putobject true; branchunless 7` sequence can collapse into nothing is that the condition is knowable at rewrite time.
+
+One last thing. Every line of `disasm` output carries a trailing bracketed tag or two — `[Li]`, `[Ca]`, `[Re]`, `[CcCr]`, combinations thereof. These are event and coverage markers the disassembler annotates for `TracePoint` / `Coverage` wiring; they don't change what the instruction does, and you can ignore them for reading the diffs.
+
+That's roughly the grammar. There are about a hundred and ten instructions in total, and any real program calls in some long tail of them that I won't explain one by one. But the shortlist is short: `getlocal_WC_0`, `setlocal_WC_0`, `putobject` (and its `_INT2FIX_*` cousins), `putself`, the `opt_*` binops, `opt_send_without_block`, `opt_getconstant_path`, `swap`, `pop`, the `branch*` family, `jump`, and `leave`. If those make sense, the diffs will too, and the rest can be picked up by context.
 
 ## §4 — Building a toy optimizer
 
