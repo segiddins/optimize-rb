@@ -90,7 +90,15 @@ module RubyOpt
           end
 
           new_fn = template.dup
-          new_fn.instructions = rebuilt
+          # Independent instructions + line_entries arrays so splice_instructions!
+          # doesn't mutate the template. splice repoints any dangling line_entries
+          # (whose `inst` refs point at old instruction objects) to the first
+          # replacement instruction, which the codec needs for a clean encode
+          # when the bytecode size is unchanged.
+          new_fn.instructions = new_fn.instructions.dup
+          new_fn.line_entries = new_fn.line_entries&.map(&:dup)
+          range = 0..(new_fn.instructions.size - 1)
+          new_fn.splice_instructions!(range, rebuilt)
           new_fn
         end
 
