@@ -115,8 +115,8 @@ module RubyOpt
         put_self_idx = send_idx - 1
         body = callee.instructions[0..-2]
         function.splice_instructions!(put_self_idx..(put_self_idx + 1), body)
-        log.skip(pass: :inlining, reason: :inlined,
-                 file: function.path, line: line)
+        log.rewrite(pass: :inlining, reason: :inlined,
+                    file: function.path, line: line)
         true
       end
 
@@ -182,8 +182,8 @@ module RubyOpt
         replacement = [arg_push, setlocal, *body]
         function.splice_instructions!((send_idx - 2)..send_idx, replacement)
 
-        log.skip(pass: :inlining, reason: :inlined,
-                 file: function.path, line: line)
+        log.rewrite(pass: :inlining, reason: :inlined,
+                    file: function.path, line: line)
         true
       end
 
@@ -288,7 +288,7 @@ module RubyOpt
           function.splice_instructions!((send_idx - 2)..send_idx, replacement)
         end
 
-        log.skip(pass: :inlining, reason: :inlined, file: function.path, line: line)
+        log.rewrite(pass: :inlining, reason: :inlined, file: function.path, line: line)
         true
       end
 
