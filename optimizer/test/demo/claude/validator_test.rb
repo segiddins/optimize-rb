@@ -2,6 +2,7 @@
 require "test_helper"
 require "ruby_opt/demo/claude/validator"
 require "ruby_opt/ir/instruction"
+require "ruby_opt/codec"
 
 class ValidatorTest < Minitest::Test
   FIXTURE_PATH = File.expand_path("../../../examples/claude_gag.rb", __dir__)
@@ -70,6 +71,46 @@ class ValidatorTest < Minitest::Test
     fn.instructions << RubyOpt::IR::Instruction.new(opcode: :putobject, operands: [], line: nil)
     errors = RubyOpt::Demo::Claude::Validator.structural(fn)
     assert_equal 2, errors.size
+  end
+
+  def load_envelope(fixture_path)
+    source = File.read(fixture_path)
+    iseq = RubyVM::InstructionSequence.compile(source, fixture_path, fixture_path)
+    RubyOpt::Codec.decode(iseq.to_binary)
+  end
+
+  def teardown
+    Object.send(:remove_method, :answer) if Object.private_method_defined?(:answer) || Object.method_defined?(:answer)
+  rescue NameError
+    nil
+  end
+
+  def test_semantic_passes_on_clean_envelope
+    envelope = load_envelope(FIXTURE_PATH)
+    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, entry: "answer", expected: 5)
+    assert_equal [], errors
+  end
+
+  def test_semantic_reports_wrong_return_value
+    envelope = load_envelope(FIXTURE_PATH)
+    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, entry: "answer", expected: 999)
+    assert_equal 1, errors.size
+    assert_includes errors[0], "999"
+    assert(errors[0].include?("5") || errors[0].include?("returned"),
+           "expected error to include \"5\" or \"returned\", got: #{errors[0].inspect}")
+  end
+
+  def test_semantic_reports_runtime_error
+    envelope = load_envelope(FIXTURE_PATH)
+    answer_child = find_function(envelope, "answer") or raise "no answer fn"
+    # Inject an unknown opcode so RubyOpt::Codec.encode raises before we
+    # reach the VM. (Deleting :leave, as originally suggested, would segfault
+    # this Ruby rather than raise — and a bare rescue cannot catch SEGV.)
+    answer_child.instructions << RubyOpt::IR::Instruction.new(opcode: :opt_fastmath, operands: [], line: nil)
+    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, entry: "answer", expected: 5)
+    assert_equal 1, errors.size, "got: #{errors.inspect}"
+    assert(errors[0].start_with?("loader/runtime error"),
+           "expected error to start with loader/runtime error, got: #{errors[0].inspect}")
   end
 
   def test_structural_skips_arity_for_unknown_opcode

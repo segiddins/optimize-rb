@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 require "ruby_opt/demo/claude/serializer"
+require "ruby_opt/codec"
 
 module RubyOpt
   module Demo
@@ -7,8 +8,6 @@ module RubyOpt
       # Structural validator for IR::Function instruction streams coming back
       # from the "gag pass" (LLM rewrite). Checks that every instruction has
       # a known opcode and the arity matches the YARV operand schema.
-      #
-      # Semantic checks (stack balance, branch targets, etc.) are Task 5.
       module Validator
         module_function
 
@@ -30,6 +29,29 @@ module RubyOpt
             end
           end
           errors
+        end
+
+        # Encode the envelope, load it as an iseq, run it (which defines any
+        # top-level methods), then evaluate +entry+ in TOPLEVEL_BINDING and
+        # compare against +expected+ with ==.
+        #
+        # @param envelope [IR::Function] a root-level function (as returned by
+        #   RubyOpt::Codec.decode) with any mutations already spliced in.
+        # @param entry [String] Ruby source evaluated in TOPLEVEL_BINDING to
+        #   produce the value under test.
+        # @param expected [Object] expected value, compared with ==.
+        # @return [Array<String>] empty on success; otherwise one error.
+        def semantic(envelope, entry:, expected:)
+          binary = RubyOpt::Codec.encode(envelope)
+          RubyVM::InstructionSequence.load_from_binary(binary).eval
+          result = TOPLEVEL_BINDING.eval(entry)
+          if result == expected
+            []
+          else
+            ["iseq returned #{result.inspect}; expected #{expected.inspect}"]
+          end
+        rescue => e
+          ["loader/runtime error: #{e.class}: #{e.message}"]
         end
       end
     end
