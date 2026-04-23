@@ -58,8 +58,8 @@ module RubyOpt
               replacement = emit_literal(table[name], line: inst.line, object_table: object_table)
               if replacement
                 function.splice_instructions!(i..i, [replacement])
-                log.skip(pass: name_sym, reason: :folded,
-                         file: function.path, line: (inst.line || function.first_lineno || 0))
+                log.rewrite(pass: name_sym, reason: :folded,
+                            file: function.path, line: (inst.line || function.first_lineno || 0))
               end
             end
           end
