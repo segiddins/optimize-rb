@@ -1,0 +1,14 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+require "bundler/setup"
+require "fileutils"
+require "ruby_opt/demo/claude"
+
+FIXTURE = File.expand_path("../examples/claude_gag.rb", __dir__)
+OUTPUT  = File.expand_path("../../docs/demo_artifacts/claude_gag.md", __dir__)
+
+FileUtils.mkdir_p(File.dirname(OUTPUT))
+outcome = RubyOpt::Demo::Claude.run(fixture_path: FIXTURE, entry: :answer, expected: 5)
+File.write(OUTPUT, outcome.transcript.render)
+puts "wrote #{OUTPUT}"
+puts "outcome: #{outcome.outcome}"
