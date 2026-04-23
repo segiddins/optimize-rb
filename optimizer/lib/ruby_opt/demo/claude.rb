@@ -19,8 +19,16 @@ module RubyOpt
 
       module_function
 
+      # @param entry [Symbol] method name to locate in the iseq tree
+      # @param cases [Array<Array(String, Object)>] list of
+      #   [entry_source, expected] pairs. `entry_source` is evaluated via
+      #   TOPLEVEL_BINDING after the iseq is loaded; result compared with ==.
+      #   Validation must pass for EVERY case; multiple cases catch Claude
+      #   table-looking-up a single expected answer instead of rewriting.
       # @return [Outcome]
-      def run(fixture_path:, entry:, expected:, invoker: Invoker, max_iterations: 3)
+      def run(fixture_path:, entry:, cases:, invoker: Invoker, max_iterations: 3)
+        raise ArgumentError, "cases must not be empty" if cases.empty?
+
         source = File.read(fixture_path)
         iseq = RubyVM::InstructionSequence.compile_file(fixture_path)
         envelope = RubyOpt::Codec.decode(iseq.to_binary)
@@ -34,14 +42,10 @@ module RubyOpt
         transcript = Transcript.new(
           fixture: File.basename(fixture_path, ".rb"),
           source: source,
-          expected: expected,
+          cases: cases,
         )
 
-        initial_prompt = Prompt.initial(
-          source: source,
-          expected: expected,
-          iseq_json: iseq_json,
-        )
+        initial_prompt = Prompt.initial(iseq_json: iseq_json)
 
         accumulated_prompt = initial_prompt
         last_errors = nil
@@ -86,7 +90,7 @@ module RubyOpt
               errors = Validator.structural(attempt)
               if errors.empty?
                 modified = substitute_function(envelope, target_fn, attempt)
-                errors = Validator.semantic(modified, entry: entry.to_s, expected: expected)
+                errors = Validator.semantic(modified, cases: cases)
               end
             end
           end

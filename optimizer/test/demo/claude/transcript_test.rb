@@ -12,7 +12,7 @@ module RubyOpt
           Transcript.new(
             fixture: "claude_gag",
             source: "def answer\n  2 + 3\nend",
-            expected: 5,
+            cases: [["answer", 5]],
           )
         end
 

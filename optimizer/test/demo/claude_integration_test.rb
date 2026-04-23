@@ -67,7 +67,7 @@ module RubyOpt
           outcome = Claude.run(
             fixture_path: FIXTURE_PATH,
             entry: :answer,
-            expected: 5,
+            cases: [["answer", 5]],
             invoker: invoker,
             max_iterations: 3,
           )
@@ -83,7 +83,7 @@ module RubyOpt
           outcome = Claude.run(
             fixture_path: FIXTURE_PATH,
             entry: :answer,
-            expected: 5,
+            cases: [["answer", 5]],
             invoker: invoker,
             max_iterations: 3,
           )
@@ -97,7 +97,7 @@ module RubyOpt
           outcome = Claude.run(
             fixture_path: FIXTURE_PATH,
             entry: :answer,
-            expected: 5,
+            cases: [["answer", 5]],
             invoker: invoker,
             max_iterations: 3,
           )
@@ -113,7 +113,7 @@ module RubyOpt
           outcome = Claude.run(
             fixture_path: FIXTURE_PATH,
             entry: :answer,
-            expected: 5,
+            cases: [["answer", 5]],
             invoker: invoker,
             max_iterations: 3,
           )
@@ -130,7 +130,7 @@ module RubyOpt
             Claude.run(
               fixture_path: FIXTURE_PATH,
               entry: :nonexistent,
-              expected: 5,
+              cases: [["nonexistent", 5]],
               invoker: FakeInvoker.new([]),
               max_iterations: 1,
             )

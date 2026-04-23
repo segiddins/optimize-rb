@@ -87,13 +87,13 @@ class ValidatorTest < Minitest::Test
 
   def test_semantic_passes_on_clean_envelope
     envelope = load_envelope(FIXTURE_PATH)
-    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, entry: "answer", expected: 5)
+    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, cases: [["answer", 5]])
     assert_equal [], errors
   end
 
   def test_semantic_reports_wrong_return_value
     envelope = load_envelope(FIXTURE_PATH)
-    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, entry: "answer", expected: 999)
+    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, cases: [["answer", 999]])
     assert_equal 1, errors.size
     assert_includes errors[0], "999"
     assert(errors[0].include?("5") || errors[0].include?("returned"),
@@ -107,10 +107,61 @@ class ValidatorTest < Minitest::Test
     # reach the VM. (Deleting :leave, as originally suggested, would segfault
     # this Ruby rather than raise — and a bare rescue cannot catch SEGV.)
     answer_child.instructions << RubyOpt::IR::Instruction.new(opcode: :opt_fastmath, operands: [], line: nil)
-    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, entry: "answer", expected: 5)
+    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, cases: [["answer", 5]])
     assert_equal 1, errors.size, "got: #{errors.inspect}"
     assert(errors[0].start_with?("loader/runtime error"),
            "expected error to start with loader/runtime error, got: #{errors[0].inspect}")
+  end
+
+  def test_semantic_reports_one_error_per_failing_case
+    envelope = load_envelope(FIXTURE_PATH)
+    errors = RubyOpt::Demo::Claude::Validator.semantic(envelope, cases: [
+      ["answer", 5],
+      ["answer", 999],
+      ["answer", 777],
+    ])
+    assert_equal 2, errors.size, "got: #{errors.inspect}"
+    assert(errors.any? { |e| e.include?("999") })
+    assert(errors.any? { |e| e.include?("777") })
+  end
+
+  def test_semantic_rejects_empty_cases
+    envelope = load_envelope(FIXTURE_PATH)
+    assert_raises(ArgumentError) do
+      RubyOpt::Demo::Claude::Validator.semantic(envelope, cases: [])
+    end
+  end
+
+  def test_structural_reports_missing_final_leave
+    fn = answer_fn
+    fn.instructions = [
+      RubyOpt::IR::Instruction.new(opcode: :putobject, operands: [5], line: nil),
+    ]
+    errors = RubyOpt::Demo::Claude::Validator.structural(fn)
+    assert errors.any? { |e| e.include?(":leave") }, "got: #{errors.inspect}"
+  end
+
+  def test_structural_reports_stack_underflow
+    fn = answer_fn
+    fn.instructions = [
+      RubyOpt::IR::Instruction.new(opcode: :pop, operands: [], line: nil),
+      RubyOpt::IR::Instruction.new(opcode: :putobject, operands: [5], line: nil),
+      RubyOpt::IR::Instruction.new(opcode: :leave, operands: [], line: nil),
+    ]
+    errors = RubyOpt::Demo::Claude::Validator.structural(fn)
+    assert errors.any? { |e| e.include?("depth") }, "got: #{errors.inspect}"
+  end
+
+  def test_structural_reports_leftover_on_stack
+    fn = answer_fn
+    fn.instructions = [
+      # Leaves TWO values on stack before leave (leave only pops 1).
+      RubyOpt::IR::Instruction.new(opcode: :putobject, operands: [1], line: nil),
+      RubyOpt::IR::Instruction.new(opcode: :putobject, operands: [2], line: nil),
+      RubyOpt::IR::Instruction.new(opcode: :leave, operands: [], line: nil),
+    ]
+    errors = RubyOpt::Demo::Claude::Validator.structural(fn)
+    assert errors.any? { |e| e.include?("final stack depth") }, "got: #{errors.inspect}"
   end
 
   def test_structural_skips_arity_for_unknown_opcode

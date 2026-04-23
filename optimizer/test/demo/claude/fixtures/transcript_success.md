@@ -8,7 +8,9 @@ def answer
 end
 ```
 
-**Expected return value:** `5`
+**Validation cases:**
+
+- `answer` → `5`
 
 ## Iteration 1
 

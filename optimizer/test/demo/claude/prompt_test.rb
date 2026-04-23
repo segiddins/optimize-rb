@@ -10,8 +10,6 @@ module RubyOpt
 
         def test_initial_matches_golden
           out = Prompt.initial(
-            source:    "def answer\n  2 + 3\nend",
-            expected:  5,
             iseq_json: [["putobject", 2], ["putobject", 3], ["opt_plus", {"mid" => "+", "argc" => 1, "flag" => 16, "kwlen" => 0}], ["leave"]],
           )
           golden = File.read(File.join(FIXTURES, "initial_prompt.txt"))

@@ -8,10 +8,10 @@ module RubyOpt
       # and renders a Markdown transcript suitable for inclusion in
       # demo artifacts. Stateful — instantiate one per fixture run.
       class Transcript
-        def initialize(fixture:, source:, expected:)
+        def initialize(fixture:, source:, cases:)
           @fixture = fixture
           @source = source
-          @expected = expected
+          @cases = cases
           @iterations = []
           @outcome = nil
         end
@@ -47,7 +47,9 @@ module RubyOpt
           out << "#{@source.strip}\n"
           out << "```\n"
           out << "\n"
-          out << "**Expected return value:** `#{@expected.inspect}`\n"
+          out << "**Validation cases:**\n"
+          out << "\n"
+          @cases.each { |entry, expected| out << "- `#{entry}` → `#{expected.inspect}`\n" }
 
           @iterations.each do |rec|
             out << "\n"

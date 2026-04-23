@@ -71,8 +71,18 @@ module RubyOpt
         # @param strict       [Boolean] when true, raise on unknown opcodes
         # @return [IR::Function]
         def deserialize(json, template:, object_table:, strict: false)
-          rebuilt = json.map do |tuple|
+          unless json.is_a?(Array)
+            raise DeserializeError, "expected a top-level JSON array, got #{json.class}"
+          end
+
+          rebuilt = json.each_with_index.map do |tuple, idx|
+            unless tuple.is_a?(Array) && !tuple.empty?
+              raise DeserializeError, "instruction #{idx}: expected [opcode_string, ...operands], got #{tuple.inspect}"
+            end
             opcode_str, *operands = tuple
+            unless opcode_str.is_a?(String)
+              raise DeserializeError, "instruction #{idx}: opcode must be a String, got #{opcode_str.inspect}"
+            end
             opcode = opcode_str.to_sym
             op_types = OPCODE_OPERAND_TYPES[opcode]
             if op_types.nil?
@@ -89,16 +99,32 @@ module RubyOpt
             end
           end
 
+          # This is always a full-body replacement. We can't use
+          # splice_instructions! here — its branch-target sanity check
+          # assumes replacement offsets refer to the PRE-splice array,
+          # but Claude's rewrites carry targets in the NEW array's
+          # coordinates. We do the line_entries repointing (the only
+          # useful side-effect of splice in this context) by hand: every
+          # `inst` ref in the template points at an old instruction that
+          # no longer exists, so we anchor them all at the first new
+          # instruction. The codec needs at least one valid `inst` ref
+          # per line entry during encode.
           new_fn = template.dup
-          # Independent instructions + line_entries arrays so splice_instructions!
-          # doesn't mutate the template. splice repoints any dangling line_entries
-          # (whose `inst` refs point at old instruction objects) to the first
-          # replacement instruction, which the codec needs for a clean encode
-          # when the bytecode size is unchanged.
-          new_fn.instructions = new_fn.instructions.dup
-          new_fn.line_entries = new_fn.line_entries&.map(&:dup)
-          range = 0..(new_fn.instructions.size - 1)
-          new_fn.splice_instructions!(range, rebuilt)
+          new_fn.instructions = rebuilt
+          if template.line_entries
+            anchor = rebuilt.first
+            new_fn.line_entries =
+              if anchor.nil?
+                []
+              else
+                template.line_entries.map do |le|
+                  le_dup = le.dup
+                  le_dup.inst = anchor
+                  le_dup
+                end
+              end
+          end
+          new_fn.invalidate_cfg if new_fn.respond_to?(:invalidate_cfg)
           new_fn
         end
 

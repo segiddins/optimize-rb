@@ -12,7 +12,7 @@ module RubyOpt
         module_function
 
         INITIAL_TEMPLATE = <<~PROMPT
-          You are given a YARV iseq as a JSON array of instructions. Emit a semantically equivalent but optimized iseq.
+          You are given a YARV iseq as a JSON array of instructions. Emit a semantically equivalent but optimized iseq. The rewrite must preserve behavior for all inputs.
 
           Constraints:
           - Output a single JSON array of [opcode_string, ...operands] tuples.
@@ -20,11 +20,6 @@ module RubyOpt
           - Preserve stack discipline: the iseq must end with a value on the stack, consumed by `leave`.
           - Do not add or remove locals; the local table is fixed.
           - Call-data operands are objects of the form {"mid": String, "argc": Integer, "flag": Integer}.
-
-          Fixture source:
-          %<source>s
-
-          Expected return value: %<expected>s
 
           Input iseq:
           %<iseq_json>s
@@ -40,13 +35,15 @@ module RubyOpt
         PROMPT
 
         # Returns a String: the initial user message sent to `claude -p`.
-        def initial(source:, expected:, iseq_json:)
-          format(
-            INITIAL_TEMPLATE,
-            source: source.strip,
-            expected: expected.inspect,
-            iseq_json: JSON.generate(iseq_json),
-          )
+        #
+        # Deliberately minimal: the prompt carries only the iseq and
+        # generalized constraints. No source, no test cases, no expected
+        # values. Claude must infer the behavior from the instruction
+        # stream alone — otherwise the comparison between its rewrite and
+        # our peephole pipeline is unfair. The orchestrator validates
+        # behavior on multiple inputs post-hoc.
+        def initial(iseq_json:)
+          format(INITIAL_TEMPLATE, iseq_json: JSON.generate(iseq_json))
         end
 
         # Returns a String: the retry user message appended after a rejection.
