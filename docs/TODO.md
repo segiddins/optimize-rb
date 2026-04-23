@@ -89,15 +89,25 @@ Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture; claude g
    `docs/superpowers/specs/2026-04-23-claude-code-gag-pass-design.md`.
    Plan: `docs/superpowers/plans/2026-04-23-claude-code-gag-pass.md`.
    `RubyOpt::Demo::Claude` drives a 3-try retry loop (structural +
-   semantic validator errors fed back to `claude -p` each retry) over
-   the `claude_gag` fixture (`def answer; 2 + 3; end`). Not in
-   `Pipeline.default`. Regeneration is opt-in via
-   `rake demo:regenerate_claude` (needs `CLAUDE_CODE_SSO_TOKEN` or
-   `ANTHROPIC_API_KEY`); `demo:verify` only checks the committed
-   `docs/demo_artifacts/claude_gag.md` is non-empty (Claude's output
-   is non-deterministic). First captured transcript collapsed the
-   4-instruction body to `[putobject 5, leave]` in a single iteration
-   — authentic constant-fold punchline; no flail in this run.
+   multi-case semantic validation fed back to `claude -p` each retry)
+   over two fixtures. Not in `Pipeline.default`. Regeneration is opt-in
+   via `rake demo:regenerate_claude` (needs `CLAUDE_CODE_SSO_TOKEN` or
+   `ANTHROPIC_API_KEY`). `demo:verify` only checks each committed
+   `docs/demo_artifacts/claude_*.md` is non-empty — Claude's output is
+   non-deterministic. Prompt is deliberately minimal (iseq + generic
+   constraints, no source, no expected value, no test cases) so
+   Claude must rewrite rather than table-lookup; multi-case validator
+   catches the cheat when it tries.
+   - **`claude_gag.rb`** (`def answer; 2 + 3; end`): single-iteration
+     constant fold to `[putobject 5, leave]`. The easy one.
+   - **`claude_loop.rb`** (`sum_of_squares` via `while`): two
+     iterations. Iter 1 cheats (`getlocal 4; leave` → nil); multi-case
+     catches it. Iter 2 does real CFG-level dead-code elimination —
+     removes the `putnil; pop` statement-value scaffolding YARV emits
+     around `while`, collapses a redundant `jump`, rewires branch
+     targets. 26 → 21 instructions, semantically identical on 5 test
+     inputs. **Out-of-scope for our peephole pipeline** (CFG-level
+     DCE is explicitly exploratory/unshipped). The payoff demo.
 6. ~~**Tier 4 classifier v2 — argc-generic safe sends.** Extend
    `ConstFoldEnvPass#consumer_safe?` to look at `insts[i + 1 + argc]`
    for argc 0..MAX_SAFE_ARGC (3 is plenty). Unlocks
