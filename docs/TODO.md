@@ -4,8 +4,9 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-23 (pipeline fixed-point iteration shipped — cascades
-across passes now automatic, phase-ordering concerns retired wholesale).
+Last updated: 2026-04-23 (arith_reassoc v4.1 exact-divisibility fold
+shipped; polynomial demo now collapses `(n*2*SCALE/12)+0` end-to-end
+to `n` via the cascade through IdentityElim v1).
 
 ## Three-pass plan: status
 
@@ -222,8 +223,19 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
 - **ArithReassoc v3.1** — leading-negative unary emission
   (`1 - x + 2 → 3 - x`). Currently skipped via `:no_positive_nonliteral`.
   Small and self-contained.
-- **ArithReassoc v4.1** — exact-divisibility folds (`x*6/2 → x*3`).
-  Requires divisibility tracking in the `:ordered` walker.
+- ~~**ArithReassoc v4.1** — exact-divisibility folds (`x*6/2 → x*3`).
+  Requires divisibility tracking in the `:ordered` walker.~~
+  **Shipped 2026-04-23.** Spec:
+  `docs/superpowers/specs/2026-04-23-pass-arith-reassoc-v4.1-design.md`.
+  Plan: `docs/superpowers/plans/2026-04-23-pass-arith-reassoc-v4.1.md`.
+  New case in `:ordered` walker (mult→div direction only; reverse is
+  unsound under integer truncation). Polynomial demo now collapses
+  `(n * 2 * SCALE / 12) + 0` end-to-end to `n` — arith_reassoc v4.1
+  folds `12/12 → 1`, IdentityElim v1 strips `*1` and then `+ 0`
+  (the latter now that the LHS is a single getlocal rather than a
+  multi-instruction chain). compute iseq goes from 8 insts to 2.
+  Benchmark: 1.11x → 1.19x. Cascades land in one `Pipeline.run` thanks
+  to fixed-point iteration.
 - **ArithReassocPass helper extraction.** The `:abelian` and `:ordered`
   kind branches duplicate a ~10-line prologue. Worth extracting if a
   third kind lands.
