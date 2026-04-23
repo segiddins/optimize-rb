@@ -88,8 +88,8 @@ module RubyOpt
                 idx = object_table.intern(value)
                 replacement = IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
                 function.splice_instructions!(i..(i + 3), [replacement])
-                log.skip(pass: :const_fold_env, reason: :folded,
-                         file: function.path, line: (a.line || function.first_lineno || 0))
+                log.rewrite(pass: :const_fold_env, reason: :folded,
+                            file: function.path, line: (a.line || function.first_lineno || 0))
               else
                 log.skip(pass: :const_fold_env, reason: :env_value_not_string,
                          file: function.path, line: (a.line || function.first_lineno || 0))
@@ -97,8 +97,8 @@ module RubyOpt
             else
               # Key absent: return the default. Keep `d` as the sole instruction.
               function.splice_instructions!(i..(i + 3), [d])
-              log.skip(pass: :const_fold_env, reason: :folded,
-                       file: function.path, line: (a.line || function.first_lineno || 0))
+              log.rewrite(pass: :const_fold_env, reason: :folded,
+                          file: function.path, line: (a.line || function.first_lineno || 0))
             end
             i += 1
             next
@@ -122,8 +122,8 @@ module RubyOpt
 
             if replacement
               function.splice_instructions!(i..(i + 2), [replacement])
-              log.skip(pass: :const_fold_env, reason: :folded,
-                       file: function.path, line: (a.line || function.first_lineno || 0))
+              log.rewrite(pass: :const_fold_env, reason: :folded,
+                          file: function.path, line: (a.line || function.first_lineno || 0))
             end
             i += 1
           elsif op.opcode == :opt_send_without_block && fetch_send?(op, object_table)
@@ -134,8 +134,8 @@ module RubyOpt
                 idx = object_table.intern(value)
                 replacement = IR::Instruction.new(opcode: :putobject, operands: [idx], line: a.line)
                 function.splice_instructions!(i..(i + 2), [replacement])
-                log.skip(pass: :const_fold_env, reason: :folded,
-                         file: function.path, line: (a.line || function.first_lineno || 0))
+                log.rewrite(pass: :const_fold_env, reason: :folded,
+                            file: function.path, line: (a.line || function.first_lineno || 0))
               else
                 log.skip(pass: :const_fold_env, reason: :env_value_not_string,
                          file: function.path, line: (a.line || function.first_lineno || 0))
