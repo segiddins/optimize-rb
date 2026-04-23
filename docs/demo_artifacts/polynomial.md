@@ -1,6 +1,6 @@
 # polynomial demo
 
-Pipeline.default: **1.02x** vs unoptimized.
+Pipeline.default: **1.09x** vs unoptimized.
 
 ## Source
 
@@ -23,8 +23,8 @@ end
 
 ```
 Comparison:
-  optimized:   22414817.6 i/s
-  plain:   21930717.3 i/s - 1.02x  slower
+  optimized:   23593963.0 i/s
+  plain:   21680709.0 i/s - 1.09x  slower
 ```
 
 ## Walkthrough
@@ -387,27 +387,23 @@ local table (size: 3, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0031 putobject                              42                        (  13)
 0033 setlocal_WC_0                          n@1
 0035 getlocal_WC_0                          n@1
-0037 putobject                              2
+0037 putobject                              12
 0039 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-0041 putobject                              6
-0043 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-0045 putobject                              12
-0047 opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
+0041 putobject                              12
+0043 opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
+0045 putobject_INT2FIX_0_
+0046 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
+0048 leave
 0049 putobject_INT2FIX_0_
-0050 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
-0052 leave
-0053 putobject_INT2FIX_0_
-0054 setlocal_WC_0                          n@2
-0056 getlocal_WC_0                          n@1
-0058 putobject                              2
-0060 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-0062 putobject                              6
-0064 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-0066 putobject                              12
-0068 opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
-0070 putobject_INT2FIX_0_
-0071 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
-0073 leave
+0050 setlocal_WC_0                          n@2
+0052 getlocal_WC_0                          n@1
+0054 putobject                              12
+0056 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
+0058 putobject                              12
+0060 opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
+0062 putobject_INT2FIX_0_
+0063 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
+0065 leave
 
 == disasm: #<ISeq:<class:Polynomial>@/w/examples/polynomial.rb:5 (5,0)-(10,3)>
 0000 definemethod                           :compute, compute         (   7)[LiCl]
@@ -418,15 +414,13 @@ local table (size: 3, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] n@0<Arg>
 0000 getlocal_WC_0                          "!"@-1                    (   8)[LiCa]
-0002 putobject                              2
-0004 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[CcCr]
-0006 putobject                              6
-0008 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[CcCr]
-0010 putobject                              12
-0012 opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[CcCr]
-0014 putobject_INT2FIX_0_
-0015 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
-0017 leave                                                            (   9)[Re]
+0002 putobject                              12[LiCa]
+0004 opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[LiCa]
+0006 putobject                              12[LiCa]
+0008 opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[LiCa]
+0010 putobject_INT2FIX_0_                   [LiCa]
+0011 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[LiCa]
+0013 leave                                  [LiCa]
 ```
 
 ## Raw benchmark output
@@ -434,15 +428,15 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-               plain     2.186M i/100ms
+               plain     2.188M i/100ms
 Calculating -------------------------------------
-               plain     21.931M (± 2.3%) i/s   (45.60 ns/i) -    111.494M in   5.086775s
+               plain     21.681M (± 2.1%) i/s   (46.12 ns/i) -    109.394M in   5.048020s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-           optimized     2.257M i/100ms
+           optimized     2.328M i/100ms
 Calculating -------------------------------------
-           optimized     22.415M (± 2.7%) i/s   (44.61 ns/i) -    112.850M in   5.038505s
+           optimized     23.594M (± 1.5%) i/s   (42.38 ns/i) -    118.715M in   5.032776s
 Comparison:
-  optimized:   22414817.6 i/s
-  plain:   21930717.3 i/s - 1.02x  slower
+  optimized:   23593963.0 i/s
+  plain:   21680709.0 i/s - 1.09x  slower
 ```

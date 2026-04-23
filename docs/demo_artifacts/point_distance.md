@@ -29,8 +29,8 @@ end
 
 ```
 Comparison:
-  plain:   18197883.3 i/s
-  optimized:   18048060.3 i/s - 1.01x  slower
+  plain:   17943672.8 i/s
+  optimized:   17754902.8 i/s - 1.01x  slower
 ```
 
 ## Walkthrough
@@ -264,15 +264,15 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-               plain     1.852M i/100ms
+               plain     1.802M i/100ms
 Calculating -------------------------------------
-               plain     18.198M (± 2.3%) i/s   (54.95 ns/i) -     92.582M in   5.090208s
+               plain     17.944M (± 1.6%) i/s   (55.73 ns/i) -     90.097M in   5.022489s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-           optimized     1.845M i/100ms
+           optimized     1.814M i/100ms
 Calculating -------------------------------------
-           optimized     18.048M (± 3.0%) i/s   (55.41 ns/i) -     90.398M in   5.013351s
+           optimized     17.755M (± 2.0%) i/s   (56.32 ns/i) -     88.876M in   5.007854s
 Comparison:
-  plain:   18197883.3 i/s
-  optimized:   18048060.3 i/s - 1.01x  slower
+  plain:   17943672.8 i/s
+  optimized:   17754902.8 i/s - 1.01x  slower
 ```
