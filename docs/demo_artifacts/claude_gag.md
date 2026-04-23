@@ -10,14 +10,16 @@ def answer
 end
 ```
 
-**Expected return value:** `5`
+**Validation cases:**
+
+- `answer` → `5`
 
 ## Iteration 1
 
 **Prompt:**
 
 ```
-You are given a YARV iseq as a JSON array of instructions. Emit a semantically equivalent but optimized iseq.
+You are given a YARV iseq as a JSON array of instructions. Emit a semantically equivalent but optimized iseq. The rewrite must preserve behavior for all inputs.
 
 Constraints:
 - Output a single JSON array of [opcode_string, ...operands] tuples.
@@ -25,15 +27,6 @@ Constraints:
 - Preserve stack discipline: the iseq must end with a value on the stack, consumed by `leave`.
 - Do not add or remove locals; the local table is fixed.
 - Call-data operands are objects of the form {"mid": String, "argc": Integer, "flag": Integer}.
-
-Fixture source:
-# frozen_string_literal: true
-
-def answer
-  2 + 3
-end
-
-Expected return value: 5
 
 Input iseq:
 [["putobject",2],["putobject",3],["opt_plus",{"mid":"+","argc":1,"flag":16,"kwlen":0}],["leave"]]
