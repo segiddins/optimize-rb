@@ -18,7 +18,7 @@ Update this block in every commit that changes plan state. Sections marked ✅ a
 
 - ✅ Task 0: Setup — research subagents + style guide + `post.md` skeleton
 - ✅ Task 1: Intro (title, TL;DR, about-me)
-- ⬜ Task 2: §1 Cold open
+- ✅ Task 2: §1 Cold open
 - ⬜ Task 3: §2 The contract
 - ⬜ Task 4: §3 YARV, properly
 - ⬜ Task 5: §4 Building a toy optimizer
