@@ -4,7 +4,7 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-22 (after RBS type env v1 — receiver-resolving inlining for Point#distance_to).
+Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture).
 
 ## Three-pass plan: status
 
@@ -52,14 +52,15 @@ Last updated: 2026-04-22 (after RBS type env v1 — receiver-resolving inlining 
    `Pipeline.default`. Benchmark number (~1.01x) is honest: inlining
    shifts work from call-and-return to inline instructions without
    shrinking the receiver-method sequence. Follow-ups:
-   - **`sum_of_squares` fixture blocked.** The Codec can't decode
-     *any* `while` loop: `OFFSET raw=(2**64 - n) in branchif targets
-     slot ... with no corresponding instruction`. Negative branch
-     offsets aren't sign-extended in `codec/instruction_stream.rb:360`.
-     File as a separate codec fix; once green, restore
-     `examples/sum_of_squares.{rb,walkthrough.yml}` (they were
-     reverted in `revert(examples): drop sum_of_squares …`) and
-     regenerate `docs/demo_artifacts/sum_of_squares.md`.
+   - ~~**`sum_of_squares` fixture blocked** on codec backward-branch
+     decode.~~ **Shipped 2026-04-23.** Fixture restored at
+     `optimizer/examples/sum_of_squares.{rb,walkthrough.yml}`;
+     `docs/demo_artifacts/sum_of_squares.md` regenerated; `rake
+     demo:verify` mask extended to cover the header ratio line. Most
+     passes are `(no change)` — no shipped pass is loop-aware, see the
+     "Loop-aware passes" entry under "Exploratory, not yet on any
+     roadmap" for what it would take to change that. Plan:
+     `docs/superpowers/plans/2026-04-23-codec-signed-offset-and-while-fixture.md`.
    - `const_fold` + `dead_branch_fold` slides show `(no change)` for
      `point_distance`. Once post-inlining folds fire on the inlined
      body, expect cascading diffs there.
@@ -133,6 +134,19 @@ self-contained fix; none is a talk blocker.
   disappear — and by implication, IdentityElim should get a new
   walkthrough slide with a real diff instead of `(no change)`.
 
+### Polynomial-demo artifact instability (filed 2026-04-23)
+
+`rake demo:verify` can fail on `polynomial` even after a fresh
+regeneration: a disasm line differs by one character (`"!"@-1` vs
+`?@-1` — looks like an AST/prism formatting variance, not a
+benchmark-noise issue). First observed while regenerating artifacts
+for the codec-signed-OFFSET work; unrelated to that change. Needs a
+short investigation: whether it's a Ruby 4.0.x patch-level variance,
+a bundler-vs-docker path variance, or a real race in the walkthrough
+renderer. Until then, `demo:verify` for `polynomial` may spuriously
+fail; re-running `bin/demo polynomial` and re-committing the
+regenerated artifact is the current workaround.
+
 ---
 
 Filed in session memory / pass-identity-elim-design but not yet picked up:
@@ -182,21 +196,15 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
   `write_u64`/`read_u64`). Blocks the overflow-boundary test and any
   widening of `INTERN_BIT_LENGTH_LIMIT` (currently 62; effective safe
   limit is smaller because of this).
-- **Codec fails to decode backward branches (`while` loops).**
-  `codec/instruction_stream.rb:360` interprets a negative branch
-  offset as a huge unsigned integer and aborts with
-  `OFFSET raw=<2^64 - n> in branchif targets slot <2^64 - m> with
-  no corresponding instruction`. Reproduces on any trivial loop,
-  e.g. `def f(n); i=0; while i<n; i+=1; end; end`. Blocks the
-  `sum_of_squares` demo fixture and any future loop-based demo.
-- **Codec encode side of backward branches is unverified.** Once
-  decode is fixed, the mirror question is whether `Codec.encode`
-  emits a correctly-signed negative offset when a pass preserves
-  (or creates) a backward branch. The existing encode tests all
-  use forward-only control flow, so this is untested. Likely a
-  one-line companion fix to the decode patch — emit the offset as
-  a signed small_value rather than unsigned — but confirm with a
-  round-trip test over a decoded-then-re-encoded `while` iseq.
+- ~~**Codec fails to decode backward branches (`while` loops).**
+  `codec/instruction_stream.rb` interpreted a negative branch offset
+  as a huge unsigned integer and aborted.~~ **Shipped 2026-04-23** via
+  `u64_to_i64` sign-extension at the `:OFFSET` decode site. Plan:
+  `docs/superpowers/plans/2026-04-23-codec-signed-offset-and-while-fixture.md`.
+- ~~**Codec encode side of backward branches is unverified.**~~
+  **Shipped 2026-04-23** via `i64_to_u64` at the `:OFFSET` encode site
+  plus byte-identity + VM-execution round-trip tests in
+  `optimizer/test/codec/round_trip_test.rb`. See same plan as above.
 
 ## Explicitly out of scope (original talk-structure spec)
 
