@@ -253,6 +253,16 @@ module RubyOpt
               # emitted, `(y op lit1) op lit2 ≠ y op (lit1 combiner lit2)`
               # and we must commit each literal on its own.
               acc = acc.send(run_combiner, e[:value])
+            elsif acc_op == :opt_mult && e[:op] == :opt_div &&
+                  associative && acc.is_a?(Integer) && acc % e[:value] == 0
+              # v4.1 exact-divisibility fold: (x * a) / b with b | a rewrites to
+              # x * (a/b). Safe under integer truncation because `x * a` loses no
+              # information before the division; `(a/b) * b == a` exactly.
+              # Unsound in the reverse direction (`x / a * b`) — see spec for why.
+              acc = acc / e[:value]
+              # acc_op stays :opt_mult; the divisor is absorbed.
+              log.rewrite(pass: :arith_reassoc, reason: :exact_divisibility_fold,
+                          file: function.path, line: chain_line)
             else
               # Cross-op boundary between literals, or post-non-literal run in
               # a non-associative group: commit and start fresh.

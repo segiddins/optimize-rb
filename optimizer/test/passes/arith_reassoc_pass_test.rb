@@ -559,18 +559,17 @@ class ArithReassocPassTest < Minitest::Test
   end
 
   def test_mult_div_literal_run_with_mixed_ops_folds
-    # 2 * 3 / 6 * x: two literal runs separated by the /6 boundary.
-    # The *->/ boundary does not allow 6/6 to further reduce within this pass.
+    # 2 * 3 / 6 * x: literals combine to 6, then v4.1 exact-divisibility fold
+    # absorbs the /6 into the accumulator (6/6 = 1), leaving x * 1.
     src = "def f(x); 2 * 3 / 6 * x; end; f(5)"
     ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
     ot = ir.misc[:object_table]
     f = find_iseq(ir, "f")
     RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
 
-    sixes = f.instructions.count { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 6 }
-    assert_equal 2, sixes
     assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
-    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_div }
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 1 }
 
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal 5, loaded.eval
@@ -800,6 +799,101 @@ class ArithReassocPassTest < Minitest::Test
     RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
     loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
     assert_equal (2 * 3 % 6 * 5), loaded.eval
+  end
+
+  # ---- v4.1 exact-divisibility fold ----
+
+  def test_exact_divisibility_fold_x_times_k_over_k
+    src = "def f(x); x * 12 / 12; end; f(7)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 1 }
+
+    refute_empty log.for_pass(:arith_reassoc).select { |e| e.reason == :exact_divisibility_fold },
+                 "expected at least one :exact_divisibility_fold log entry"
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 7, loaded.eval
+  end
+
+  def test_exact_divisibility_fold_x_times_12_over_4
+    src = "def f(x); x * 12 / 4; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 3 }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 15, loaded.eval
+  end
+
+  def test_exact_divisibility_cascades_through_same_op_run
+    src = "def f(x); x * 2 * 6 / 4; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 3 }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 15, loaded.eval
+  end
+
+  def test_non_exact_divisibility_preserves_chain
+    src = "def f(x); x * 12 / 5; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before_opcodes = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before_opcodes, f.instructions.map(&:opcode)
+    assert_empty log.for_pass(:arith_reassoc).select { |e| e.reason == :exact_divisibility_fold }
+  end
+
+  def test_div_then_mult_not_folded
+    # `x / 4 * 12` is NOT equivalent to `x * 3` under integer truncation
+    # (e.g. x=5: (5/4)*12 = 12; 5*3 = 15). Regression guard.
+    src = "def f(x); x / 4 * 12; end; f(20)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before_opcodes = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+
+    assert_equal before_opcodes, f.instructions.map(&:opcode),
+                 "div-then-mult must not be folded (unsound under integer truncation)"
+    assert_empty log.for_pass(:arith_reassoc).select { |e| e.reason == :exact_divisibility_fold }
+  end
+
+  def test_exact_divisibility_zero_accumulator_preserves_fold
+    src = "def f(x); x * 0 * 5 / 5; end; f(7)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult }
+    assert_equal 0, f.instructions.count { |i| i.opcode == :opt_div }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 0 }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal 0, loaded.eval
   end
 
   private
