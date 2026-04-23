@@ -4,9 +4,9 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-23 (arith_reassoc v4.1 exact-divisibility fold
-shipped; polynomial demo now collapses `(n*2*SCALE/12)+0` end-to-end
-to `n` via the cascade through IdentityElim v1).
+Last updated: 2026-04-23 (DeadStashElimPass + InliningPass body-copy
+fix shipped — polynomial inliner stash pairs now drop at both call
+sites after the inline-body aliasing bug is corrected).
 
 ## Three-pass plan: status
 
@@ -150,17 +150,23 @@ The `polynomial` demo (exercising inlining + tier 2 + tier 1 + identity
 don't compose as tightly as the slide would suggest. Each is a
 self-contained fix; none is a talk blocker.
 
-- **InliningPass v3 leaves a redundant `setlocal/getlocal` round-trip
-  at the stash site.** The self-stash + arg-stash emit
-  `setlocal n@K; getlocal n@K` for a slot that's never read again
-  before being overwritten. On `(n * 2 * SCALE / 12) + 0` with `n = 42`
-  this breaks the literal-pair window that Tier 1 needs (`putobject
-  42; setlocal n@1; getlocal n@1; putobject 2; opt_mult` — the
-  `42; 2; opt_mult` triple isn't adjacent). Fix: emit a peephole
-  cleanup in InliningPass (or a new pass) that drops
-  `setlocal X; getlocal X` when the slot has no other reader between
-  the stash and the next write. Would unlock Tier 1 cascading across
-  inlined arguments — the polynomial demo's arithmetic would collapse.
+- ~~**InliningPass v3 leaves a redundant `setlocal/getlocal` round-trip
+  at the stash site.**~~ **Shipped 2026-04-23** as `DeadStashElimPass`
+  plus a fix in InliningPass itself.
+  Spec: `docs/superpowers/specs/2026-04-23-pass-dead-stash-elim-design.md`.
+  Plan: `docs/superpowers/plans/2026-04-23-pass-dead-stash-elim.md`.
+  Two landed changes: (a) a narrow peephole pass that drops strictly-
+  adjacent `setlocal X; getlocal X` when X has no other refs at the
+  matching level in the function, registered directly after
+  InliningPass in `Pipeline.default`; (b) a correctness fix in
+  InliningPass that deep-copies the callee's body on splice instead
+  of aliasing its Instruction struct references — prior code caused
+  the second inline of the same method to see operands already
+  shifted by the first inline's shift step, producing a body that
+  read the wrong stash slot. After both fixes, polynomial's
+  compute-call site collapses from `putobject X; setlocal Y;
+  getlocal Y; leave` to just `putobject X; leave` at each call
+  site, fully retiring the inliner-stash clutter in that fixture.
 
 - ~~**ArithReassoc runs before Tier 2 / Inlining expose literal
   operands.**~~ **Retired 2026-04-23** by `Pipeline#run`'s per-function
@@ -298,6 +304,29 @@ Kept here so future sessions don't rediscover these:
 
 ## Exploratory, not yet on any roadmap
 
+- **Full dead-store elimination.** `DeadStashElimPass` (shipped
+  2026-04-23) handles a narrow peephole — strictly adjacent
+  `setlocal X; getlocal X` with a single-use slot. A proper DSE pass
+  would remove any `setlocal X` whose target has no subsequent read
+  before the next `setlocal X`, regardless of adjacency. That's a
+  dataflow problem, not a peephole, and requires reasoning about
+  control flow (branches, loops, catch tables) to determine
+  "subsequent read." Not needed for any current fixture. Overlaps
+  with the CFG-DCE entry below — a full DSE pass implicitly handles
+  the unreachable-reader case that today blocks the peephole on the
+  polynomial fixture's dead else-branch (before the inliner fix).
+- **CFG-level dead code elimination.** Today's `DeadBranchFoldPass`
+  is a peephole: it folds `<literal>; branchif|branchunless` but
+  does not remove the now-unreachable instructions after the
+  branch target. Those instructions persist in the stream (e.g.
+  the polynomial fixture's statically-dead else-arm), cost
+  encoding/decoding work, and can occasionally block downstream
+  peepholes that see the dead instructions as live references.
+  A proper pass would identify unreachable basic blocks, excise
+  them, patch catch-table ranges. Significant spec; meaningfully
+  bigger than any shipped pass. Out of scope per the original
+  talk-structure spec but worth keeping on the radar if a fixture
+  ever demands it.
 - **Stack-type inference.** A cheaper alternative to full RBS parsing
   that could upgrade IdentityElim-style passes from "sound in practice"
   to "sound in principle" for numeric receivers. Big spec, but smaller
