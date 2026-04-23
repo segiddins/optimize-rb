@@ -1,6 +1,6 @@
 # sum_of_squares demo
 
-Pipeline.default: **1.01x** vs unoptimized.
+Pipeline.default: **1.00x** vs unoptimized.
 
 Converged in 1 iterations (max across functions).
 
@@ -27,8 +27,8 @@ end
 
 ```
 Comparison:
-  optimized:   450695.3 i/s
-  plain:   447626.9 i/s - 1.01x  slower
+  plain:   432797.0 i/s
+  optimized:   431179.8 i/s - 1.00x  slower
 ```
 
 ## Walkthrough
@@ -170,15 +170,15 @@ local table (size: 3, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-               plain    45.132k i/100ms
+               plain    43.681k i/100ms
 Calculating -------------------------------------
-               plain    447.627k (± 3.7%) i/s    (2.23 μs/i) -      2.257M in   5.048235s
+               plain    432.797k (± 2.6%) i/s    (2.31 μs/i) -      2.184M in   5.049966s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-           optimized    46.055k i/100ms
+           optimized    43.319k i/100ms
 Calculating -------------------------------------
-           optimized    450.695k (± 2.8%) i/s    (2.22 μs/i) -      2.257M in   5.011146s
+           optimized    431.180k (± 2.5%) i/s    (2.32 μs/i) -      2.166M in   5.026455s
 Comparison:
-  optimized:   450695.3 i/s
-  plain:   447626.9 i/s - 1.01x  slower
+  plain:   432797.0 i/s
+  optimized:   431179.8 i/s - 1.00x  slower
 ```
