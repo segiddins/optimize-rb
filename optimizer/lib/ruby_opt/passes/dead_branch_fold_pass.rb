@@ -56,8 +56,8 @@ module RubyOpt
         taken = branch_taken?(b.opcode, value)
         replacement = build_replacement(b, taken, a.line)
         function.splice_instructions!(i..(i + 1), replacement)
-        log.skip(pass: :dead_branch_fold, reason: :branch_folded,
-                 file: function.path, line: (b.line || a.line || function.first_lineno))
+        log.rewrite(pass: :dead_branch_fold, reason: :branch_folded,
+                    file: function.path, line: (b.line || a.line || function.first_lineno))
         true
       end
 
@@ -78,8 +78,8 @@ module RubyOpt
         value = LiteralValue.read(a, object_table: object_table)
         return false if branch_taken?(b.opcode, value) # out of scope
         function.splice_instructions!(i..(i + 3), [])
-        log.skip(pass: :dead_branch_fold, reason: :short_circuit_folded,
-                 file: function.path, line: (b.line || a.line || function.first_lineno))
+        log.rewrite(pass: :dead_branch_fold, reason: :short_circuit_folded,
+                    file: function.path, line: (b.line || a.line || function.first_lineno))
         true
       end
 
