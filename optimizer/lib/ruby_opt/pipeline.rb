@@ -2,6 +2,7 @@
 require "ruby_opt/log"
 require "ruby_opt/ir/slot_type_table"
 require "ruby_opt/passes/inlining_pass"
+require "ruby_opt/passes/dead_stash_elim_pass"
 require "ruby_opt/passes/arith_reassoc_pass"
 require "ruby_opt/passes/const_fold_tier2_pass"
 require "ruby_opt/passes/const_fold_env_pass"
@@ -25,6 +26,11 @@ module RubyOpt
     def self.default
       new([
         Passes::InliningPass.new,
+        # DeadStashElimPass runs directly after InliningPass to clean up the
+        # argument-stash round-trip (`setlocal X; getlocal X` with X
+        # unreferenced elsewhere). Exposes the producer to the following
+        # instruction so arith/const-fold can cascade through it.
+        Passes::DeadStashElimPass.new,
         Passes::ArithReassocPass.new,
         # ConstFoldTier2Pass rewrites frozen top-level constant references
         # to their literal values. Runs before the other const-folders so

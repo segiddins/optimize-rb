@@ -9,6 +9,7 @@ module RubyOpt
     module MarkdownRenderer
       PASS_DESCRIPTIONS = {
         inlining:         "Replace `send` with the callee's body when the receiver is resolvable.",
+        dead_stash_elim:  "Drop `setlocal X; getlocal X` pairs whose slot has no other refs.",
         arith_reassoc:    "Reassociate `+ - * /` chains of literal operands under the no-BOP-redef rule.",
         const_fold:       "Fold literal-operand operations (Tier 1).",
         const_fold_tier2: "Rewrite frozen top-level constant references to their literal values.",
