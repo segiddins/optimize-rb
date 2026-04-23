@@ -17,7 +17,7 @@
 Update this block in every commit that changes plan state. Sections marked ✅ are drafted and committed to `post.md`; 🚧 means outlined but not drafted; ⬜ means untouched.
 
 - ✅ Task 0: Setup — research subagents + style guide + `post.md` skeleton
-- ⬜ Task 1: Intro (title, TL;DR, about-me)
+- ✅ Task 1: Intro (title, TL;DR, about-me)
 - ⬜ Task 2: §1 Cold open
 - ⬜ Task 3: §2 The contract
 - ⬜ Task 4: §3 YARV, properly
