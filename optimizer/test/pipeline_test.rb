@@ -275,6 +275,69 @@ class PipelineTest < Minitest::Test
     refute RubyOpt::Passes::ConstFoldPass.new.one_shot?
   end
 
+  def cascade_ir_with_marker
+    ir = RubyOpt::Codec.decode(
+      RubyVM::InstructionSequence.compile("def f; 1; end").to_binary
+    )
+    walk = ->(fn) {
+      (fn.instructions || []).each { |i| i.opcode = :x_marker if i.opcode == :putobject_INT2FIX_1_ }
+      (fn.children || []).each { |c| walk.call(c) }
+    }
+    walk.call(ir)
+    ir
+  end
+
+  def test_fixed_point_loop_cascades_across_passes
+    ir = cascade_ir_with_marker
+    pipeline = RubyOpt::Pipeline.new([CascadePassA.new, CascadePassB.new])
+    log = pipeline.run(ir, type_env: nil)
+    refute_empty log.for_pass(:cascade_a)
+    refute_empty log.for_pass(:cascade_b)
+    refute_empty log.convergence
+  end
+
+  def test_fixed_point_loop_converges_with_no_rewrites
+    t1 = TrackingPass.new(:first)
+    t2 = TrackingPass.new(:second)
+    pipeline = RubyOpt::Pipeline.new([t1, t2])
+    pipeline.run(ir, type_env: nil)
+    assert_equal 4, t1.visited.size
+    assert_equal 4, t2.visited.size
+  end
+
+  class ForeverRewritingPass < RubyOpt::Pass
+    def apply(function, type_env:, log:, **_extras)
+      log.rewrite(pass: :forever, reason: :always, file: function.path || "", line: 0)
+    end
+
+    def name; :forever; end
+  end
+
+  def test_fixed_point_loop_raises_on_overflow
+    pipeline = RubyOpt::Pipeline.new([ForeverRewritingPass.new])
+    assert_raises(RubyOpt::Pipeline::FixedPointOverflow) do
+      pipeline.run(ir, type_env: nil)
+    end
+  end
+
+  def test_one_shot_pass_runs_exactly_once_even_if_iterative_passes_loop
+    one_shot_class = Class.new(RubyOpt::Pass) do
+      attr_reader :call_count
+      def initialize; @call_count = Hash.new(0); end
+      def one_shot?; true; end
+      def apply(function, type_env:, log:, **_extras)
+        @call_count[function.name] += 1
+      end
+      def name; :one_shot_tracker; end
+    end
+    one_shot = one_shot_class.new
+
+    ir = cascade_ir_with_marker
+    pipeline = RubyOpt::Pipeline.new([one_shot, CascadePassA.new, CascadePassB.new])
+    pipeline.run(ir, type_env: nil)
+    assert one_shot.call_count.values.all? { |c| c == 1 }, one_shot.call_count.inspect
+  end
+
   private
 
   def find_iseq(ir, name)
@@ -285,6 +348,33 @@ class PipelineTest < Minitest::Test
     end
     nil
   end
+end
+
+# A pass that rewrites instruction X→Y on each function that still contains X,
+# logging :cascade_a. Idempotent once X is gone.
+class CascadePassA < RubyOpt::Pass
+  def apply(function, type_env:, log:, **_extras)
+    return unless (function.instructions || []).any? { |i| i.opcode == :x_marker }
+    function.instructions.each do |i|
+      i.opcode = :y_marker if i.opcode == :x_marker
+    end
+    log.rewrite(pass: :cascade_a, reason: :x_to_y, file: function.path || "", line: 0)
+  end
+
+  def name; :cascade_a; end
+end
+
+# A pass that rewrites Y→Z, logging :cascade_b. Idempotent once Y is gone.
+class CascadePassB < RubyOpt::Pass
+  def apply(function, type_env:, log:, **_extras)
+    return unless (function.instructions || []).any? { |i| i.opcode == :y_marker }
+    function.instructions.each do |i|
+      i.opcode = :z_marker if i.opcode == :y_marker
+    end
+    log.rewrite(pass: :cascade_b, reason: :y_to_z, file: function.path || "", line: 0)
+  end
+
+  def name; :cascade_b; end
 end
 
 class PipelineAccessorTest < Minitest::Test

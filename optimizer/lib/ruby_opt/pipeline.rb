@@ -11,6 +11,17 @@ require "ruby_opt/passes/dead_branch_fold_pass"
 
 module RubyOpt
   class Pipeline
+    MAX_ITERATIONS = 8
+
+    class FixedPointOverflow < StandardError
+      def initialize(function_name:, iterations:)
+        super("pipeline did not converge after #{iterations} iterations on function #{function_name.inspect}")
+        @function_name = function_name
+        @iterations = iterations
+      end
+      attr_reader :function_name, :iterations
+    end
+
     def self.default
       new([
         Passes::InliningPass.new,
@@ -50,26 +61,54 @@ module RubyOpt
       each_function(ir) do |function|
         next if seen_fns[function]
         seen_fns[function] = true
-        @passes.each do |pass|
-          begin
-            pass.apply(
-              function,
-              type_env: type_env, log: log,
-              object_table: object_table, callee_map: callee_map,
-              slot_type_map: slot_type_map,
-              signature_map: signature_map,
-              env_snapshot: env_snapshot,
-            )
-          rescue => e
-            log.skip(pass: pass.name, reason: :pass_raised,
-                     file: function.path, line: function.first_lineno || 0)
+        one_shot_passes, iterative_passes = @passes.partition(&:one_shot?)
+
+        # One-shot passes: run exactly once per function.
+        one_shot_passes.each do |pass|
+          run_single_pass(pass, function, type_env, log, object_table, callee_map,
+                          slot_type_map, signature_map, env_snapshot)
+        end
+
+        # Iterative passes: sweep until rewrite_count stops growing. Cap at
+        # MAX_ITERATIONS; raising beyond that signals either pass oscillation
+        # or a pass that records rewrites without changing IR.
+        iterations = 0
+        if iterative_passes.any?
+          loop do
+            iterations += 1
+            snapshot = log.rewrite_count
+            iterative_passes.each do |pass|
+              run_single_pass(pass, function, type_env, log, object_table, callee_map,
+                              slot_type_map, signature_map, env_snapshot)
+            end
+            break if log.rewrite_count == snapshot
+            if iterations >= MAX_ITERATIONS
+              raise FixedPointOverflow.new(function_name: function.name, iterations: iterations)
+            end
           end
         end
+
+        log.record_convergence(function.name, iterations)
       end
       log
     end
 
     private
+
+    def run_single_pass(pass, function, type_env, log, object_table, callee_map,
+                        slot_type_map, signature_map, env_snapshot)
+      pass.apply(
+        function,
+        type_env: type_env, log: log,
+        object_table: object_table, callee_map: callee_map,
+        slot_type_map: slot_type_map,
+        signature_map: signature_map,
+        env_snapshot: env_snapshot,
+      )
+    rescue => e
+      log.skip(pass: pass.name, reason: :pass_raised,
+               file: function.path, line: function.first_lineno || 0)
+    end
 
     def each_function(function, &block)
       yield function
