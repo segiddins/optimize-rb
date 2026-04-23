@@ -1,0 +1,20 @@
+You are given a YARV iseq as a JSON array of instructions. Emit a semantically equivalent but optimized iseq.
+
+Constraints:
+- Output a single JSON array of [opcode_string, ...operands] tuples.
+- Each opcode must be a real YARV opcode (examples: putobject, opt_plus, opt_minus, opt_mult, opt_div, opt_mod, leave, pop, dup, getlocal_WC_0, setlocal_WC_0).
+- Preserve stack discipline: the iseq must end with a value on the stack, consumed by `leave`.
+- Do not add or remove locals; the local table is fixed.
+- Call-data operands are objects of the form {"mid": String, "argc": Integer, "flag": Integer}.
+
+Fixture source:
+def answer
+  2 + 3
+end
+
+Expected return value: 5
+
+Input iseq:
+[["putobject",2],["putobject",3],["opt_plus",{"mid":"+","argc":1,"flag":16,"kwlen":0}],["leave"]]
+
+Reply with ONLY the JSON array. No prose, no fences.

@@ -1,0 +1,5 @@
+Your previous response was rejected:
+- instruction 3: unknown opcode :opt_fastmath
+- iseq returned 7; expected 5
+
+Emit a corrected iseq as a JSON array. Reply with ONLY the JSON array.
