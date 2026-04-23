@@ -40,8 +40,8 @@ module RubyOpt
               keep = try_eliminate(a, b, entry, object_table)
               if keep
                 function.splice_instructions!(i..(i + 2), [keep])
-                log.skip(pass: :identity_elim, reason: :identity_eliminated,
-                         file: function.path, line: (op.line || a.line || function.first_lineno))
+                log.rewrite(pass: :identity_elim, reason: :identity_eliminated,
+                            file: function.path, line: (op.line || a.line || function.first_lineno))
                 eliminated_any = true
                 i = i - 1 if i.positive?
                 next
