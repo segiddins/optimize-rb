@@ -11,12 +11,14 @@ task default: :test
 
 RAW_BENCH_SECTION_RE = /## Raw benchmark output\n\n```\n.*?```/m
 BENCH_LINE_RE        = /^  (plain|optimized):.*i\/s.*$/
+HEADER_RATIO_RE      = /^Pipeline\.default: \*\*[\d.]+x\*\* vs unoptimized\.$/
 
 def mask_nondeterministic(md)
   md
     .sub(RAW_BENCH_SECTION_RE,
          "## Raw benchmark output\n\n```\n<benchmark output>\n```")
     .gsub(BENCH_LINE_RE, '  \1: <ips>')
+    .sub(HEADER_RATIO_RE, "Pipeline.default: **<ratio>x** vs unoptimized.")
 end
 
 namespace :demo do
