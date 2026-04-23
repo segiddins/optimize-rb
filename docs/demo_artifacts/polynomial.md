@@ -1,6 +1,6 @@
 # polynomial demo
 
-Pipeline.default: **1.18x** vs unoptimized.
+Pipeline.default: **2.16x** vs unoptimized.
 
 Converged in 3 iterations (max across functions).
 
@@ -16,6 +16,11 @@ class Polynomial
   def compute(n)
     (n * 2 * SCALE / 12) + 0
   end
+
+  # @rbs () -> Integer
+  def run
+    if SCALE == 6 then compute(42) else compute(0) end
+  end
 end
 ```
 
@@ -25,8 +30,8 @@ end
 
 ```
 Comparison:
-  optimized:   24552151.9 i/s
-  plain:   20752489.3 i/s - 1.18x  slower
+  optimized:   35727594.7 i/s
+  plain:   16523702.6 i/s - 2.16x  slower
 ```
 
 ## Walkthrough
@@ -38,27 +43,55 @@ Replace `send` with the callee's body when the receiver is resolvable.
 ```diff
 --- before inlining
 +++ after  inlining
-@@ -1,4 +1,4 @@
--[ 1] poly@0
-+[ 3] poly@0     [ 2] n@1        [ 1] n@2
- putobject                              6
- putspecialobject                       3
- setconstant                            :SCALE
-@@ -19,8 +19,7 @@
- opt_getconstant_path                   <ic:1 SCALE>
+@@ -37,6 +37,7 @@
+ opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
+ leave
+ == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
++[ 2] n@0        [ 1] n@1
+ opt_getconstant_path                   <ic:0 SCALE>
  putobject                              6
  opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
--branchunless                           46
--getlocal_WC_0                          poly@0
-+branchunless                           61
+@@ -40,8 +41,7 @@
+ opt_getconstant_path                   <ic:0 SCALE>
+ putobject                              6
+ opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
+-branchunless                           14
+-putself
++branchunless                           30
  putobject                              42
- opt_send_without_block                 <calldata!mid:compute, argc:1, ARGS_SIMPLE>
+ opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
  leave
-@@ -22,7 +21,16 @@
- branchunless                           46
- getlocal_WC_0                          poly@0
+@@ -43,7 +43,16 @@
+ branchunless                           14
+ putself
  putobject                              42
--opt_send_without_block                 <calldata!mid:compute, argc:1, ARGS_SIMPLE>
+-opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
++setlocal_WC_0                          n@0
++getlocal_WC_0                          n@0
++putobject                              2
++opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
++opt_getconstant_path                   <ic:1 SCALE>
++opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
++putobject                              12
++opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
++putobject_INT2FIX_0_
++opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
+ leave
+ putself                                                          (  13)
+ putobject_INT2FIX_0_
+@@ -45,7 +54,6 @@
+ putobject                              42
+ opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+ leave
+-putself                                                          (  13)
+ putobject_INT2FIX_0_
+ opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+ leave
+@@ -47,6 +55,15 @@
+ leave
+ putself                                                          (  13)
+ putobject_INT2FIX_0_
+-opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
 +setlocal_WC_0                          n@1
 +getlocal_WC_0                          n@1
 +putobject                              2
@@ -70,34 +103,54 @@ Replace `send` with the callee's body when the receiver is resolvable.
 +putobject_INT2FIX_0_
 +opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
  leave
- getlocal_WC_0                          poly@0
- putobject_INT2FIX_0_
-@@ -24,7 +32,6 @@
- putobject                              42
- opt_send_without_block                 <calldata!mid:compute, argc:1, ARGS_SIMPLE>
- leave
+ 
+```
+
+### `dead_stash_elim`
+
+Drop `setlocal X; getlocal X` pairs whose slot has no other refs.
+
+```diff
+--- before dead_stash_elim
++++ after  dead_stash_elim
+@@ -15,9 +15,7 @@
+ opt_send_without_block                 <calldata!mid:new, argc:0, ARGS_SIMPLE>
+ swap
+ pop
+-setlocal_WC_0                          poly@0
 -getlocal_WC_0                          poly@0
- putobject_INT2FIX_0_
- opt_send_without_block                 <calldata!mid:compute, argc:1, ARGS_SIMPLE>
- leave
-@@ -26,7 +33,16 @@
- leave
- getlocal_WC_0                          poly@0
- putobject_INT2FIX_0_
--opt_send_without_block                 <calldata!mid:compute, argc:1, ARGS_SIMPLE>
-+setlocal_WC_0                          n@2
-+getlocal_WC_0                          n@2
-+putobject                              2
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-+opt_getconstant_path                   <ic:3 SCALE>
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-+putobject                              12
-+opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
-+putobject_INT2FIX_0_
-+opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
+-opt_send_without_block                 <calldata!mid:run, argc:0, ARGS_SIMPLE>
++opt_send_without_block                 <calldata!mid:run, argc:0, ARGS_SIMPLE>(  18)
  leave
  == block: <class:Polynomial
  definemethod                           :compute, compute
+@@ -41,7 +39,7 @@
+ opt_getconstant_path                   <ic:0 SCALE>
+ putobject                              6
+ opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
+-branchunless                           30
++branchunless                           26
+ putobject                              42
+ setlocal_WC_0                          n@0
+ getlocal_WC_0                          n@0
+@@ -43,8 +41,6 @@
+ opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
+ branchunless                           30
+ putobject                              42
+-setlocal_WC_0                          n@0
+-getlocal_WC_0                          n@0
+ putobject                              2
+ opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
+ opt_getconstant_path                   <ic:1 SCALE>
+@@ -55,8 +51,6 @@
+ opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
+ leave
+ putobject_INT2FIX_0_
+-setlocal_WC_0                          n@1
+-getlocal_WC_0                          n@1
+ putobject                              2
+ opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
+ opt_getconstant_path                   <ic:2 SCALE>
 ```
 
 ### `const_fold_tier2`
@@ -107,41 +160,7 @@ Rewrite frozen top-level constant references to their literal values.
 ```diff
 --- before const_fold_tier2
 +++ after  const_fold_tier2
-@@ -16,7 +16,6 @@
- swap
- pop
- setlocal_WC_0                          poly@0
--opt_getconstant_path                   <ic:1 SCALE>
- putobject                              6
- opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
- branchunless                           61
-@@ -18,6 +17,7 @@
- setlocal_WC_0                          poly@0
- opt_getconstant_path                   <ic:1 SCALE>
- putobject                              6
-+putobject                              6
- opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
- branchunless                           61
- putobject                              42
-@@ -25,7 +25,7 @@
- getlocal_WC_0                          n@1
- putobject                              2
- opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
--opt_getconstant_path                   <ic:2 SCALE>
-+putobject                              6
- opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
- putobject                              12
- opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
-@@ -37,7 +37,7 @@
- getlocal_WC_0                          n@2
- putobject                              2
- opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
--opt_getconstant_path                   <ic:3 SCALE>
-+putobject                              6
- opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
- putobject                              12
- opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
-@@ -53,7 +53,7 @@
+@@ -27,7 +27,7 @@
  getlocal_WC_0                          n@0
  putobject                              2
  opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[CcCr]
@@ -150,6 +169,40 @@ Rewrite frozen top-level constant references to their literal values.
  opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[CcCr]
  putobject                              12
  opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[CcCr]
+@@ -36,7 +36,6 @@
+ leave
+ == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
+ [ 2] n@0        [ 1] n@1
+-opt_getconstant_path                   <ic:0 SCALE>
+ putobject                              6
+ opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
+ branchunless                           26
+@@ -38,6 +37,7 @@
+ [ 2] n@0        [ 1] n@1
+ opt_getconstant_path                   <ic:0 SCALE>
+ putobject                              6
++putobject                              6
+ opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
+ branchunless                           26
+ putobject                              42
+@@ -43,7 +43,7 @@
+ putobject                              42
+ putobject                              2
+ opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-opt_getconstant_path                   <ic:1 SCALE>
++putobject                              6
+ opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
+ putobject                              12
+ opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
+@@ -53,7 +53,7 @@
+ putobject_INT2FIX_0_
+ putobject                              2
+ opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-opt_getconstant_path                   <ic:2 SCALE>
++putobject                              6
+ opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
+ putobject                              12
+ opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
 ```
 
 ### `const_fold`
@@ -159,17 +212,15 @@ Fold literal-operand operations (Tier 1).
 ```diff
 --- before const_fold
 +++ after  const_fold
-@@ -16,34 +16,32 @@
- swap
- pop
- setlocal_WC_0                          poly@0
+@@ -36,28 +36,10 @@
+ leave
+ == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
+ [ 2] n@0        [ 1] n@1
 -putobject                              6
 -putobject                              6
 -opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
--branchunless                           61
+-branchunless                           26
 -putobject                              42
--setlocal_WC_0                          n@1
--getlocal_WC_0                          n@1
 -putobject                              2
 -opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
 -putobject                              6
@@ -180,8 +231,6 @@ Fold literal-operand operations (Tier 1).
 -opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
 -leave
 -putobject_INT2FIX_0_
--setlocal_WC_0                          n@2
--getlocal_WC_0                          n@2
 -putobject                              2
 -opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
 -putobject                              6
@@ -192,34 +241,12 @@ Fold literal-operand operations (Tier 1).
 -opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
 -leave
 +putobject                              true
-+branchunless                           57[Li]
-+putobject                              42[Li]
-+setlocal_WC_0                          n@1[Li]
-+getlocal_WC_0                          n@1[Li]
-+putobject                              2[Li]
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
-+putobject                              6[Li]
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
-+putobject                              12[Li]
-+opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[Li]
-+putobject_INT2FIX_0_                   [Li]
-+opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[Li]
-+leave                                  [Li]
-+putobject_INT2FIX_0_                   [Li]
-+setlocal_WC_0                          n@2[Li]
-+getlocal_WC_0                          n@2[Li]
-+putobject                              2[Li]
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
-+putobject                              6[Li]
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
-+putobject                              12[Li]
-+opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[Li]
-+putobject_INT2FIX_0_                   [Li]
-+opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[Li]
-+leave                                  [Li]
- == block: <class:Polynomial
- definemethod                           :compute, compute
- putobject                              :compute
++branchunless                           7[LiCa]
++putobject                              42[LiCa]
++leave                                  [LiCa]
++putobject_INT2FIX_0_                   [LiCa]
++leave                                  [LiCa]
+ 
 ```
 
 ### `identity_elim`
@@ -237,63 +264,21 @@ Collapse `<literal>; branch*` into `jump` (taken) or a drop (not taken).
 ```diff
 --- before dead_branch_fold
 +++ after  dead_branch_fold
-@@ -16,32 +16,30 @@
- swap
- pop
- setlocal_WC_0                          poly@0
+@@ -36,10 +36,8 @@
+ leave
+ == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
+ [ 2] n@0        [ 1] n@1
 -putobject                              true
--branchunless                           57[Li]
--putobject                              42[Li]
--setlocal_WC_0                          n@1[Li]
--getlocal_WC_0                          n@1[Li]
--putobject                              2[Li]
--opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
--putobject                              6[Li]
--opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
--putobject                              12[Li]
--opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[Li]
--putobject_INT2FIX_0_                   [Li]
--opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[Li]
--leave                                  [Li]
--putobject_INT2FIX_0_                   [Li]
--setlocal_WC_0                          n@2[Li]
--getlocal_WC_0                          n@2[Li]
--putobject                              2[Li]
--opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
--putobject                              6[Li]
--opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[Li]
--putobject                              12[Li]
--opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[Li]
--putobject_INT2FIX_0_                   [Li]
--opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[Li]
--leave                                  [Li]
+-branchunless                           7[LiCa]
+-putobject                              42[LiCa]
+-leave                                  [LiCa]
+-putobject_INT2FIX_0_                   [LiCa]
+-leave                                  [LiCa]
 +putobject                              42                        (  13)
-+setlocal_WC_0                          n@1
-+getlocal_WC_0                          n@1
-+putobject                              2
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-+putobject                              6
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-+putobject                              12
-+opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
-+putobject_INT2FIX_0_
-+opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
 +leave
 +putobject_INT2FIX_0_
-+setlocal_WC_0                          n@2
-+getlocal_WC_0                          n@2
-+putobject                              2
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-+putobject                              6
-+opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
-+putobject                              12
-+opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>
-+putobject_INT2FIX_0_
-+opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
 +leave
- == block: <class:Polynomial
- definemethod                           :compute, compute
- putobject                              :compute
+ 
 ```
 
 ## Appendix: full iseq dumps
@@ -301,7 +286,7 @@ Collapse `<literal>; branch*` into `jump` (taken) or a drop (not taken).
 ### Before (no optimization)
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/polynomial.rb:3 (3,0)-(13,60)>
+== disasm: #<ISeq:<compiled>@/w/examples/polynomial.rb:3 (3,0)-(18,8)>
 local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] poly@0
 0000 putobject                              6                         (   3)[Li]
@@ -311,7 +296,7 @@ local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0008 putnil
 0009 defineclass                            :Polynomial, <class:Polynomial>, 0
 0013 pop
-0014 opt_getconstant_path                   <ic:0 Polynomial>         (  12)[Li]
+0014 opt_getconstant_path                   <ic:0 Polynomial>         (  17)[Li]
 0016 putnil
 0017 swap
 0018 opt_new                                <calldata!mid:new, argc:0, ARGS_SIMPLE>, 25
@@ -321,23 +306,15 @@ local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0027 swap
 0028 pop
 0029 setlocal_WC_0                          poly@0
-0031 opt_getconstant_path                   <ic:1 SCALE>              (  13)[Li]
-0033 putobject                              6
-0035 opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
-0037 branchunless                           46
-0039 getlocal_WC_0                          poly@0
-0041 putobject                              42
-0043 opt_send_without_block                 <calldata!mid:compute, argc:1, ARGS_SIMPLE>
-0045 leave
-0046 getlocal_WC_0                          poly@0
-0048 putobject_INT2FIX_0_
-0049 opt_send_without_block                 <calldata!mid:compute, argc:1, ARGS_SIMPLE>
-0051 leave
+0031 getlocal_WC_0                          poly@0                    (  18)[Li]
+0033 opt_send_without_block                 <calldata!mid:run, argc:0, ARGS_SIMPLE>
+0035 leave
 
-== disasm: #<ISeq:<class:Polynomial>@/w/examples/polynomial.rb:5 (5,0)-(10,3)>
+== disasm: #<ISeq:<class:Polynomial>@/w/examples/polynomial.rb:5 (5,0)-(15,3)>
 0000 definemethod                           :compute, compute         (   7)[LiCl]
-0003 putobject                              :compute
-0005 leave                                                            (  10)[En]
+0003 definemethod                           :run, run                 (  12)[Li]
+0006 putobject                              :run
+0008 leave                                                            (  15)[En]
 
 == disasm: #<ISeq:compute@/w/examples/polynomial.rb:7 (7,2)-(9,5)>
 local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
@@ -352,14 +329,28 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0014 putobject_INT2FIX_0_
 0015 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
 0017 leave                                                            (   9)[Re]
+
+== disasm: #<ISeq:run@/w/examples/polynomial.rb:12 (12,2)-(14,5)>
+0000 opt_getconstant_path                   <ic:0 SCALE>              (  13)[LiCa]
+0002 putobject                              6
+0004 opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
+0006 branchunless                           14
+0008 putself
+0009 putobject                              42
+0011 opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+0013 leave                                                            (  14)[Re]
+0014 putself                                                          (  13)
+0015 putobject_INT2FIX_0_
+0016 opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+0018 leave                                                            (  14)[Re]
 ```
 
 ### After full `Pipeline.default`
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/polynomial.rb:3 (3,0)-(13,60)>
-local table (size: 3, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
-[ 3] poly@0     [ 2] n@1        [ 1] n@2
+== disasm: #<ISeq:<compiled>@/w/examples/polynomial.rb:3 (3,0)-(18,8)>
+local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
+[ 1] poly@0
 0000 putobject                              6                         (   3)[Li]
 0002 putspecialobject                       3
 0004 setconstant                            :SCALE
@@ -367,7 +358,7 @@ local table (size: 3, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0008 putnil
 0009 defineclass                            :Polynomial, <class:Polynomial>, 0
 0013 pop
-0014 opt_getconstant_path                   <ic:0 Polynomial>         (  12)[Li]
+0014 opt_getconstant_path                   <ic:0 Polynomial>         (  17)[Li]
 0016 putnil
 0017 swap
 0018 opt_new                                <calldata!mid:new, argc:0, ARGS_SIMPLE>, 25
@@ -376,22 +367,28 @@ local table (size: 3, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0025 opt_send_without_block                 <calldata!mid:new, argc:0, ARGS_SIMPLE>
 0027 swap
 0028 pop
-0029 setlocal_WC_0                          poly@0
-0031 putobject                              42                        (  13)
-0033 leave
-0034 putobject_INT2FIX_0_
-0035 leave
+0029 opt_send_without_block                 <calldata!mid:run, argc:0, ARGS_SIMPLE>(  18)
+0031 leave
 
-== disasm: #<ISeq:<class:Polynomial>@/w/examples/polynomial.rb:5 (5,0)-(10,3)>
+== disasm: #<ISeq:<class:Polynomial>@/w/examples/polynomial.rb:5 (5,0)-(15,3)>
 0000 definemethod                           :compute, compute         (   7)[LiCl]
-0003 putobject                              :compute
-0005 leave                                                            (  10)[En]
+0003 definemethod                           :run, run                 (  12)[Li]
+0006 putobject                              :run
+0008 leave                                                            (  15)[En]
 
 == disasm: #<ISeq:compute@/w/examples/polynomial.rb:7 (7,2)-(9,5)>
 local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] n@0<Arg>
 0000 getlocal_WC_0                          n@0                       (   8)[LiCa]
 0002 leave                                  [LiCa]
+
+== disasm: #<ISeq:run@/w/examples/polynomial.rb:12 (12,2)-(14,5)>
+local table (size: 2, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
+[ 2] n@0        [ 1] n@1
+0000 putobject                              42                        (  13)
+0002 leave
+0003 putobject_INT2FIX_0_
+0004 leave
 ```
 
 ## Raw benchmark output
@@ -399,15 +396,15 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-               plain     2.080M i/100ms
+               plain     1.623M i/100ms
 Calculating -------------------------------------
-               plain     20.752M (± 1.6%) i/s   (48.19 ns/i) -    104.009M in   5.013148s
+               plain     16.524M (± 2.1%) i/s   (60.52 ns/i) -     82.764M in   5.010996s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-           optimized     2.475M i/100ms
+           optimized     3.532M i/100ms
 Calculating -------------------------------------
-           optimized     24.552M (± 1.3%) i/s   (40.73 ns/i) -    123.761M in   5.041640s
+           optimized     35.728M (± 1.4%) i/s   (27.99 ns/i) -    180.143M in   5.043091s
 Comparison:
-  optimized:   24552151.9 i/s
-  plain:   20752489.3 i/s - 1.18x  slower
+  optimized:   35727594.7 i/s
+  plain:   16523702.6 i/s - 2.16x  slower
 ```

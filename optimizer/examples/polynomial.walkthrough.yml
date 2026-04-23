@@ -1,8 +1,9 @@
 fixture: polynomial.rb
 entry_setup: poly = Polynomial.new
-entry_call: if SCALE == 6 then poly.compute(42) else poly.compute(0) end
+entry_call: poly.run
 walkthrough:
   - inlining
+  - dead_stash_elim
   - const_fold_tier2
   - const_fold
   - identity_elim
