@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 require "bundler/setup"
 require "fileutils"
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 require "ruby_opt/demo/claude"
 
 FIXTURE = File.expand_path("../examples/claude_gag.rb", __dir__)
