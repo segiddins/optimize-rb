@@ -65,4 +65,29 @@ class MarkdownRendererTest < Minitest::Test
     )
     assert_match(/2\.00x/, md)
   end
+
+  Bench = Struct.new(:plain_ips, :optimized_ips)
+
+  def test_heading_includes_convergence_when_present
+    bench = Bench.new(1000.0, 1010.0)
+    md = RubyOpt::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: { "compute" => 3 })
+    assert_includes md, "Converged in"
+    assert_includes md, "3 iterations"
+  end
+
+  def test_heading_omits_convergence_when_absent
+    bench = Bench.new(1000.0, 1010.0)
+    md = RubyOpt::Demo::MarkdownRenderer.heading("polynomial", bench, convergence: {})
+    refute_includes md, "Converged"
+  end
+
+  def test_heading_picks_max_iterations_across_functions
+    bench = Bench.new(1000.0, 1010.0)
+    md = RubyOpt::Demo::MarkdownRenderer.heading(
+      "x",
+      bench,
+      convergence: { "<compiled>" => 1, "foo" => 5, "bar" => 2 },
+    )
+    assert_includes md, "5 iterations"
+  end
 end

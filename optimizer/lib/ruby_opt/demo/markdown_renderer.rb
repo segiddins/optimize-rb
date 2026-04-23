@@ -22,7 +22,7 @@ module RubyOpt
       def render(stem:, source:, walkthrough:, snapshots:, bench:)
         prev_norm = DisasmNormalizer.normalize(snapshots.before)
         sections = []
-        sections << heading(stem, bench)
+        sections << heading(stem, bench, convergence: snapshots.convergence || {})
         sections << source_section(source)
         sections << summary_section(bench)
         sections << walkthrough_section(walkthrough, snapshots, prev_norm)
@@ -31,10 +31,19 @@ module RubyOpt
         sections.join("\n\n").rstrip + "\n"
       end
 
-      def heading(stem, bench)
+      def heading(stem, bench, convergence: {})
         ratio = bench.optimized_ips / bench.plain_ips
-        "# #{stem} demo\n\n" \
-          "Pipeline.default: **#{format('%.2f', ratio)}x** vs unoptimized."
+        lines = [
+          "# #{stem} demo",
+          "",
+          "Pipeline.default: **#{format('%.2f', ratio)}x** vs unoptimized.",
+        ]
+        unless convergence.empty?
+          max_iters = convergence.values.max
+          lines << ""
+          lines << "Converged in #{max_iters} iterations (max across functions)."
+        end
+        lines.join("\n")
       end
 
       def source_section(source)

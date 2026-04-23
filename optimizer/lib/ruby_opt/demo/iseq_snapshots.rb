@@ -7,7 +7,7 @@ require "ruby_opt/type_env"
 module RubyOpt
   module Demo
     module IseqSnapshots
-      Result = Struct.new(:before, :after_full, :per_pass, keyword_init: true)
+      Result = Struct.new(:before, :after_full, :per_pass, :convergence, keyword_init: true)
 
       module_function
 
@@ -21,15 +21,20 @@ module RubyOpt
         raise ArgumentError, "unknown pass name(s): #{unknown.inspect}" unless unknown.empty?
 
         before = compile_raw(source, fixture_path)
-        after_full = run_with_passes(source, fixture_path, Pipeline.default.passes)
+        after_full_disasm, after_full_log = run_with_passes(source, fixture_path, Pipeline.default.passes)
 
         per_pass = {}
         walkthrough.each_with_index do |name, idx|
           prefix = walkthrough[0..idx].map { |n| pass_index.fetch(n) }
-          per_pass[name] = run_with_passes(source, fixture_path, prefix)
+          per_pass[name], _ = run_with_passes(source, fixture_path, prefix)
         end
 
-        Result.new(before: before, after_full: after_full, per_pass: per_pass)
+        Result.new(
+          before: before,
+          after_full: after_full_disasm,
+          per_pass: per_pass,
+          convergence: after_full_log.convergence,
+        )
       end
 
       # Compose a synthetic program: the fixture source followed by the
@@ -51,9 +56,9 @@ module RubyOpt
         binary = iseq.to_binary
         ir = Codec.decode(binary)
         type_env = TypeEnv.from_source(source, path)
-        Pipeline.new(passes).run(ir, type_env: type_env)
+        log = Pipeline.new(passes).run(ir, type_env: type_env)
         modified = Codec.encode(ir)
-        RubyVM::InstructionSequence.load_from_binary(modified).disasm
+        [RubyVM::InstructionSequence.load_from_binary(modified).disasm, log]
       end
     end
   end
