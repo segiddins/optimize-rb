@@ -4,7 +4,8 @@ Snapshot of what the original specs (docs/superpowers/specs/2026-04-19-*)
 called for vs. what has actually shipped. Use this as the starting-point
 reference when opening a new session.
 
-Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture; claude gag pass shipped).
+Last updated: 2026-04-23 (pipeline fixed-point iteration shipped — cascades
+across passes now automatic, phase-ordering concerns retired wholesale).
 
 ## Three-pass plan: status
 
@@ -117,12 +118,25 @@ Last updated: 2026-04-23 (codec signed OFFSET + sum_of_squares fixture; claude g
    **Shipped 2026-04-28.** Plan: `docs/superpowers/plans/2026-04-28-env-taint-classifier-v2.md`.
 7. ~~**Tier 4 fold — `ENV.fetch("LIT")` with literal key.**~~
    **Shipped 2026-04-27.** Plan: `docs/superpowers/plans/2026-04-27-env-fetch-literal-key.md`.
-8. **IdentityElim v2 — absorbing zero.** `x*0 → 0`, `0*x → 0`,
+8. ~~**Pipeline fixed-point iteration.** Retires the phase-ordering
+   class of bugs surfaced by the polynomial demo. Wraps `Pipeline#run`'s
+   per-function body in a loop over iterative passes until
+   `log.rewrite_count` stabilises; one-shot passes (InliningPass) run
+   exactly once; cap of 8 iterations; raises `FixedPointOverflow` on
+   overshoot.~~ **Shipped 2026-04-23.** Spec:
+   `docs/superpowers/specs/2026-04-23-pipeline-fixed-point-iteration-design.md`.
+   Plan: `docs/superpowers/plans/2026-04-23-pipeline-fixed-point-iteration.md`.
+   Polynomial demo now converges in 3 iterations; arith_reassoc slide
+   gains a real diff (`n * 2 * 6 / 12 → n * 12 / 12`). Walkthrough
+   headers now include a `Converged in N iterations (max across
+   functions)` line. Talk §4 gains a principled-convergence story
+   instead of "we hand-tuned the order."
+9. **IdentityElim v2 — absorbing zero.** `x*0 → 0`, `0*x → 0`,
    `0/x → 0`. Extends v1 cleanly; `SAFE_PRODUCER_OPCODES` earns its
    keep. `0/x` needs the same ZeroDivisionError guard Tier 1 already
    has. Self-ops (`x-x → 0`, `x/x → 1`) need operand-equality and —
    for `x/x` — an `x≠0` argument; defer self-ops.
-9. **ArithReassoc v3.1 — leading-negative emission.**
+10. **ArithReassoc v3.1 — leading-negative emission.**
    `1 - x + 2 → 3 - x`. Currently skipped via `:no_positive_nonliteral`.
    Self-contained, small.
 
@@ -147,17 +161,17 @@ self-contained fix; none is a talk blocker.
   the stash and the next write. Would unlock Tier 1 cascading across
   inlined arguments — the polynomial demo's arithmetic would collapse.
 
-- **ArithReassoc runs before Tier 2 / Inlining expose literal
-  operands.** Pipeline.default order is `inlining → arith_reassoc →
-  tier2 → … → tier1`. On the polynomial fixture, by the time Tier 2
-  rewrites `SCALE` to `6`, arith_reassoc has already walked the
-  chain and given up (it saw `42 * 2 * <getconstant> / 12`, couldn't
-  reassociate across the non-literal). Fix option A: run
-  arith_reassoc twice — once pre-Tier 2, once post-Tier 2 (and
-  post-inlining). Option B: move arith_reassoc to after Tier 2 in
-  Pipeline.default. Option B is probably right — it's strictly more
-  informed. Check whether any existing test relies on the current
-  order before swapping.
+- ~~**ArithReassoc runs before Tier 2 / Inlining expose literal
+  operands.**~~ **Retired 2026-04-23** by `Pipeline#run`'s per-function
+  fixed-point loop over iterative passes. `arith_reassoc` still runs
+  before Tier 2 on iteration 1, sees a non-literal in the chain, and
+  gives up; iteration 2 runs after Tier 2 has folded `SCALE → 6`, and
+  the chain collapses (`n * 2 * 6 / 12 → n * 12 / 12`). Polynomial demo
+  converges in 3 iterations. Spec:
+  `docs/superpowers/specs/2026-04-23-pipeline-fixed-point-iteration-design.md`.
+  Plan: `docs/superpowers/plans/2026-04-23-pipeline-fixed-point-iteration.md`.
+  The fix generalises: any future pass pair with the same shape of
+  phase-ordering issue converges automatically.
 
 - **IdentityElim doesn't fire on `n + 0` when the `0` is
   `putobject_INT2FIX_0_` after a multi-instruction producer.** On
