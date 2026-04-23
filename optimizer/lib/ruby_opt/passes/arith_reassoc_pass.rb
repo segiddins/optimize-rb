@@ -317,8 +317,8 @@ module RubyOpt
 
         range = chain[:first_idx]..chain[:end_idx]
         function.splice_instructions!(range, replacement)
-        log.skip(pass: :arith_reassoc, reason: :reassociated,
-                 file: function.path, line: chain_line)
+        log.rewrite(pass: :arith_reassoc, reason: :reassociated,
+                    file: function.path, line: chain_line)
         true
       end
 
@@ -384,8 +384,8 @@ module RubyOpt
 
         range = chain[:first_idx]..chain[:end_idx]
         function.splice_instructions!(range, replacement)
-        log.skip(pass: :arith_reassoc, reason: :reassociated,
-                 file: function.path, line: chain_line)
+        log.rewrite(pass: :arith_reassoc, reason: :reassociated,
+                    file: function.path, line: chain_line)
         true
       end
 
