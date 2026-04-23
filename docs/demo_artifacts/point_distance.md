@@ -1,6 +1,8 @@
 # point_distance demo
 
-Pipeline.default: **0.99x** vs unoptimized.
+Pipeline.default: **1.00x** vs unoptimized.
+
+Converged in 1 iterations (max across functions).
 
 ## Source
 
@@ -29,8 +31,8 @@ end
 
 ```
 Comparison:
-  plain:   17943672.8 i/s
-  optimized:   17754902.8 i/s - 1.01x  slower
+  plain:   18063465.3 i/s
+  optimized:   18049266.5 i/s - 1.00x  slower
 ```
 
 ## Walkthrough
@@ -264,15 +266,15 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-               plain     1.802M i/100ms
+               plain     1.801M i/100ms
 Calculating -------------------------------------
-               plain     17.944M (± 1.6%) i/s   (55.73 ns/i) -     90.097M in   5.022489s
+               plain     18.063M (± 1.9%) i/s   (55.36 ns/i) -     91.868M in   5.087853s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-           optimized     1.814M i/100ms
+           optimized     1.725M i/100ms
 Calculating -------------------------------------
-           optimized     17.755M (± 2.0%) i/s   (56.32 ns/i) -     88.876M in   5.007854s
+           optimized     18.049M (± 1.6%) i/s   (55.40 ns/i) -     91.445M in   5.067772s
 Comparison:
-  plain:   17943672.8 i/s
-  optimized:   17754902.8 i/s - 1.01x  slower
+  plain:   18063465.3 i/s
+  optimized:   18049266.5 i/s - 1.00x  slower
 ```

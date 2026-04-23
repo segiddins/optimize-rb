@@ -1,6 +1,8 @@
 # polynomial demo
 
-Pipeline.default: **1.09x** vs unoptimized.
+Pipeline.default: **1.11x** vs unoptimized.
+
+Converged in 3 iterations (max across functions).
 
 ## Source
 
@@ -23,8 +25,8 @@ end
 
 ```
 Comparison:
-  optimized:   23593963.0 i/s
-  plain:   21680709.0 i/s - 1.09x  slower
+  optimized:   23612977.0 i/s
+  plain:   21343689.4 i/s - 1.11x  slower
 ```
 
 ## Walkthrough
@@ -428,15 +430,15 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-               plain     2.188M i/100ms
+               plain     2.158M i/100ms
 Calculating -------------------------------------
-               plain     21.681M (± 2.1%) i/s   (46.12 ns/i) -    109.394M in   5.048020s
+               plain     21.344M (± 2.9%) i/s   (46.85 ns/i) -    107.911M in   5.060835s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
 Warming up --------------------------------------
-           optimized     2.328M i/100ms
+           optimized     2.364M i/100ms
 Calculating -------------------------------------
-           optimized     23.594M (± 1.5%) i/s   (42.38 ns/i) -    118.715M in   5.032776s
+           optimized     23.613M (± 1.9%) i/s   (42.35 ns/i) -    118.213M in   5.008081s
 Comparison:
-  optimized:   23593963.0 i/s
-  plain:   21680709.0 i/s - 1.09x  slower
+  optimized:   23612977.0 i/s
+  plain:   21343689.4 i/s - 1.11x  slower
 ```
