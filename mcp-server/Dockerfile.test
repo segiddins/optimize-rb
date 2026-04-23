@@ -1,7 +1,15 @@
 FROM ruby:4.0.2-slim
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-    build-essential git docker.io ca-certificates \
+    build-essential git docker.io ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install the Claude Code CLI (for the §7 gag pass demo driver — see
+# optimizer/lib/ruby_opt/demo/claude.rb). The native installer script
+# drops the binary under /root/.local/bin.
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.local/bin:${PATH}"
+RUN claude --version
+
 WORKDIR /w
 COPY Gemfile Gemfile.lock* ./
 RUN bundle config set --local path vendor/bundle && bundle install
