@@ -72,8 +72,8 @@ module RubyOpt
         # (Encoding, coercion) are not worth the risk for a talk demo.
         if av.is_a?(String) && bv.is_a?(String) && (op.opcode == :opt_eq || op.opcode == :opt_neq)
           result = av.public_send(sym, bv)
-          log.skip(pass: :const_fold, reason: :folded,
-                   file: function.path, line: (op.line || a.line || function.first_lineno))
+          log.rewrite(pass: :const_fold, reason: :folded,
+                      file: function.path, line: (op.line || a.line || function.first_lineno))
           return LiteralValue.emit(result, line: a.line, object_table: object_table)
         end
 
@@ -91,8 +91,8 @@ module RubyOpt
         end
 
         result = av.public_send(sym, bv)
-        log.skip(pass: :const_fold, reason: :folded,
-                 file: function.path, line: (op.line || a.line || function.first_lineno))
+        log.rewrite(pass: :const_fold, reason: :folded,
+                    file: function.path, line: (op.line || a.line || function.first_lineno))
         LiteralValue.emit(result, line: a.line, object_table: object_table)
       rescue ZeroDivisionError
         log.skip(pass: :const_fold, reason: :would_raise,
