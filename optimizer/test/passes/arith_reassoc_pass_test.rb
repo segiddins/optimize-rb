@@ -692,6 +692,116 @@ class ArithReassocPassTest < Minitest::Test
     assert_equal 14, loaded_opt.eval
   end
 
+  # Regression guard for the `commutative: true` flag on the mult/div group:
+  # the walker must pool literals across a same-op non-literal. If someone
+  # flips the flag to false (or reintroduces the "always commit before
+  # non-literal" shortcut that would have served mod directly), this test
+  # fails with `6 * x * 4` instead of `x * 24`.
+  def test_opt_mult_pools_literals_across_same_op_non_literal
+    src = "def f(x); 2 * 3 * x * 4; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mult },
+      "expected a single opt_mult after pooling 2*3 and *4 across the non-literal x"
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 24 },
+      "expected literal 24 (= 2*3*4) after cross-non-literal pooling"
+    refute f.instructions.any? { |i| [2, 3, 4, 6].include?(RubyOpt::Passes::LiteralValue.read(i, object_table: ot)) },
+      "none of 2/3/4/6 should survive — all should collapse into 24"
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal (2 * 3 * 5 * 4), loaded.eval
+    assert_equal 120, loaded.eval
+  end
+
+  # ---- opt_mod ---------------------------------------------------------
+
+  def test_opt_mod_prefix_two_literals_folds
+    src = "def f(x); 7 % 3 % x; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mod }
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 1 }
+    refute f.instructions.any? { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 7 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal (7 % 3 % 5), loaded.eval
+    assert_equal 1, loaded.eval
+  end
+
+  def test_opt_mod_prefix_three_literals_folds
+    src = "def f(x); 10 % 7 % 3 % x; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert_equal 1, f.instructions.count { |i| i.opcode == :opt_mod }
+    # 10 % 7 % 3 = 3 % 3 = 0
+    refute_nil f.instructions.find { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) == 0 }
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal (10 % 7 % 3 % 5), loaded.eval
+    assert_equal 0, loaded.eval
+  end
+
+  def test_opt_mod_no_prefix_is_left_alone
+    src = "def f(x); x % 7 % 3; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert_equal before, f.instructions.map(&:opcode),
+      "x % 7 % 3 must not fold — (y%7)%3 ≠ y%3 in general"
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal (5 % 7 % 3), loaded.eval
+    assert_equal 2, loaded.eval
+  end
+
+  def test_opt_mod_post_non_literal_does_not_fold_accumulator
+    # 7 % 3 % x % 2: the leading `7 % 3 → 1` folds, but after the non-literal
+    # x we cannot combine future literals with the accumulator.
+    src = "def f(x); 7 % 3 % x % 2; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    assert_equal 2, f.instructions.count { |i| i.opcode == :opt_mod },
+      "expected 1 % x % 2 — two opt_mods after folding the prefix"
+    lit_values = f.instructions.map { |i| RubyOpt::Passes::LiteralValue.read(i, object_table: ot) }.compact
+    assert_includes lit_values, 1
+    assert_includes lit_values, 2
+    refute_includes lit_values, 7
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal (7 % 3 % 5 % 2), loaded.eval
+  end
+
+  def test_opt_mod_zero_divisor_is_skipped
+    src = "def f(x); 10 % 0 % x; end"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    before = f.instructions.map(&:opcode)
+    log = RubyOpt::Log.new
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: log, object_table: ot)
+    assert_equal before, f.instructions.map(&:opcode),
+      "must not fold a chain containing a zero mod divisor (ZeroDivisionError preservation)"
+  end
+
+  def test_opt_mod_does_not_cross_into_multiplicative_group
+    # `2 * 3 % 6 * x` — the `%` is not in the mult/div group, so the mult
+    # group's chain detector should bail at the `%` boundary.
+    src = "def f(x); 2 * 3 % 6 * x; end; f(5)"
+    ir = RubyOpt::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    f = find_iseq(ir, "f")
+    RubyOpt::Passes::ArithReassocPass.new.apply(f, type_env: nil, log: RubyOpt::Log.new, object_table: ot)
+    loaded = RubyVM::InstructionSequence.load_from_binary(RubyOpt::Codec.encode(ir))
+    assert_equal (2 * 3 % 6 * 5), loaded.eval
+  end
+
   private
 
   def find_iseq(ir, name)

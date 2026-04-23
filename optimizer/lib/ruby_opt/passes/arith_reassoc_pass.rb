@@ -22,9 +22,31 @@ module RubyOpt
       #               :ordered walks the chain left-to-right with a single
       #               literal accumulator, used when the group contains a
       #               non-commutative op like opt_div.
+      #   associative:
+      #               true:  same-op literal runs fold anywhere in the chain.
+      #                      Sound when `(a op b) op c = a op (b op c)` — e.g.
+      #                      `*` on Integer, and `/` on positive Integer (via
+      #                      the `a/b/c = a/(b*c)` identity using the primary
+      #                      op's combiner `:*`).
+      #               false: same-op literal runs fold ONLY in the pure-literal
+      #                      prefix, before any non-literal has been emitted.
+      #                      Required for `%`: `(y%b)%c ≠ y%b` in general, so
+      #                      `x % 7 % 3` must NOT fold, only `7 % 3 % x → 1%x`.
+      #   commutative:
+      #               true:  the walker can keep accumulating literals past a
+      #                      same-op non-literal (`2*3*x*4 → x*24`). Sound for
+      #                      `*` (commutative) and `/` on positive Integer
+      #                      (`(a/b)/c = (a/c)/b`).
+      #               false: commit the pending literal accumulator before
+      #                      emitting any non-literal. Required for `%`, which
+      #                      neither commutes nor satisfies a cross-non-literal
+      #                      identity.
       REASSOC_GROUPS = [
         { ops: { opt_plus: :+, opt_minus: :- }, identity: 0, primary_op: :opt_plus, kind: :abelian },
-        { ops: { opt_mult: :*, opt_div: :/    }, identity: 1, primary_op: :opt_mult, kind: :ordered },
+        { ops: { opt_mult: :*, opt_div: :/    }, identity: 1, primary_op: :opt_mult, kind: :ordered,
+          associative: true,  commutative: true },
+        { ops: { opt_mod:  :% },                identity: nil, primary_op: :opt_mod,  kind: :ordered,
+          associative: false, commutative: false },
       ].freeze
 
       # ObjectTable#intern accepts integers with bit_length < 62
@@ -176,8 +198,10 @@ module RubyOpt
 
         chain_line = insts[chain[:op_positions].first[:idx]].line || function.first_lineno
 
-        # Pre-scan 1: unsafe divisor (0, negative, or non-Integer literal on a /).
-        if stream.any? { |e| e[:op] == :opt_div && e[:is_literal] && !(e[:value].is_a?(Integer) && e[:value] > 0) }
+        # Pre-scan 1: unsafe divisor (0, negative, or non-Integer literal on a
+        # / or %). Both opt_div and opt_mod raise ZeroDivisionError on 0; we
+        # also reject negatives/non-Integer to keep the identity proofs simple.
+        if stream.any? { |e| %i[opt_div opt_mod].include?(e[:op]) && e[:is_literal] && !(e[:value].is_a?(Integer) && e[:value] > 0) }
           log.skip(pass: :arith_reassoc, reason: :unsafe_divisor,
                    file: function.path, line: chain_line)
           return false
@@ -210,26 +234,39 @@ module RubyOpt
           acc_op = nil
         end
 
+        # The same-op literal run combiner is the primary op's method. For the
+        # mult/div group this is `:*` (since `a/b/c = a/(b*c)`); for the mod
+        # group it is `:%` (left-applied, and only in the literal prefix).
+        run_combiner = group[:ops].fetch(group[:primary_op])
+        associative = group.fetch(:associative, true)
+        commutative = group.fetch(:commutative, true)
+
         stream.each do |e|
           if e[:is_literal]
             if acc.nil?
               acc = e[:value]
               acc_op = e[:op]
-            elsif acc_op == e[:op]
-              # Same-op literal run: multiply into the accumulator.
-              acc = acc * e[:value]
+            elsif acc_op == e[:op] && (associative || emitted.empty?)
+              # Same-op literal run: combine into the accumulator using the
+              # group's run combiner. For non-associative groups this branch
+              # is gated on `emitted.empty?` — once a non-literal has been
+              # emitted, `(y op lit1) op lit2 ≠ y op (lit1 combiner lit2)`
+              # and we must commit each literal on its own.
+              acc = acc.send(run_combiner, e[:value])
             else
-              # *<->/ boundary between literals: commit and start fresh.
+              # Cross-op boundary between literals, or post-non-literal run in
+              # a non-associative group: commit and start fresh.
               commit.call
               acc = e[:value]
               acc_op = e[:op]
             end
           else
-            # Non-literal. If the op matches the current accumulator's op,
-            # we can keep accumulating after this non-literal (within the same
-            # op-run). If the op differs, we've crossed a boundary — commit
-            # the pending accumulator first.
-            if !acc.nil? && acc_op != e[:op]
+            # Non-literal. For commutative groups we can keep accumulating
+            # past a same-op non-literal (so `2*3*x*4 → x*24`); we only need
+            # to commit when the op differs. For non-commutative groups we
+            # MUST commit any pending accumulator first — otherwise
+            # `7 % 3 % x` would emit as `x % 1` (wrong).
+            if !acc.nil? && (acc_op != e[:op] || !commutative)
               commit.call
             end
             emitted << e
