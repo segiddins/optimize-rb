@@ -1,0 +1,7 @@
+method: sum_of_squares
+cases:
+  - ["sum_of_squares(1)", 1]
+  - ["sum_of_squares(5)", 55]
+  - ["sum_of_squares(10)", 385]
+  - ["sum_of_squares(20)", 2870]
+  - ["sum_of_squares(100)", 338350]

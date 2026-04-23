@@ -2,14 +2,39 @@
 # frozen_string_literal: true
 require "bundler/setup"
 require "fileutils"
+require "yaml"
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 require "ruby_opt/demo/claude"
 
-FIXTURE = File.expand_path("../examples/claude_gag.rb", __dir__)
-OUTPUT  = File.expand_path("../../docs/demo_artifacts/claude_gag.md", __dir__)
+# usage:
+#   bin/demo-claude                # defaults: claude_gag (reads claude_gag.claude_cases.yml)
+#   bin/demo-claude <stem>         # reads optimizer/examples/<stem>.claude_cases.yml
+#
+# Sidecar YAML shape:
+#   method: <method_name>
+#   cases:
+#     - [<ruby source to eval>, <expected integer>]
+#     - ...
 
-FileUtils.mkdir_p(File.dirname(OUTPUT))
-outcome = RubyOpt::Demo::Claude.run(fixture_path: FIXTURE, entry: :answer, expected: 5)
-File.write(OUTPUT, outcome.transcript.render)
-puts "wrote #{OUTPUT}"
+stem = ARGV[0] || "claude_gag"
+
+fixture = File.expand_path("../examples/#{stem}.rb", __dir__)
+sidecar = File.expand_path("../examples/#{stem}.claude_cases.yml", __dir__)
+output  = File.expand_path("../../docs/demo_artifacts/#{stem}.md", __dir__)
+
+abort "fixture not found: #{fixture}" unless File.exist?(fixture)
+abort "sidecar not found: #{sidecar}" unless File.exist?(sidecar)
+
+spec = YAML.safe_load(File.read(sidecar))
+method_name = spec.fetch("method").to_sym
+cases = spec.fetch("cases")
+
+FileUtils.mkdir_p(File.dirname(output))
+outcome = RubyOpt::Demo::Claude.run(
+  fixture_path: fixture,
+  entry:        method_name,
+  cases:        cases,
+)
+File.write(output, outcome.transcript.render)
+puts "wrote #{output}"
 puts "outcome: #{outcome.outcome}"

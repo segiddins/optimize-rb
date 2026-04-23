@@ -1,0 +1,3 @@
+method: answer
+cases:
+  - ["answer", 5]

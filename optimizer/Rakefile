@@ -22,15 +22,25 @@ def mask_nondeterministic(md)
 end
 
 namespace :demo do
-  desc "Regenerate docs/demo_artifacts/claude_gag.md by calling `claude -p`. Non-deterministic; review the diff before committing. Requires ANTHROPIC_API_KEY or a prior `claude setup-token`."
+  desc "Regenerate docs/demo_artifacts/claude_*.md by calling `claude -p` for each claude_*.claude_cases.yml sidecar. Non-deterministic; review the diff before committing. Requires ANTHROPIC_API_KEY or a prior `claude setup-token`. Pass STEM=<name> to regenerate just one."
   task :regenerate_claude do
     unless ENV["ANTHROPIC_API_KEY"] || ENV["CLAUDE_CODE_SSO_TOKEN"]
       warn "Warning: neither ANTHROPIC_API_KEY nor CLAUDE_CODE_SSO_TOKEN is set. " \
            "If `claude setup-token` hasn't been run in this environment, the call will fail."
     end
-    warn "This will overwrite docs/demo_artifacts/claude_gag.md. " \
+    warn "This will overwrite docs/demo_artifacts/claude_*.md. " \
          "Claude's output is non-deterministic — review the diff before committing."
-    sh File.expand_path("bin/demo-claude", __dir__)
+    examples_dir = File.expand_path("examples", __dir__)
+    bin          = File.expand_path("bin/demo-claude", __dir__)
+    stems =
+      if ENV["STEM"]
+        [ENV["STEM"]]
+      else
+        Dir[File.join(examples_dir, "claude_*.claude_cases.yml")]
+          .map { |p| File.basename(p, ".claude_cases.yml") }
+      end
+    abort "no claude_*.claude_cases.yml sidecars found" if stems.empty?
+    stems.each { |s| sh bin, s }
   end
 
   desc "Regenerate demo artifacts and diff against the committed versions"
@@ -59,16 +69,21 @@ namespace :demo do
           mismatches << stem
         end
       end
-      # Claude gag artifact has no sidecar (non-deterministic; regenerated
-      # opt-in via `rake demo:regenerate_claude`). Verify only that the
-      # committed markdown exists and is non-empty.
-      claude_artifact = File.join(committed_dir, "claude_gag.md")
-      unless File.exist?(claude_artifact) && File.size(claude_artifact).positive?
-        mismatches << "claude_gag.md missing or empty"
+      # Claude gag artifacts are non-deterministic (regenerated opt-in via
+      # `rake demo:regenerate_claude`). Verify only that each committed
+      # markdown exists and is non-empty. One per claude_*.claude_cases.yml
+      # sidecar in optimizer/examples.
+      claude_sidecars = Dir[File.join(examples_dir, "claude_*.claude_cases.yml")]
+      claude_sidecars.each do |sc|
+        stem = File.basename(sc, ".claude_cases.yml")
+        artifact = File.join(committed_dir, "#{stem}.md")
+        unless File.exist?(artifact) && File.size(artifact).positive?
+          mismatches << "#{stem}.md missing or empty"
+        end
       end
 
       if mismatches.empty?
-        puts "demo:verify OK (#{sidecars.size} fixtures + claude_gag)"
+        puts "demo:verify OK (#{sidecars.size} fixtures + #{claude_sidecars.size} claude)"
       else
         abort "demo:verify FAILED for: #{mismatches.join(', ')}. " \
               "Re-run `bin/demo --all` and commit the regenerated artifacts."
