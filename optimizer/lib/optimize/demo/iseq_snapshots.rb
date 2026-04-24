@@ -13,6 +13,10 @@ module Optimize
 
       def generate(fixture_path:, walkthrough:, entry_setup: "", entry_call: nil)
         source = build_source(fixture_path, entry_setup, entry_call)
+        # Disasm embeds the path passed to compile; use a stable synthetic
+        # path so artifacts are byte-identical across environments (Docker
+        # vs local filesystem) regardless of where the fixture lives.
+        compile_path = sanitized_path(fixture_path)
 
         pass_index = Pipeline.default.passes.each_with_object({}) do |p, h|
           h[p.name] = p
@@ -20,13 +24,13 @@ module Optimize
         unknown = walkthrough - pass_index.keys
         raise ArgumentError, "unknown pass name(s): #{unknown.inspect}" unless unknown.empty?
 
-        before = compile_raw(source, fixture_path)
-        after_full_disasm, after_full_log = run_with_passes(source, fixture_path, Pipeline.default.passes)
+        before = compile_raw(source, compile_path)
+        after_full_disasm, after_full_log = run_with_passes(source, compile_path, Pipeline.default.passes)
 
         per_pass = {}
         walkthrough.each_with_index do |name, idx|
           prefix = walkthrough[0..idx].map { |n| pass_index.fetch(n) }
-          per_pass[name], _ = run_with_passes(source, fixture_path, prefix)
+          per_pass[name], _ = run_with_passes(source, compile_path, prefix)
         end
 
         Result.new(
@@ -35,6 +39,10 @@ module Optimize
           per_pass: per_pass,
           convergence: after_full_log.convergence,
         )
+      end
+
+      def sanitized_path(fixture_path)
+        "examples/#{File.basename(fixture_path)}"
       end
 
       # Compose a synthetic program: the fixture source followed by the

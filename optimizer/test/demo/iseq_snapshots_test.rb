@@ -19,6 +19,22 @@ class IseqSnapshotsTest < Minitest::Test
     end
   end
 
+  def test_disasm_path_is_sanitized_to_examples_basename
+    # Snapshots must be reproducible across environments (Docker /w/examples
+    # vs a developer's home directory). The disasm embeds the path passed
+    # to RubyVM::InstructionSequence.compile, so the snapshot generator
+    # must use a stable synthetic path rather than the absolute fixture path.
+    with_fixture do |path|
+      snaps = Optimize::Demo::IseqSnapshots.generate(
+        fixture_path: path, walkthrough: [],
+      )
+      assert_includes snaps.before, "examples/fx.rb",
+        "expected stable `examples/<basename>` path in disasm, got:\n#{snaps.before[0, 200]}"
+      refute_includes snaps.before, File.dirname(path),
+        "absolute fixture directory must not leak into disasm output"
+    end
+  end
+
   def test_before_returns_disasm_text
     with_fixture do |path|
       snaps = Optimize::Demo::IseqSnapshots.generate(

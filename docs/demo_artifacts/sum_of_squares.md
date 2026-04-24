@@ -1,6 +1,6 @@
 # sum_of_squares demo
 
-Pipeline.default: **1.01x** vs unoptimized.
+Pipeline.default: **1.00x** vs unoptimized.
 
 Converged in 1 iterations (max across functions).
 
@@ -27,8 +27,8 @@ end
 
 ```
 Comparison:
-  optimized:   785085.3 i/s
-  plain:   774763.0 i/s - 1.01x  slower
+  plain:   794473.1 i/s
+  optimized:   794137.6 i/s - 1.00x  slower
 ```
 
 ## Walkthrough
@@ -86,14 +86,14 @@ Collapse `<literal>; branch*` into `jump` (taken) or a drop (not taken).
 ### Before (no optimization)
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/sum_of_squares.rb:4 (4,0)-(15,19)>
+== disasm: #<ISeq:<compiled>@examples/sum_of_squares.rb:4 (4,0)-(15,19)>
 0000 definemethod                           :sum_of_squares, sum_of_squares(   4)[Li]
 0003 putself                                                          (  15)[Li]
 0004 putobject                              100
 0006 opt_send_without_block                 <calldata!mid:sum_of_squares, argc:1, FCALL|ARGS_SIMPLE>
 0008 leave
 
-== disasm: #<ISeq:sum_of_squares@/w/examples/sum_of_squares.rb:4 (4,0)-(12,3)>
+== disasm: #<ISeq:sum_of_squares@examples/sum_of_squares.rb:4 (4,0)-(12,3)>
 local table (size: 3, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 3] n@0<Arg>   [ 2] s@1        [ 1] i@2
 0000 putobject_INT2FIX_0_                                             (   5)[LiCa]
@@ -127,14 +127,14 @@ local table (size: 3, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ### After full `Pipeline.default`
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/sum_of_squares.rb:4 (4,0)-(15,19)>
+== disasm: #<ISeq:<compiled>@examples/sum_of_squares.rb:4 (4,0)-(15,19)>
 0000 definemethod                           :sum_of_squares, sum_of_squares(   4)[Li]
 0003 putself                                                          (  15)[Li]
 0004 putobject                              100
 0006 opt_send_without_block                 <calldata!mid:sum_of_squares, argc:1, FCALL|ARGS_SIMPLE>
 0008 leave
 
-== disasm: #<ISeq:sum_of_squares@/w/examples/sum_of_squares.rb:4 (4,0)-(12,3)>
+== disasm: #<ISeq:sum_of_squares@examples/sum_of_squares.rb:4 (4,0)-(12,3)>
 local table (size: 3, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 3] n@0<Arg>   [ 2] s@1        [ 1] i@2
 0000 putobject_INT2FIX_0_                                             (   5)[LiCa]
@@ -170,15 +170,15 @@ local table (size: 3, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-               plain    79.533k i/100ms
+               plain    80.297k i/100ms
 Calculating -------------------------------------
-               plain    774.763k (± 2.1%) i/s    (1.29 μs/i) -      3.897M in   5.032337s
+               plain    794.473k (± 2.4%) i/s    (1.26 μs/i) -      4.015M in   5.056364s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-           optimized    78.422k i/100ms
+           optimized    79.978k i/100ms
 Calculating -------------------------------------
-           optimized    785.085k (± 1.7%) i/s    (1.27 μs/i) -      4.000M in   5.095961s
+           optimized    794.138k (± 2.4%) i/s    (1.26 μs/i) -      3.999M in   5.038407s
 Comparison:
-  optimized:   785085.3 i/s
-  plain:   774763.0 i/s - 1.01x  slower
+  plain:   794473.1 i/s
+  optimized:   794137.6 i/s - 1.00x  slower
 ```

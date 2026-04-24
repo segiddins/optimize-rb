@@ -76,14 +76,25 @@ module Optimize
       end
 
       def compose(plain, optimized)
-        faster, slower = [plain, optimized].sort_by(&:ips).reverse
-        ratio = faster.ips / slower.ips
+        ratio = [plain.ips, optimized.ips].max / [plain.ips, optimized.ips].min
+        # Always emit `plain` before `optimized` so demo:verify's per-line
+        # BENCH_LINE_RE mask produces byte-identical output across runs —
+        # which one wins is data-dependent, but the block layout is not.
+        # The slower line carries the ratio suffix.
+        plain_line = "  #{plain.label}:   #{format('%.1f', plain.ips)} i/s"
+        opt_line   = "  #{optimized.label}:   #{format('%.1f', optimized.ips)} i/s"
+        suffix     = " - #{format('%.2f', ratio)}x  slower"
+        if plain.ips <= optimized.ips
+          plain_line += suffix
+        else
+          opt_line += suffix
+        end
         <<~OUT
           #{plain.raw.rstrip}
           #{optimized.raw.rstrip}
           Comparison:
-            #{faster.label}:   #{format('%.1f', faster.ips)} i/s
-            #{slower.label}:   #{format('%.1f', slower.ips)} i/s - #{format('%.2f', ratio)}x  slower
+          #{plain_line}
+          #{opt_line}
         OUT
       end
     end

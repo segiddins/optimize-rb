@@ -31,8 +31,8 @@ end
 
 ```
 Comparison:
-  plain:   21595508.5 i/s
-  optimized:   21522240.6 i/s - 1.00x  slower
+  plain:   21957041.4 i/s
+  optimized:   21907893.3 i/s - 1.00x  slower
 ```
 
 ## Walkthrough
@@ -98,7 +98,7 @@ Collapse `<literal>; branch*` into `jump` (taken) or a drop (not taken).
 ### Before (no optimization)
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/point_distance.rb:3 (3,0)-(21,16)>
+== disasm: #<ISeq:<compiled>@examples/point_distance.rb:3 (3,0)-(21,16)>
 local table (size: 2, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 2] p@0        [ 1] q@1
 0000 putspecialobject                       3                         (   3)[Li]
@@ -134,7 +134,7 @@ local table (size: 2, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0053 opt_send_without_block                 <calldata!mid:distance_to, argc:1, ARGS_SIMPLE>
 0055 leave
 
-== disasm: #<ISeq:<class:Point>@/w/examples/point_distance.rb:3 (3,0)-(16,3)>
+== disasm: #<ISeq:<class:Point>@examples/point_distance.rb:3 (3,0)-(16,3)>
 0000 putself                                                          (   4)[LiCl]
 0001 putobject                              :x
 0003 putobject                              :y
@@ -145,7 +145,7 @@ local table (size: 2, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0014 putobject                              :distance_to
 0016 leave                                                            (  16)[En]
 
-== disasm: #<ISeq:initialize@/w/examples/point_distance.rb:7 (7,2)-(10,5)>
+== disasm: #<ISeq:initialize@examples/point_distance.rb:7 (7,2)-(10,5)>
 local table (size: 2, argc: 2 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 2] x@0<Arg>   [ 1] y@1<Arg>
 0000 getlocal_WC_0                          x@0                       (   8)[LiCa]
@@ -155,7 +155,7 @@ local table (size: 2, argc: 2 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0008 setinstancevariable                    :@y, <is:1>
 0011 leave                                                            (  10)[Re]
 
-== disasm: #<ISeq:distance_to@/w/examples/point_distance.rb:13 (13,2)-(15,5)>
+== disasm: #<ISeq:distance_to@examples/point_distance.rb:13 (13,2)-(15,5)>
 local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] other@0<Arg>
 0000 putself                                                          (  14)[LiCa]
@@ -175,7 +175,7 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ### After full `Pipeline.default`
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/point_distance.rb:3 (3,0)-(21,16)>
+== disasm: #<ISeq:<compiled>@examples/point_distance.rb:3 (3,0)-(21,16)>
 local table (size: 4, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 4] p@0        [ 3] q@1        [ 2] other@2    [ 1] other@3
 0000 putspecialobject                       3                         (   3)[Li]
@@ -223,7 +223,7 @@ local table (size: 4, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0077 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[Li]
 0079 leave                                  [Li]
 
-== disasm: #<ISeq:<class:Point>@/w/examples/point_distance.rb:3 (3,0)-(16,3)>
+== disasm: #<ISeq:<class:Point>@examples/point_distance.rb:3 (3,0)-(16,3)>
 0000 putself                                                          (   4)[LiCl]
 0001 putobject                              :x
 0003 putobject                              :y
@@ -234,7 +234,7 @@ local table (size: 4, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0014 putobject                              :distance_to
 0016 leave                                                            (  16)[En]
 
-== disasm: #<ISeq:initialize@/w/examples/point_distance.rb:7 (7,2)-(10,5)>
+== disasm: #<ISeq:initialize@examples/point_distance.rb:7 (7,2)-(10,5)>
 local table (size: 2, argc: 2 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 2] x@0<Arg>   [ 1] y@1<Arg>
 0000 getlocal_WC_0                          x@0                       (   8)[LiCa]
@@ -244,7 +244,7 @@ local table (size: 2, argc: 2 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0008 setinstancevariable                    :@y, <is:1>
 0011 leave                                                            (  10)[Re]
 
-== disasm: #<ISeq:distance_to@/w/examples/point_distance.rb:13 (13,2)-(15,5)>
+== disasm: #<ISeq:distance_to@examples/point_distance.rb:13 (13,2)-(15,5)>
 local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] other@0<Arg>
 0000 putself                                                          (  14)[LiCa]
@@ -266,15 +266,15 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-               plain     2.174M i/100ms
+               plain     2.212M i/100ms
 Calculating -------------------------------------
-               plain     21.596M (± 1.4%) i/s   (46.31 ns/i) -    108.706M in   5.034658s
+               plain     21.957M (± 1.8%) i/s   (45.54 ns/i) -    110.594M in   5.038564s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-           optimized     2.171M i/100ms
+           optimized     2.206M i/100ms
 Calculating -------------------------------------
-           optimized     21.522M (± 3.5%) i/s   (46.46 ns/i) -    108.552M in   5.051631s
+           optimized     21.908M (± 1.5%) i/s   (45.65 ns/i) -    110.313M in   5.036397s
 Comparison:
-  plain:   21595508.5 i/s
-  optimized:   21522240.6 i/s - 1.00x  slower
+  plain:   21957041.4 i/s
+  optimized:   21907893.3 i/s - 1.00x  slower
 ```

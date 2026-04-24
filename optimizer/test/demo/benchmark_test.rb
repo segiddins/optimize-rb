@@ -17,6 +17,24 @@ class DemoBenchmarkTest < Minitest::Test
     end
   end
 
+  def test_compose_emits_plain_then_optimized_regardless_of_which_is_faster
+    # demo:verify uses BENCH_LINE_RE to mask the ips values, but the mask
+    # is per-line and cannot reconcile reordered lines. compose must emit
+    # `plain` before `optimized` in the Comparison block so the masked
+    # output is byte-identical across runs.
+    # Optimized faster than plain: current compose would put optimized first.
+    plain = Optimize::Demo::Benchmark::Report.new(label: "plain", ips: 500.0, raw: "")
+    opt   = Optimize::Demo::Benchmark::Report.new(label: "optimized", ips: 1000.0, raw: "")
+    out = Optimize::Demo::Benchmark.compose(plain, opt)
+    block = out[/Comparison:.*\z/m]
+    plain_at = block.index("plain:")
+    opt_at   = block.index("optimized:")
+    refute_nil plain_at, "Comparison block missing `plain:` line"
+    refute_nil opt_at, "Comparison block missing `optimized:` line"
+    assert plain_at < opt_at,
+      "expected `plain` before `optimized` even when plain is faster, got:\n#{block}"
+  end
+
   def test_compare_runs_both_labels_and_captures_output
     with_fixture do |path|
       result = Optimize::Demo::Benchmark.compare(

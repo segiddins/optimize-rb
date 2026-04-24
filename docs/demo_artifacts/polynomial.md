@@ -1,6 +1,6 @@
 # polynomial demo
 
-Pipeline.default: **1.85x** vs unoptimized.
+Pipeline.default: **1.86x** vs unoptimized.
 
 Converged in 3 iterations (max across functions).
 
@@ -30,8 +30,8 @@ end
 
 ```
 Comparison:
-  optimized:   37236287.3 i/s
-  plain:   20081313.7 i/s - 1.85x  slower
+  plain:   20190645.2 i/s - 1.86x  slower
+  optimized:   37490833.6 i/s
 ```
 
 ## Walkthrough
@@ -46,7 +46,7 @@ Replace `send` with the callee's body when the receiver is resolvable.
 @@ -37,6 +37,7 @@
  opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
  leave
- == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
+ == block: run@examples/polynomial.rb:12 (12,2)-(14,5)
 +[ 2] n@0        [ 1] ?@1
  opt_getconstant_path                   <ic:0 SCALE>
  putobject                              6
@@ -172,7 +172,7 @@ Rewrite frozen top-level constant references to their literal values.
 @@ -35,8 +35,7 @@
  opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
  leave
- == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
+ == block: run@examples/polynomial.rb:12 (12,2)-(14,5)
 -[ 2] n@0        [ 1] ?@1
 -opt_getconstant_path                   <ic:0 SCALE>
 +[ 2] n@0        [ 1] n@1
@@ -216,7 +216,7 @@ Fold literal-operand operations (Tier 1).
 +++ after  const_fold
 @@ -36,28 +36,10 @@
  leave
- == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
+ == block: run@examples/polynomial.rb:12 (12,2)-(14,5)
  [ 2] n@0        [ 1] n@1
 -putobject                              6
 -putobject                              6
@@ -268,7 +268,7 @@ Collapse `<literal>; branch*` into `jump` (taken) or a drop (not taken).
 +++ after  dead_branch_fold
 @@ -36,10 +36,8 @@
  leave
- == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
+ == block: run@examples/polynomial.rb:12 (12,2)-(14,5)
  [ 2] n@0        [ 1] n@1
 -putobject                              true
 -branchunless                           7[LiCa]
@@ -288,7 +288,7 @@ Collapse `<literal>; branch*` into `jump` (taken) or a drop (not taken).
 ### Before (no optimization)
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/polynomial.rb:3 (3,0)-(18,8)>
+== disasm: #<ISeq:<compiled>@examples/polynomial.rb:3 (3,0)-(18,8)>
 local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] poly@0
 0000 putobject                              6                         (   3)[Li]
@@ -312,13 +312,13 @@ local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0033 opt_send_without_block                 <calldata!mid:run, argc:0, ARGS_SIMPLE>
 0035 leave
 
-== disasm: #<ISeq:<class:Polynomial>@/w/examples/polynomial.rb:5 (5,0)-(15,3)>
+== disasm: #<ISeq:<class:Polynomial>@examples/polynomial.rb:5 (5,0)-(15,3)>
 0000 definemethod                           :compute, compute         (   7)[LiCl]
 0003 definemethod                           :run, run                 (  12)[Li]
 0006 putobject                              :run
 0008 leave                                                            (  15)[En]
 
-== disasm: #<ISeq:compute@/w/examples/polynomial.rb:7 (7,2)-(9,5)>
+== disasm: #<ISeq:compute@examples/polynomial.rb:7 (7,2)-(9,5)>
 local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] n@0<Arg>
 0000 getlocal_WC_0                          n@0                       (   8)[LiCa]
@@ -332,7 +332,7 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0015 opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
 0017 leave                                                            (   9)[Re]
 
-== disasm: #<ISeq:run@/w/examples/polynomial.rb:12 (12,2)-(14,5)>
+== disasm: #<ISeq:run@examples/polynomial.rb:12 (12,2)-(14,5)>
 0000 opt_getconstant_path                   <ic:0 SCALE>              (  13)[LiCa]
 0002 putobject                              6
 0004 opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
@@ -350,7 +350,7 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ### After full `Pipeline.default`
 
 ```
-== disasm: #<ISeq:<compiled>@/w/examples/polynomial.rb:3 (3,0)-(18,8)>
+== disasm: #<ISeq:<compiled>@examples/polynomial.rb:3 (3,0)-(18,8)>
 local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] poly@0
 0000 putobject                              6                         (   3)[Li]
@@ -372,19 +372,19 @@ local table (size: 1, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 0029 opt_send_without_block                 <calldata!mid:run, argc:0, ARGS_SIMPLE>(  18)
 0031 leave
 
-== disasm: #<ISeq:<class:Polynomial>@/w/examples/polynomial.rb:5 (5,0)-(15,3)>
+== disasm: #<ISeq:<class:Polynomial>@examples/polynomial.rb:5 (5,0)-(15,3)>
 0000 definemethod                           :compute, compute         (   7)[LiCl]
 0003 definemethod                           :run, run                 (  12)[Li]
 0006 putobject                              :run
 0008 leave                                                            (  15)[En]
 
-== disasm: #<ISeq:compute@/w/examples/polynomial.rb:7 (7,2)-(9,5)>
+== disasm: #<ISeq:compute@examples/polynomial.rb:7 (7,2)-(9,5)>
 local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 1] n@0<Arg>
 0000 getlocal_WC_0                          n@0                       (   8)[LiCa]
 0002 leave                                  [LiCa]
 
-== disasm: #<ISeq:run@/w/examples/polynomial.rb:12 (12,2)-(14,5)>
+== disasm: #<ISeq:run@examples/polynomial.rb:12 (12,2)-(14,5)>
 local table (size: 2, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1, kwrest: -1])
 [ 2] n@0        [ 1] n@1
 0000 putobject                              42                        (  13)
@@ -398,15 +398,15 @@ local table (size: 2, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ```
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-               plain     1.913M i/100ms
+               plain     2.025M i/100ms
 Calculating -------------------------------------
-               plain     20.081M (± 1.4%) i/s   (49.80 ns/i) -    101.391M in   5.049976s
+               plain     20.191M (± 2.1%) i/s   (49.53 ns/i) -    101.246M in   5.016774s
 ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-           optimized     3.670M i/100ms
+           optimized     3.755M i/100ms
 Calculating -------------------------------------
-           optimized     37.236M (± 3.1%) i/s   (26.86 ns/i) -    187.182M in   5.032007s
+           optimized     37.491M (± 1.2%) i/s   (26.67 ns/i) -    187.748M in   5.008610s
 Comparison:
-  optimized:   37236287.3 i/s
-  plain:   20081313.7 i/s - 1.85x  slower
+  plain:   20190645.2 i/s - 1.86x  slower
+  optimized:   37490833.6 i/s
 ```
