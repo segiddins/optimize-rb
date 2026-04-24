@@ -949,33 +949,49 @@ layout: default
 
 # Starting iseq
 
-```text {all}{lines:false}
-== disasm: #<ISeq:compute@polynomial.rb:7>
+<div class="grid grid-cols-2 gap-4 mt-2">
+
+<div>
+
+**`compute` — 10 insns**
+
+```text
 getlocal_WC_0        n@0
 putobject            2
-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+opt_mult
 opt_getconstant_path <ic:0 SCALE>
-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+opt_mult
 putobject            12
-opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+opt_div
 putobject_INT2FIX_0_
-opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+opt_plus
 leave
+```
 
-== disasm: #<ISeq:run@polynomial.rb:12>
+</div>
+
+<div>
+
+**`run` — 12 insns**
+
+```text
 opt_getconstant_path <ic:0 SCALE>
 putobject            6
-opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
+opt_eq
 branchunless         14
 putself
 putobject            42
-opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+opt_send_without_block compute
 leave
 putself
 putobject_INT2FIX_0_
-opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+opt_send_without_block compute
 leave
 ```
+
+</div>
+
+</div>
 
 <!--
 §5 Polynomial starting iseq (post.md lines 137–163). Budget ~30s.
@@ -1093,38 +1109,71 @@ layout: default
 
 # Pass 6 — `const_fold` (the big one)
 
-```diff {all|1-4|5-16|17-22}{lines:false}
--putobject            6
--putobject            6
--opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
--branchunless         26
--putobject            42
--putobject            2
--opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
--putobject            6
--opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
--putobject            12
--opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
--putobject_INT2FIX_0_
--opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
--leave
--putobject_INT2FIX_0_
--putobject            2
--opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
--putobject            6
--opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
--putobject            12
--opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
--putobject_INT2FIX_0_
--opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
--leave
-+putobject            true
-+branchunless         7
-+putobject            42
-+leave
-+putobject_INT2FIX_0_
-+leave
+<div class="grid grid-cols-2 gap-4 mt-2">
+
+<div>
+
+**Before — 24 insns**
+
+```text
+putobject            6
+putobject            6
+opt_eq
+branchunless         26
+putobject            42
+putobject            2
+opt_mult
+putobject            6
+opt_mult
+putobject            12
+opt_div
+putobject_INT2FIX_0_
+opt_plus
+leave
+putobject_INT2FIX_0_
+putobject            2
+opt_mult
+putobject            6
+opt_mult
+putobject            12
+opt_div
+putobject_INT2FIX_0_
+opt_plus
+leave
 ```
+
+</div>
+
+<div>
+
+**After — 6 insns**
+
+```text
+putobject            true
+branchunless         7
+putobject            42
+leave
+putobject_INT2FIX_0_
+leave
+```
+
+<div class="mt-6 text-sm leading-snug" v-click>
+
+- `6 == 6` folds to `true`
+- `42 * 2 * 6 / 12 + 0` folds to `42`
+- `0 * 2 * 6 / 12 + 0` folds to `0`
+
+</div>
+
+<div class="mt-4 text-sm italic" v-click>
+
+Single most visible pass. A couple hundred lines of code.
+
+</div>
+
+</div>
+
+</div>
 
 <!--
 §5 Polynomial pass 6 (post.md lines 230–267). Budget ~75s — the linger slide for §5.

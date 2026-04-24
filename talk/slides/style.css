@@ -1,0 +1,51 @@
+/* Global text-size bump for RubyKaigi 2026 deck. */
+
+.slidev-layout {
+  font-size: 1.12em;
+  line-height: 1.5;
+}
+
+.slidev-layout h1 {
+  font-size: 2.1em;
+  line-height: 1.15;
+  margin-bottom: 0.5em;
+}
+
+.slidev-layout h2 {
+  font-size: 1.55em;
+  line-height: 1.2;
+}
+
+.slidev-layout h3 {
+  font-size: 1.25em;
+}
+
+/* Inline code in prose — slightly smaller than surrounding text. */
+.slidev-layout :not(pre) > code {
+  font-size: 0.88em;
+}
+
+/* Syntax-highlighted code fences (Shiki).
+ * Kept at ~13px so 20-row iseq listings still fit on a 16:9 slide. */
+.slidev-layout .slidev-code,
+.slidev-layout pre.shiki,
+.slidev-layout div.language-id {
+  font-size: 0.68em !important;
+  line-height: 1.15 !important;
+}
+
+.slidev-layout pre.shiki {
+  padding-top: 0.5em !important;
+  padding-bottom: 0.5em !important;
+}
+
+.slidev-layout pre.shiki code,
+.slidev-layout pre.shiki .line {
+  line-height: 1.15 !important;
+}
+
+/* Plain <pre> blocks (non-shiki, e.g., manual code fallback). */
+.slidev-layout pre:not(.shiki) {
+  font-size: 0.72em;
+  line-height: 1.2;
+}
