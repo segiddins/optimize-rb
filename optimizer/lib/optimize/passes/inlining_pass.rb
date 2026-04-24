@@ -188,13 +188,20 @@ module Optimize
         cd = send_inst.operands[0]
         line = send_inst.line || function.first_lineno
         return false unless cd.is_a?(IR::CallData)
-        return false unless cd.argc == 1
+        return false unless cd.argc >= 1
         return false unless cd.args_simple? && cd.kwlen.zero? && !cd.blockarg? && !cd.has_splat?
-        return false if send_idx < 2
 
-        recv_inst = insts[send_idx - 2]
+        argc = cd.argc
+        return false if send_idx < argc + 1
+
+        recv_inst = insts[send_idx - argc - 1]
         slot, level = decode_getlocal(recv_inst, slot_table)
         return false unless slot
+
+        # Every arg push must be a single-instruction producer.
+        (0...argc).each do |k|
+          return false unless ARG_PUSH_OPCODES.include?(insts[send_idx - argc + k].opcode)
+        end
 
         type = slot_table.lookup(slot, level)
         return false unless type
@@ -207,7 +214,7 @@ module Optimize
           return false
         end
 
-        reason = disqualify_callee_for_opt_send(callee)
+        reason = disqualify_callee_for_opt_send(callee, argc)
         if reason
           log.skip(pass: :inlining, reason: reason, file: function.path, line: line)
           return false
@@ -216,28 +223,34 @@ module Optimize
         body = dup_body(callee.instructions, 0..-2)
         body_uses_self = body.any? { |inst| inst.opcode == :putself }
 
-        callee_arg_obj_idx = Codec::LocalTable.decode(
+        callee_arg_obj_indices = Codec::LocalTable.decode(
           callee.misc[:local_table_raw] || "".b,
           callee.misc[:local_table_size] || 0,
-        ).first
-        if callee_arg_obj_idx.nil?
+        )
+        if callee_arg_obj_indices.size != argc
           log.skip(pass: :inlining, reason: :callee_local_table_unreadable,
                    file: function.path, line: line)
           return false
         end
 
+        # Stash layout after N arg-slots (+ optional self-slot) are appended:
+        #   LINDEX 3       holds argN (last-pushed, top of stack)
+        #   LINDEX 4       holds arg(N-1)
+        #   …
+        #   LINDEX N+2     holds arg1
+        #   LINDEX N+3     holds self  (with-self only)
+        # This matches the callee's own arg LINDEXes (which run N+2..3 for
+        # lt_size=N), so callee body getlocals need no rewrite. Only
+        # putself is replaced with a read of the self-stash.
         if body_uses_self
-          # Grow self-stash first, then arg-stash, so arg-stash ends up at
-          # LINDEX 3 (matching callee's arg LINDEX — no body rewrite for
-          # arg refs) and self-stash at LINDEX 4.
-          Codec::LocalTable.grow!(function, callee_arg_obj_idx)
-          Codec::LocalTable.shift_level0_lindex!(function, by: 1)
-          Codec::LocalTable.grow!(function, callee_arg_obj_idx)
-          Codec::LocalTable.shift_level0_lindex!(function, by: 1)
+          grow_count = argc + 1
+          (0...grow_count).each do |k|
+            Codec::LocalTable.grow!(function, callee_arg_obj_indices[k % argc])
+          end
+          Codec::LocalTable.shift_level0_lindex!(function, by: grow_count)
           slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
 
-          self_stash_lindex = NEW_SLOT_LINDEX + 1  # 4
-          arg_stash_lindex  = NEW_SLOT_LINDEX      # 3
+          self_stash_lindex = NEW_SLOT_LINDEX + argc # argc + 3
 
           rewritten_body = body.map do |inst|
             if inst.opcode == :putself
@@ -251,36 +264,41 @@ module Optimize
             end
           end
 
-          insts   = function.instructions
-          recv_in = insts[send_idx - 2]
-          arg_in  = insts[send_idx - 1]
-          consume_arg = IR::Instruction.new(
-            opcode: :setlocal_WC_0,
-            operands: [arg_stash_lindex],
-            line: arg_in.line || line,
-          )
+          insts_now = function.instructions
+          recv_in = insts_now[send_idx - argc - 1]
+          arg_pushes = (0...argc).map { |k| insts_now[send_idx - argc + k] }
+          # Pop args off the stack in reverse: argN → LINDEX 3, ..., arg1 → LINDEX argc+2.
+          consume_args = (0...argc).map do |k|
+            IR::Instruction.new(
+              opcode: :setlocal_WC_0,
+              operands: [NEW_SLOT_LINDEX + k],
+              line: arg_pushes.last.line || line,
+            )
+          end
           consume_recv = IR::Instruction.new(
             opcode: :setlocal_WC_0,
             operands: [self_stash_lindex],
             line: recv_in.line || line,
           )
-          replacement = [recv_in, arg_in, consume_arg, consume_recv, *rewritten_body]
-          function.splice_instructions!((send_idx - 2)..send_idx, replacement)
+          replacement = [recv_in, *arg_pushes, *consume_args, consume_recv, *rewritten_body]
+          function.splice_instructions!((send_idx - argc - 1)..send_idx, replacement)
         else
-          Codec::LocalTable.grow!(function, callee_arg_obj_idx)
-          Codec::LocalTable.shift_level0_lindex!(function, by: 1)
+          argc.times { |k| Codec::LocalTable.grow!(function, callee_arg_obj_indices[k]) }
+          Codec::LocalTable.shift_level0_lindex!(function, by: argc)
           slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
 
-          insts = function.instructions
-          arg_push = insts[send_idx - 1]
-          setlocal_arg = IR::Instruction.new(
-            opcode: :setlocal_WC_0,
-            operands: [NEW_SLOT_LINDEX],
-            line: arg_push.line || line,
-          )
-          # Drop the receiver producer; its value is unused in Task 8.
-          replacement = [arg_push, setlocal_arg, *body]
-          function.splice_instructions!((send_idx - 2)..send_idx, replacement)
+          insts_now = function.instructions
+          arg_pushes = (0...argc).map { |k| insts_now[send_idx - argc + k] }
+          consume_args = (0...argc).map do |k|
+            IR::Instruction.new(
+              opcode: :setlocal_WC_0,
+              operands: [NEW_SLOT_LINDEX + k],
+              line: arg_pushes.last.line || line,
+            )
+          end
+          # Drop the receiver producer; its value is unused (no-self body).
+          replacement = [*arg_pushes, *consume_args, *body]
+          function.splice_instructions!((send_idx - argc - 1)..send_idx, replacement)
         end
 
         log.rewrite(pass: :inlining, reason: :inlined, file: function.path, line: line)
@@ -316,9 +334,10 @@ module Optimize
       # (needed for the OPT_SEND receiver-typed inlining path). Forbidden:
       # branches, catch tables, block setup, ivar ops, mid-body leaves,
       # throw, and block-carrying sends.
-      def disqualify_callee_for_opt_send(callee)
+      def disqualify_callee_for_opt_send(callee, argc = 1)
         lt_size = (callee.misc && callee.misc[:local_table_size]) || 0
-        return :callee_multi_local if lt_size > 1
+        return :callee_multi_local if lt_size > argc
+        return :callee_arg_local_mismatch if lt_size < argc
         return :callee_has_catch if callee.catch_entries && !callee.catch_entries.empty?
         insts = callee.instructions || []
         return :callee_empty if insts.empty?

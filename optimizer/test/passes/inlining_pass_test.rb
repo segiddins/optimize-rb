@@ -267,7 +267,7 @@ class InliningPassTest < Minitest::Test
     getter = find_iseq(ir, "getter")
     refute_nil getter
     pass = Optimize::Passes::InliningPass.new
-    assert_nil pass.send(:disqualify_callee_for_opt_send, getter)
+    assert_nil pass.send(:disqualify_callee_for_opt_send, getter, 0)
   end
 
   def test_opt_send_eligibility_rejects_getinstancevariable
@@ -277,7 +277,7 @@ class InliningPassTest < Minitest::Test
     refute_nil callee
     pass = Optimize::Passes::InliningPass.new
     assert_equal :callee_uses_ivar,
-                 pass.send(:disqualify_callee_for_opt_send, callee)
+                 pass.send(:disqualify_callee_for_opt_send, callee, 0)
   end
 
   def test_opt_send_eligibility_rejects_branches
@@ -287,7 +287,7 @@ class InliningPassTest < Minitest::Test
     refute_nil callee
     pass = Optimize::Passes::InliningPass.new
     assert_equal :callee_has_branches,
-                 pass.send(:disqualify_callee_for_opt_send, callee)
+                 pass.send(:disqualify_callee_for_opt_send, callee, 0)
   end
 
   def test_opt_send_with_typed_receiver_and_constant_body_splices
@@ -425,6 +425,170 @@ class InliningPassTest < Minitest::Test
     # Round-trip through VM: driver(Box.new(7), Box.new(3)) returns p.v == 7.
     loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 7, loaded.eval
+  end
+
+  # ---- v4: multi-arg OPT_SEND (argc >= 2) ----
+
+  def test_opt_send_two_arg_constant_body_splices
+    src = <<~RUBY
+      class InliningOptSendT10Pair
+        def sum(a, b); 42; end
+      end
+      # @rbs (InliningOptSendT10Pair, Integer, Integer) -> Integer
+      def driver(p, x, y); p.sum(x, y); end
+      driver(InliningOptSendT10Pair.new, 1, 2)
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
+    caller   = find_iseq(ir, "driver")
+    callee   = find_iseq(ir, "sum")
+    refute_nil caller
+    refute_nil callee
+
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    original_locals = caller.misc[:local_table_size]
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: { ["InliningOptSendT10Pair", :sum] => callee },
+      slot_type_map: slot_type_map,
+    )
+
+    ops = caller.instructions.map(&:opcode)
+    refute_includes ops, :opt_send_without_block, "call site should be spliced"
+    assert_includes ops, :putobject, "constant body should appear in caller"
+    assert log.entries.any? { |e| e.reason == :inlined }
+    # Two arg-stash slots added; no self-stash since body has no putself.
+    assert_equal original_locals + 2, caller.misc[:local_table_size]
+  end
+
+  def test_opt_send_two_arg_roundtrips_through_vm
+    src = <<~RUBY
+      class InliningOptSendT10Pair
+        # @rbs (Integer, Integer) -> Integer
+        def sum(a, b); a + b; end
+      end
+      # @rbs (InliningOptSendT10Pair, Integer, Integer) -> Integer
+      def driver(p, x, y); p.sum(x, y); end
+      driver(InliningOptSendT10Pair.new, 3, 4)
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
+    caller   = find_iseq(ir, "driver")
+    callee   = find_iseq(ir, "sum")
+
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: { ["InliningOptSendT10Pair", :sum] => callee },
+      slot_type_map: slot_type_map,
+    )
+    assert log.entries.any? { |e| e.reason == :inlined }, "argc=2 inline did not fire"
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
+    assert_equal 7, loaded.eval
+  end
+
+  def test_opt_send_two_arg_body_with_putself_is_rewritten_to_self_stash
+    # 2-arg method whose body uses self (attr_reader style). Verifies
+    # self-stash lands at the highest new LINDEX and putself is rewritten.
+    src = <<~RUBY
+      class InliningOptSendT11Box
+        attr_reader :v
+        def initialize(v); @v = v; end
+        # @rbs (Integer, Integer) -> Integer
+        def combine(a, b); v; end
+      end
+      # @rbs (InliningOptSendT11Box, Integer, Integer) -> Integer
+      def driver(p, x, y); p.combine(x, y); end
+      driver(InliningOptSendT11Box.new(9), 1, 2)
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
+    caller = find_iseq(ir, "driver")
+    callee = find_iseq(ir, "combine")
+
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    original_locals = caller.misc[:local_table_size]
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: { ["InliningOptSendT11Box", :combine] => callee },
+      slot_type_map: slot_type_map,
+    )
+
+    assert log.entries.any? { |e| e.reason == :inlined }
+    # Three stash slots: 2 args + self.
+    assert_equal original_locals + 3, caller.misc[:local_table_size]
+    refute caller.instructions.any? { |i| i.opcode == :putself },
+      "putself in spliced body must be rewritten to self-stash read"
+    refute caller.instructions.any? { |i| i.opcode == :opt_send_without_block && i.operands[0].mid_symbol(ot) == :combine }
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
+    assert_equal 9, loaded.eval
+  end
+
+  def test_opt_send_three_arg_roundtrips_through_vm
+    # argc=3 with all three args used in the body. Exercises the
+    # general N-arg stashing path end-to-end.
+    src = <<~RUBY
+      class InliningOptSendT12Triple
+        # @rbs (Integer, Integer, Integer) -> Integer
+        def combine3(a, b, c); a + b + c; end
+      end
+      # @rbs (InliningOptSendT12Triple, Integer, Integer, Integer) -> Integer
+      def driver(p, x, y, z); p.combine3(x, y, z); end
+      driver(InliningOptSendT12Triple.new, 10, 20, 30)
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    type_env = Optimize::TypeEnv.from_source(src, "t.rb")
+    caller = find_iseq(ir, "driver")
+    callee = find_iseq(ir, "combine3")
+
+    caller_sig = type_env.signature_for_function(caller, class_context: nil)
+    slot_table = Optimize::IR::SlotTypeTable.build(caller, caller_sig, nil, object_table: ot)
+    slot_type_map = {}.compare_by_identity
+    slot_type_map[caller] = slot_table
+
+    original_locals = caller.misc[:local_table_size]
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
+      caller,
+      type_env: type_env, log: log,
+      object_table: ot,
+      callee_map: { ["InliningOptSendT12Triple", :combine3] => callee },
+      slot_type_map: slot_type_map,
+    )
+
+    assert log.entries.any? { |e| e.reason == :inlined }, "argc=3 inline did not fire"
+    # Three arg-stash slots; no self-stash (body doesn't use self).
+    assert_equal original_locals + 3, caller.misc[:local_table_size]
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
+    assert_equal 60, loaded.eval
   end
 
   # Helper: build a typed caller + slot_type_map for OPT_SEND guard tests.

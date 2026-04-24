@@ -12,7 +12,7 @@ sites after the inline-body aliasing bug is corrected).
 
 | Pass | Original scope | Shipped | Remaining |
 |---|---|---|---|
-| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2+v3: zero-arg and one-arg FCALL inline; typed-receiver argc=1 OPT_SEND inline (self-stash + putself-rewrite; permits nested plain sends in body; multi-local callees rejected). SlotTypeTable seeded from RBS signature params + Ruby 3.x/4.x .new constructor-prop; cross-iseq-level parent chain; Pipeline pre-builds slot_type_map + signature_map; callee_map keyed by [class_name, :mid] with definemethod fallback. INLINE_BUDGET bumped 8→16. End-to-end fixture lands 1 :inlined entry on the 1M.times { p.distance_to(q) } block. | multi-arg OPT_SEND (argc ≥ 2); getinstancevariable/setinstancevariable (VM-level GET_SELF limitation — attr_reader-style method calls work instead); callee-internal locals; kwargs; blocks; forward type-prop through arithmetic/assignment; subtype matching; constructor-prop across branches; CFG splicing across BBs. |
+| Inlining | Full pass — call-graph, receiver resolution via RBS, wrapper-method flattening, CFG splicing | v1+v2+v3+v4: zero-arg and one-arg FCALL inline; typed-receiver argc≥1 OPT_SEND inline (self-stash + putself-rewrite; permits nested plain sends in body; multi-local callees rejected). v4 (2026-04-24): generalized OPT_SEND stashing to N args — grow N slots (+1 for self-stash when body uses self), shift existing level-0 LINDEXes by N/N+1, emit N setlocal_WC_0 at LINDEX 3..N+2 consuming args in reverse, plus setlocal_WC_0 N+3 for self. Arg-stash LINDEXes match callee's own arg LINDEXes exactly, so no body rewrite for arg refs. SlotTypeTable seeded from RBS signature params + Ruby 3.x/4.x .new constructor-prop; cross-iseq-level parent chain; Pipeline pre-builds slot_type_map + signature_map; callee_map keyed by [class_name, :mid] with definemethod fallback. INLINE_BUDGET bumped 8→16. End-to-end fixture lands 1 :inlined entry on the 1M.times { p.distance_to(q) } block. | getinstancevariable/setinstancevariable (VM-level GET_SELF limitation — attr_reader-style method calls work instead); callee-internal locals; kwargs; blocks; forward type-prop through arithmetic/assignment; subtype matching; constructor-prop across branches; CFG splicing across BBs. |
 | Arithmetic specialization | Reassoc of `+ - * / %` chains under "no BOP redef"; RBS-typed operands; sub-chain folding; post-inlining collapse | ArithReassoc v1–v4 (`opt_plus`, `opt_mult`, `opt_minus`, `opt_div`) + IdentityElim v1. **Literal-only operands, no RBS typing.** | `opt_mod`; true Integer-typed operand proofs; post-inlining demo |
 | Constant folding | 4 tiers: literal / frozen-constant / type-guided identity / ENV | Tier 1 (ConstFoldPass, now also String==String/String!=String). Tier 2 (ConstFoldTier2Pass): top-level frozen constants with literal RHS — Integer/String/true/false/nil — whole-tree pre-scan; reassigned or non-top-level names are tainted. Cascades through Tier 1 (e.g. `FOO + 1 → 43`). Tier 3 *partially* via IdentityElim v1 (sound-in-practice, not type-guided). Tier 4 (ConstFoldEnvPass): `ENV["LIT"]` fold with whole-IR-tree taint pre-scan; String snapshot values interned on-the-fly (no skip); read-only sends (`fetch`, `to_h`, `key?`, …) no longer taint the tree (argc≤1); `ENV.fetch("LIT")` argc=1 is now folded when snapshot carries the key (snapshot-presence check preserves runtime KeyError semantics; `:fetch_key_absent` log on miss). Taint classifier v2: read-only sends whitelist is argc-generic via forward-scan (first-send-encountered must match cd.argc and safe mid); `ENV.values_at("A","B","C")` siblings no longer taint. argc=2 `ENV.fetch(LIT, pure-default)` now folds — default must be a single pure producer (`putnil`/`putobject`/`put[chilled]string`/`putself`); on key hit the default is dropped, on miss the default becomes the fold result. Peephole **DeadBranchFoldPass** (2026-04-22) runs last in `Pipeline.default`: collapses `<literal>; branchif\|branchunless\|branchnil` to `jump target` (taken) or drop (not taken), cascading off every const-fold tier. | Tier 3 proper (RBS-typed identities). Tier 2 follow-ups: Symbols, nested `M::FOO`, frozen Array/Hash literals. Tier 4 follow-ups: block-passing sends, generic `send` opcode, non-String snapshot values. Full CFG-level DCE (remove unreachable blocks, patch catch-table). |
 
@@ -217,11 +217,20 @@ Filed in session memory / pass-identity-elim-design but not yet picked up:
   site to gate the rewrite. Self-contained follow-up; each pass is
   ~20 LoC. Upgrades both passes from "sound in practice" to "sound
   in principle" using v1's existing type plumbing.
-- **InliningPass v4 — multi-arg OPT_SEND (argc ≥ 2).** Extends v3 by
-  growing N+1 stash slots (self-stash + one per arg), mirroring the
-  existing one-arg LINDEX math. Unblocks inlining `Point.new(x, y)`
-  and any method with 2+ args. Key codec work already done in v2;
-  v4 just generalizes the shift-by-N LINDEX remap.
+- ~~**InliningPass v4 — multi-arg OPT_SEND (argc ≥ 2).**~~
+  **Shipped 2026-04-24.** Generalizes v3's argc=1 OPT_SEND stashing
+  to any N. No-self: grow N arg-slots, emit N `setlocal_WC_0` at
+  LINDEX 3..N+2 (consuming args in reverse). With-self: grow N+1
+  slots, self-stash at LINDEX N+3, rewrite `putself` → `getlocal_WC_0
+  N+3`. Arg-stash LINDEXes are chosen to match the callee's own
+  arg LINDEXes exactly, so the spliced body needs no rewrite for
+  arg refs. Eligibility extended: `disqualify_callee_for_opt_send`
+  takes `argc` and checks `lt_size == argc` (rejects internal
+  locals with `:callee_multi_local`; declared-arg/local mismatch
+  with `:callee_arg_local_mismatch`). Prereq shipped same day:
+  `Codec::LocalTable.shift_level0_lindex!(fn, by:)` pulled out of
+  InliningPass so the shift can happen in a single call instead of
+  a grow+shift loop.
 - **IdentityElim v2** — absorbing zero (`x*0→0`, `0*x→0`, `0/x→0`) and
   self-ops (`x-x→0`, `x/x→1`). Extends v1's "sound in practice" story
   cleanly; absorbing zero is where `SAFE_PRODUCER_OPCODES` really earns
