@@ -83,6 +83,32 @@ module Optimize
         misc[:local_table_size] = old_size + 1
         old_size
       end
+
+      # Shift every level-0 getlocal/setlocal operand in `fn.instructions`
+      # by +`by`. Level-1+ ops reference outer EPs and are left untouched.
+      #
+      # The "local_table_size grew by N so every pre-existing level-0
+      # LINDEX shifts by N" reasoning lives next to `grow!` because they
+      # are always used together: a caller that appends N slots to its
+      # local table must then shift all pre-existing level-0 operands by
+      # N so they still point at the same logical slot.
+      #
+      # @param fn [IR::Function] function whose instructions should be rewritten
+      # @param by [Integer] amount to add to each level-0 LINDEX
+      # @return [void]
+      def shift_level0_lindex!(fn, by:)
+        return if by.zero?
+        fn.instructions.each do |inst|
+          case inst.opcode
+          when :getlocal_WC_0, :setlocal_WC_0
+            inst.operands[0] = inst.operands[0] + by
+          when :getlocal, :setlocal
+            if inst.operands[1] == 0
+              inst.operands[0] = inst.operands[0] + by
+            end
+          end
+        end
+      end
     end
   end
 end

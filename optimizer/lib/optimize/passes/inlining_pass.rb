@@ -163,16 +163,7 @@ module Optimize
         Codec::LocalTable.grow!(function, callee_local_idx)
 
         # 3. Shift every existing caller level-0 LINDEX by +1.
-        function.instructions.each do |inst|
-          case inst.opcode
-          when :getlocal_WC_0, :setlocal_WC_0
-            inst.operands[0] = inst.operands[0] + 1
-          when :getlocal, :setlocal
-            if inst.operands[1] == 0
-              inst.operands[0] = inst.operands[0] + 1
-            end
-          end
-        end
+        Codec::LocalTable.shift_level0_lindex!(function, by: 1)
 
         # 4. Build replacement. Re-read arg_push AFTER the shift so
         #    a getlocal_WC_0 arg push reflects its new LINDEX.
@@ -240,9 +231,9 @@ module Optimize
           # LINDEX 3 (matching callee's arg LINDEX — no body rewrite for
           # arg refs) and self-stash at LINDEX 4.
           Codec::LocalTable.grow!(function, callee_arg_obj_idx)
-          shift_level0_lindex_by_1(function)
+          Codec::LocalTable.shift_level0_lindex!(function, by: 1)
           Codec::LocalTable.grow!(function, callee_arg_obj_idx)
-          shift_level0_lindex_by_1(function)
+          Codec::LocalTable.shift_level0_lindex!(function, by: 1)
           slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
 
           self_stash_lindex = NEW_SLOT_LINDEX + 1  # 4
@@ -277,7 +268,7 @@ module Optimize
           function.splice_instructions!((send_idx - 2)..send_idx, replacement)
         else
           Codec::LocalTable.grow!(function, callee_arg_obj_idx)
-          shift_level0_lindex_by_1(function)
+          Codec::LocalTable.shift_level0_lindex!(function, by: 1)
           slot_table.refresh_local_table_size!(function.misc[:local_table_size] || 0)
 
           insts = function.instructions
@@ -319,19 +310,6 @@ module Optimize
       def lt_size_at_level(slot_table, level)
         return nil unless slot_table
         slot_table.local_table_size_at(level)
-      end
-
-      def shift_level0_lindex_by_1(function)
-        function.instructions.each do |inst|
-          case inst.opcode
-          when :getlocal_WC_0, :setlocal_WC_0
-            inst.operands[0] = inst.operands[0] + 1
-          when :getlocal, :setlocal
-            if inst.operands[1] == 0
-              inst.operands[0] = inst.operands[0] + 1
-            end
-          end
-        end
       end
 
       # Like #disqualify_callee but permits nested plain sends

@@ -2,6 +2,8 @@
 require "test_helper"
 require "optimize/codec"
 require "optimize/codec/local_table"
+require "optimize/ir/function"
+require "optimize/ir/instruction"
 
 class LocalTableCodecTest < Minitest::Test
   # For every fixture iseq, decode(local_table_raw, size) → encode → must
@@ -105,6 +107,48 @@ class LocalTableCodecTest < Minitest::Test
     Optimize::Codec::LocalTable.grow!(take, sentinel)
 
     assert_equal original_size, take.misc[:local_table_size_pre_growth]
+  end
+
+  def test_shift_level0_lindex_shifts_wc0_operands
+    inst = Optimize::IR::Instruction.new(
+      opcode: :getlocal_WC_0, operands: [3], line: 1,
+    )
+    fn = Optimize::IR::Function.new(instructions: [inst], misc: {})
+    Optimize::Codec::LocalTable.shift_level0_lindex!(fn, by: 2)
+    assert_equal 5, inst.operands[0]
+  end
+
+  def test_shift_level0_lindex_shifts_explicit_level_zero
+    inst = Optimize::IR::Instruction.new(
+      opcode: :getlocal, operands: [3, 0], line: 1,
+    )
+    fn = Optimize::IR::Function.new(instructions: [inst], misc: {})
+    Optimize::Codec::LocalTable.shift_level0_lindex!(fn, by: 3)
+    assert_equal 0, inst.operands[1], "level operand unchanged"
+    assert_equal 6, inst.operands[0], "LINDEX shifted by 3"
+  end
+
+  def test_shift_level0_lindex_leaves_level1_ops_alone
+    outer = Optimize::IR::Instruction.new(
+      opcode: :getlocal_WC_1, operands: [3], line: 1,
+    )
+    explicit1 = Optimize::IR::Instruction.new(
+      opcode: :setlocal, operands: [4, 1], line: 2,
+    )
+    fn = Optimize::IR::Function.new(instructions: [outer, explicit1], misc: {})
+    Optimize::Codec::LocalTable.shift_level0_lindex!(fn, by: 2)
+    assert_equal 3, outer.operands[0]
+    assert_equal 4, explicit1.operands[0]
+    assert_equal 1, explicit1.operands[1]
+  end
+
+  def test_shift_level0_lindex_covers_setlocal_wc0_too
+    set = Optimize::IR::Instruction.new(
+      opcode: :setlocal_WC_0, operands: [3], line: 1,
+    )
+    fn = Optimize::IR::Function.new(instructions: [set], misc: {})
+    Optimize::Codec::LocalTable.shift_level0_lindex!(fn, by: 4)
+    assert_equal 7, set.operands[0]
   end
 
   private
