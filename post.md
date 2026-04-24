@@ -114,7 +114,281 @@ What any of this actually *does* to real code is a question you can only answer 
 
 ## §5 — Demos
 
-{TBD-§5}
+Three fixtures, each with a committed walkthrough that shows the before-and-after iseq for every pass that fires. Polynomial is the payoff — where every pass in the pipeline fires and the cascade collapses an arithmetic chain to almost nothing. Point is the inlining case — where the number gets small and I have to explain why that's fine. `sum_of_squares` is where every pass shrugs `(no change)`, and that's the most useful demo of the three.
+
+### Polynomial — the payoff
+
+```ruby
+SCALE = 6
+
+class Polynomial
+  # @rbs (Integer) -> Integer
+  def compute(n)
+    (n * 2 * SCALE / 12) + 0
+  end
+
+  # @rbs () -> Integer
+  def run
+    if SCALE == 6 then compute(42) else compute(0) end
+  end
+end
+```
+
+```
+== disasm: #<ISeq:compute@polynomial.rb:7>
+getlocal_WC_0        n@0
+putobject            2
+opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+opt_getconstant_path <ic:0 SCALE>
+opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+putobject            12
+opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+putobject_INT2FIX_0_
+opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+leave
+
+== disasm: #<ISeq:run@polynomial.rb:12>
+opt_getconstant_path <ic:0 SCALE>
+putobject            6
+opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
+branchunless         14
+putself
+putobject            42
+opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+leave
+putself
+putobject_INT2FIX_0_
+opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+leave
+```
+
+Ten instructions in `compute`, twelve in `run`, the usual bifurcated `if/else` in `run` where one arm leaves early and the other falls through. Nothing tricky. And now the pipeline runs.
+
+**Pass 1 — `inlining`.** The inliner sees two `opt_send_without_block :compute` call sites in `run`, resolves both to the visible `Polynomial#compute`, and splices the body at each site:
+
+```diff
+--- before inlining
++++ after  inlining
+ opt_getconstant_path <ic:0 SCALE>
+ putobject            6
+ opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
+-branchunless         14
+-putself
++branchunless         30
+ putobject            42
+-opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
++setlocal_WC_0        n@0
++getlocal_WC_0        n@0
++putobject            2
++opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
++opt_getconstant_path <ic:1 SCALE>
++opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
++putobject            12
++opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
++putobject_INT2FIX_0_
++opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+ leave
+```
+
+Two things to notice. The new `setlocal_WC_0 n@0; getlocal_WC_0 n@0` pair at the top of the spliced body is the arg-stash — the inliner drops the argument `42` into the callee's local slot, then the very next instruction reads it back out. That's what "call with one argument" *is*, at the bytecode level, once you've erased the call. The `putself` that used to receive the `send` is gone; so is the `send` itself. The `branchunless` target shifts from `14` to `30` because the body between it and the now-inlined code got longer. Same thing happens at the second call site (the `compute(0)` arm); I've only shown one.
+
+**Pass 2 — `dead_stash_elim`.** The stash pairs the inliner just created are dead the instant they land:
+
+```diff
+--- before dead_stash_elim
++++ after  dead_stash_elim
+ putobject            42
+-setlocal_WC_0        n@0
+-getlocal_WC_0        n@0
+ putobject            2
+ opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+```
+
+This pass is ninety lines of code. It matches `setlocal X; getlocal X` where `X` has no other references, deletes both. That's the whole pass. It exists because the inliner creates exactly this shape, every time, and the pass that fires next needs the stream compacted before it can see the operand pairs it cares about.
+
+**Pass 3 — `const_fold_tier2`.** The frozen-constant scanner sees `SCALE = 6` at the top of the file, confirms nothing reassigns it, and rewrites every `opt_getconstant_path <ic:N SCALE>` to `putobject 6`:
+
+```diff
+--- before const_fold_tier2
++++ after  const_fold_tier2
+ putobject            42
+ putobject            2
+ opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-opt_getconstant_path <ic:1 SCALE>
++putobject            6
+ opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+ putobject            12
+ opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+```
+
+Both the `if SCALE == 6` condition at the top of `run` and the `SCALE` reference inside each inlined `compute` body get rewritten. The inline cache is gone; the path-lookup is gone; the instruction stream is now all-literal on both branches.
+
+**Pass 4 — `const_fold`.** Tier 1 const-fold walks the stream looking for operations whose operands are all literals. It has several of those:
+
+```diff
+--- before const_fold
++++ after  const_fold
+-putobject            6
+-putobject            6
+-opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
+-branchunless         26
+-putobject            42
+-putobject            2
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            6
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            12
+-opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+-putobject_INT2FIX_0_
+-opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+-leave
+-putobject_INT2FIX_0_
+-putobject            2
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            6
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            12
+-opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+-putobject_INT2FIX_0_
+-opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+-leave
++putobject            true
++branchunless         7
++putobject            42
++leave
++putobject_INT2FIX_0_
++leave
+```
+
+Twenty-four instructions on the minus side, six on the plus side. `6 == 6` folds to `true`. `42 * 2 * 6 / 12 + 0` folds to `42`. `0 * 2 * 6 / 12 + 0` folds to `0`. Every operation in those chains has two literals on its operand stack; each one collapses; the results cascade up. This is the single most visible pass in the pipeline, and it runs in a couple hundred lines.
+
+**Pass 5 — `identity_elim`.** Reports `(no change)`. Identity-elim is looking for `x + 0`, `x * 1`, `x / 1` shapes where one operand is still non-literal; by this point const-fold has already eaten everything that had a literal operand, and the remaining runs of code have no identity shapes in them.
+
+**Pass 6 — `dead_branch_fold`.** The `branchunless` from the const-fold output has a literal condition sitting immediately above it. That's exactly this pass's window:
+
+```diff
+--- before dead_branch_fold
++++ after  dead_branch_fold
+-putobject            true
+-branchunless         7
+-putobject            42
+-leave
+-putobject_INT2FIX_0_
+-leave
++putobject            42
++leave
++putobject_INT2FIX_0_
++leave
+```
+
+`putobject true; branchunless 7` collapses to nothing — the branch can't be taken — and the `putobject 42; leave` that was right after it is now the entire taken arm. The `putobject_INT2FIX_0_; leave` that used to be the `else` arm is now unreachable from anywhere, and persists in the byte stream only because the pipeline is still a peephole optimizer and doesn't excise basic blocks.
+
+**End state.** `Pipeline#run` converges in `{TBD-polynomial-iters}` iterations. `compute` has gone from ten instructions to two:
+
+```
+getlocal_WC_0 n@0
+leave
+```
+
+`run` has gone from twelve to four (two live, two unreachable):
+
+```
+putobject     42
+leave
+putobject_INT2FIX_0_   # unreachable
+leave                  # unreachable
+```
+
+Benchmark: `{TBD-polynomial-ratio}`x vs. harness-off.
+
+### Point — the honest number
+
+```ruby
+class Point
+  attr_reader :x, :y
+
+  # @rbs (Integer, Integer) -> void
+  def initialize(x, y); @x = x; @y = y; end
+
+  # @rbs (Point) -> Integer
+  def distance_to(other)
+    (x - other.x) + (y - other.y)
+  end
+end
+
+p = Point.new(3, 5); q = Point.new(4, 6)
+1_000_000.times { p.distance_to(q) }
+```
+
+The benchmark's inner loop is three instructions in starting form — `getlocal p@0; getlocal q@1; opt_send_without_block :distance_to`. The RBS annotation on `distance_to` types its receiver as `Point`, which lets the inliner statically resolve `p.distance_to(q)` and splice the body. Here's the diff:
+
+```diff
+--- before inlining
++++ after  inlining
+ getlocal_WC_0        p@0
+-getlocal_WC_0        q@1
+-opt_send_without_block <calldata!mid:distance_to, argc:1, ARGS_SIMPLE>
+-leave
++getlocal_WC_0        q@1
++setlocal_WC_0        other@3
++setlocal_WC_0        other@2
++getlocal_WC_0        other@2
++opt_send_without_block <calldata!mid:x, argc:0, FCALL|VCALL|ARGS_SIMPLE>
++getlocal_WC_0        other@3
++opt_send_without_block <calldata!mid:x, argc:0, ARGS_SIMPLE>
++opt_minus            <calldata!mid:-, argc:1, ARGS_SIMPLE>
++getlocal_WC_0        other@2
++opt_send_without_block <calldata!mid:y, argc:0, FCALL|VCALL|ARGS_SIMPLE>
++getlocal_WC_0        other@3
++opt_send_without_block <calldata!mid:y, argc:0, ARGS_SIMPLE>
++opt_minus            <calldata!mid:-, argc:1, ARGS_SIMPLE>
++opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
++leave
+```
+
+The two `setlocal other@3; setlocal other@2` at the top are the self-stash and the arg-stash together (the inliner grew two new slots in the local table to hold the receiver and the argument from the erased call). Then the body of `distance_to`: four attr-reader sends, two subtractions, an addition.
+
+After that, every subsequent pass reports `(no change)`. No constants fold because there aren't any. No branches fold because there aren't any. No identities apply because `- 0` and `+ 0` don't show up. The benchmark: `{TBD-point-distance-ratio}`x.
+
+That is not a typo. Inlining shifted work from a call-and-return into the caller's instruction stream, but it didn't *delete* any of it — the six attr-reader sends still run, the two `opt_minus` still run, the `opt_plus` still runs. Plus the two stash-instructions the inliner just added. Inlining on its own rarely makes a microbenchmark faster; it makes the *next* pass possible. On this fixture no next pass applies, because there's no typed arithmetic folder yet and no `attr_reader`-through-`getinstancevariable` folder yet. The diff is visible, the benchmark isn't, and the right conclusion is that the inliner is waiting for its consumers to show up.
+
+### `sum_of_squares` — the peephole ceiling
+
+```ruby
+# @rbs (Integer) -> Integer
+def sum_of_squares(n)
+  s = 0
+  i = 1
+  while i <= n
+    s += i * i
+    i += 1
+  end
+  s
+end
+```
+
+I am going to show you the entire walkthrough:
+
+```
+### inlining           → (no change)
+### const_fold_tier2   → (no change)
+### const_fold         → (no change)
+### identity_elim      → (no change)
+### arith_reassoc      → (no change)
+### dead_branch_fold   → (no change)
+```
+
+Benchmark: `{TBD-sum-of-squares-ratio}`x. Converged in one iteration, which is a nicer way of saying nothing fired.
+
+This is the most useful demo of the three. The starting iseq is twenty-six instructions of loop preamble, header, body, increment, backedge, and `leave` — and none of it is literal-foldable, because everything interesting is loop-carried across the backedge. `s` starts at `0` but is immediately clobbered inside the body; `i` starts at `1` but is incremented every iteration; `i <= n` has an unknown RHS. And none of it is inlinable, because there's no `send` to inline.
+
+The passes don't fire for a structural reason. Every pass in the pipeline is a peephole: a short window walking forward through a straight-line basic block. `while` is CFG-shaped — the interesting transformations are the backedge itself, the loop invariants, the relationship between the `<=` guard and the increment — and no peephole window can see a backedge without crossing it, which none of them do. Loop-invariant hoisting wants to lift work above the loop header. Zero-trip elimination wants to notice `while false`. Bounds-reasoning wants to notice that `i` only increases. All three want a CFG analysis the pipeline does not have.
+
+This is the honest ceiling of a peephole optimizer. The roadmap has loop-aware passes on the "exploratory, not yet on any roadmap" list for a reason — the *first* loop-aware pass is strictly more infrastructure than everything I've built so far combined. §6 will come back to this.
+
+### A note on numbers
+
+All three fixtures run under `benchmark-ips` with the standard 2s warmup and 5s measurement, on a single machine, inside the ruby-bytecode MCP's Docker sandbox so nothing external can interfere mid-run. Ratios are harness-off vs. `Pipeline.default` on the same Ruby 4.0 binary — no JIT, no YJIT, no ZJIT. These fixtures were chosen to make the optimizer look good; the `sum_of_squares` number is the counterweight that keeps me honest about that. None of these is a production number and nothing about the methodology pretends otherwise.
 
 ## §6 — Tradeoffs (and when not to)
 
