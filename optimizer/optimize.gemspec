@@ -28,8 +28,8 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir.chdir(__dir__) do
     `git ls-files -z`.split("\x0").reject do |f|
-      f.start_with?("test/", "examples/", "bin/", "vendor/", "tmp/") ||
-        f.match?(%r{\A(Gemfile(\.lock)?|Rakefile|\.rubocop\.yml|\.gitignore)\z})
+      f.start_with?("test/", "examples/", "bin/", "vendor/", "tmp/", ".") ||
+        f.match?(%r{\A(Gemfile(\.lock)?|Rakefile)\z})
     end
   end
   spec.require_paths = ["lib"]
