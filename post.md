@@ -287,7 +287,7 @@ Twenty-four instructions on the minus side, six on the plus side. `6 == 6` folds
 
 `putobject true; branchunless 7` collapses to nothing — the branch can't be taken — and the `putobject 42; leave` that was right after it is now the entire taken arm. The `putobject_INT2FIX_0_; leave` that used to be the `else` arm is now unreachable from anywhere, and persists in the byte stream only because the pipeline is still a peephole optimizer and doesn't excise basic blocks.
 
-**End state.** `Pipeline#run` converges in `{TBD-polynomial-iters}` iterations. `compute` has gone from ten instructions to two:
+**End state.** `Pipeline#run` converges in 3 iterations. `compute` has gone from ten instructions to two:
 
 ```
 getlocal_WC_0 n@0
@@ -303,7 +303,7 @@ putobject_INT2FIX_0_   # unreachable
 leave                  # unreachable
 ```
 
-Benchmark: `{TBD-polynomial-ratio}`x vs. harness-off.
+Benchmark: 1.85x vs. harness-off.
 
 ### Point — the honest number
 
@@ -352,7 +352,7 @@ The benchmark's inner loop is three instructions in starting form — `getlocal 
 
 The two `setlocal other@3; setlocal other@2` at the top are the self-stash and the arg-stash together (the inliner grew two new slots in the local table to hold the receiver and the argument from the erased call). Then the body of `distance_to`: four attr-reader sends, two subtractions, an addition.
 
-After that, every subsequent pass reports `(no change)`. No constants fold because there aren't any. No branches fold because there aren't any. No identities apply because `- 0` and `+ 0` don't show up. The benchmark: `{TBD-point-distance-ratio}`x.
+After that, every subsequent pass reports `(no change)`. No constants fold because there aren't any. No branches fold because there aren't any. No identities apply because `- 0` and `+ 0` don't show up. The benchmark: 1.00x.
 
 That is not a typo. Inlining shifted work from a call-and-return into the caller's instruction stream, but it didn't *delete* any of it — the six attr-reader sends still run, the two `opt_minus` still run, the `opt_plus` still runs. Plus the two stash-instructions the inliner just added. Inlining on its own rarely makes a microbenchmark faster; it makes the *next* pass possible. On this fixture no next pass applies, because there's no typed arithmetic folder yet and no `attr_reader`-through-`getinstancevariable` folder yet. The diff is visible, the benchmark isn't, and the right conclusion is that the inliner is waiting for its consumers to show up.
 
@@ -384,7 +384,7 @@ I am going to show you the entire walkthrough:
 ### dead_branch_fold   → (no change)
 ```
 
-Benchmark: `{TBD-sum-of-squares-ratio}`x. Converged in one iteration, which is a nicer way of saying nothing fired.
+Benchmark: 1.00x. Converged in one iteration, which is a nicer way of saying nothing fired.
 
 This is the most useful demo of the three. The starting iseq is twenty-six instructions of loop preamble, header, body, increment, backedge, and `leave` — and none of it is literal-foldable, because everything interesting is loop-carried across the backedge. `s` starts at `0` but is immediately clobbered inside the body; `i` starts at `1` but is incremented every iteration; `i <= n` has an unknown RHS. And none of it is inlinable, because there's no `send` to inline.
 

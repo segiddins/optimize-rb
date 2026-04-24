@@ -31,8 +31,8 @@ end
 
 ```
 Comparison:
-  plain:   18063465.3 i/s
-  optimized:   18049266.5 i/s - 1.00x  slower
+  plain:   21595508.5 i/s
+  optimized:   21522240.6 i/s - 1.00x  slower
 ```
 
 ## Walkthrough
@@ -264,17 +264,17 @@ local table (size: 1, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ## Raw benchmark output
 
 ```
-ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
+ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-               plain     1.801M i/100ms
+               plain     2.174M i/100ms
 Calculating -------------------------------------
-               plain     18.063M (± 1.9%) i/s   (55.36 ns/i) -     91.868M in   5.087853s
-ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
+               plain     21.596M (± 1.4%) i/s   (46.31 ns/i) -    108.706M in   5.034658s
+ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-           optimized     1.725M i/100ms
+           optimized     2.171M i/100ms
 Calculating -------------------------------------
-           optimized     18.049M (± 1.6%) i/s   (55.40 ns/i) -     91.445M in   5.067772s
+           optimized     21.522M (± 3.5%) i/s   (46.46 ns/i) -    108.552M in   5.051631s
 Comparison:
-  plain:   18063465.3 i/s
-  optimized:   18049266.5 i/s - 1.00x  slower
+  plain:   21595508.5 i/s
+  optimized:   21522240.6 i/s - 1.00x  slower
 ```

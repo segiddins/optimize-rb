@@ -1,6 +1,6 @@
 # sum_of_squares demo
 
-Pipeline.default: **1.00x** vs unoptimized.
+Pipeline.default: **1.01x** vs unoptimized.
 
 Converged in 1 iterations (max across functions).
 
@@ -27,8 +27,8 @@ end
 
 ```
 Comparison:
-  plain:   432797.0 i/s
-  optimized:   431179.8 i/s - 1.00x  slower
+  optimized:   785085.3 i/s
+  plain:   774763.0 i/s - 1.01x  slower
 ```
 
 ## Walkthrough
@@ -168,17 +168,17 @@ local table (size: 3, argc: 1 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ## Raw benchmark output
 
 ```
-ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
+ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-               plain    43.681k i/100ms
+               plain    79.533k i/100ms
 Calculating -------------------------------------
-               plain    432.797k (± 2.6%) i/s    (2.31 μs/i) -      2.184M in   5.049966s
-ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
+               plain    774.763k (± 2.1%) i/s    (1.29 μs/i) -      3.897M in   5.032337s
+ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-           optimized    43.319k i/100ms
+           optimized    78.422k i/100ms
 Calculating -------------------------------------
-           optimized    431.180k (± 2.5%) i/s    (2.32 μs/i) -      2.166M in   5.026455s
+           optimized    785.085k (± 1.7%) i/s    (1.27 μs/i) -      4.000M in   5.095961s
 Comparison:
-  plain:   432797.0 i/s
-  optimized:   431179.8 i/s - 1.00x  slower
+  optimized:   785085.3 i/s
+  plain:   774763.0 i/s - 1.01x  slower
 ```

@@ -1,6 +1,6 @@
 # polynomial demo
 
-Pipeline.default: **2.16x** vs unoptimized.
+Pipeline.default: **1.85x** vs unoptimized.
 
 Converged in 3 iterations (max across functions).
 
@@ -30,8 +30,8 @@ end
 
 ```
 Comparison:
-  optimized:   35727594.7 i/s
-  plain:   16523702.6 i/s - 2.16x  slower
+  optimized:   37236287.3 i/s
+  plain:   20081313.7 i/s - 1.85x  slower
 ```
 
 ## Walkthrough
@@ -47,7 +47,7 @@ Replace `send` with the callee's body when the receiver is resolvable.
  opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
  leave
  == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
-+[ 2] n@0        [ 1] n@1
++[ 2] n@0        [ 1] ?@1
  opt_getconstant_path                   <ic:0 SCALE>
  putobject                              6
  opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
@@ -92,8 +92,8 @@ Replace `send` with the callee's body when the receiver is resolvable.
  putself                                                          (  13)
  putobject_INT2FIX_0_
 -opt_send_without_block                 <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
-+setlocal_WC_0                          n@1
-+getlocal_WC_0                          n@1
++setlocal_WC_0                          ?@1
++getlocal_WC_0                          ?@1
 +putobject                              2
 +opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
 +opt_getconstant_path                   <ic:2 SCALE>
@@ -146,8 +146,8 @@ Drop `setlocal X; getlocal X` pairs whose slot has no other refs.
  opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>
  leave
  putobject_INT2FIX_0_
--setlocal_WC_0                          n@1
--getlocal_WC_0                          n@1
+-setlocal_WC_0                          ?@1
+-getlocal_WC_0                          ?@1
  putobject                              2
  opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>
  opt_getconstant_path                   <ic:2 SCALE>
@@ -169,16 +169,18 @@ Rewrite frozen top-level constant references to their literal values.
  opt_mult                               <calldata!mid:*, argc:1, ARGS_SIMPLE>[CcCr]
  putobject                              12
  opt_div                                <calldata!mid:/, argc:1, ARGS_SIMPLE>[CcCr]
-@@ -36,7 +36,6 @@
+@@ -35,8 +35,7 @@
+ opt_plus                               <calldata!mid:+, argc:1, ARGS_SIMPLE>[CcCr]
  leave
  == block: run@/w/examples/polynomial.rb:12 (12,2)-(14,5)
- [ 2] n@0        [ 1] n@1
+-[ 2] n@0        [ 1] ?@1
 -opt_getconstant_path                   <ic:0 SCALE>
++[ 2] n@0        [ 1] n@1
  putobject                              6
  opt_eq                                 <calldata!mid:==, argc:1, ARGS_SIMPLE>[CcCr]
  branchunless                           26
 @@ -38,6 +37,7 @@
- [ 2] n@0        [ 1] n@1
+ [ 2] n@0        [ 1] ?@1
  opt_getconstant_path                   <ic:0 SCALE>
  putobject                              6
 +putobject                              6
@@ -394,17 +396,17 @@ local table (size: 2, argc: 0 [opts: 0, rest: -1, post: 0, block: -1, kw: -1@-1,
 ## Raw benchmark output
 
 ```
-ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
+ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-               plain     1.623M i/100ms
+               plain     1.913M i/100ms
 Calculating -------------------------------------
-               plain     16.524M (± 2.1%) i/s   (60.52 ns/i) -     82.764M in   5.010996s
-ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [aarch64-linux]
+               plain     20.081M (± 1.4%) i/s   (49.80 ns/i) -    101.391M in   5.049976s
+ruby 4.0.2 (2026-03-17 revision d3da9fec82) +PRISM [arm64-darwin23]
 Warming up --------------------------------------
-           optimized     3.532M i/100ms
+           optimized     3.670M i/100ms
 Calculating -------------------------------------
-           optimized     35.728M (± 1.4%) i/s   (27.99 ns/i) -    180.143M in   5.043091s
+           optimized     37.236M (± 3.1%) i/s   (26.86 ns/i) -    187.182M in   5.032007s
 Comparison:
-  optimized:   35727594.7 i/s
-  plain:   16523702.6 i/s - 2.16x  slower
+  optimized:   37236287.3 i/s
+  plain:   20081313.7 i/s - 1.85x  slower
 ```
