@@ -60,6 +60,7 @@ module Optimize
     def run(ir, type_env:, env_snapshot: nil)
       log = Log.new
       object_table = ir.misc && ir.misc[:object_table]
+      iseq_list    = ir.misc && ir.misc[:iseq_list]
       callee_map = build_callee_map(ir)
       slot_type_map, signature_map = build_type_maps(ir, type_env, object_table)
 
@@ -72,7 +73,7 @@ module Optimize
         # One-shot passes: run exactly once per function.
         one_shot_passes.each do |pass|
           run_single_pass(pass, function, type_env, log, object_table, callee_map,
-                          slot_type_map, signature_map, env_snapshot)
+                          slot_type_map, signature_map, env_snapshot, iseq_list)
         end
 
         # Iterative passes: sweep until rewrite_count stops growing. Cap at
@@ -85,7 +86,7 @@ module Optimize
             snapshot = log.rewrite_count
             iterative_passes.each do |pass|
               run_single_pass(pass, function, type_env, log, object_table, callee_map,
-                              slot_type_map, signature_map, env_snapshot)
+                              slot_type_map, signature_map, env_snapshot, iseq_list)
             end
             break if log.rewrite_count == snapshot
             if iterations >= MAX_ITERATIONS
@@ -102,7 +103,7 @@ module Optimize
     private
 
     def run_single_pass(pass, function, type_env, log, object_table, callee_map,
-                        slot_type_map, signature_map, env_snapshot)
+                        slot_type_map, signature_map, env_snapshot, iseq_list)
       pass.apply(
         function,
         type_env: type_env, log: log,
@@ -110,6 +111,7 @@ module Optimize
         slot_type_map: slot_type_map,
         signature_map: signature_map,
         env_snapshot: env_snapshot,
+        iseq_list: iseq_list,
       )
     rescue => e
       log.skip(pass: pass.name, reason: :pass_raised,

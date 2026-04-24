@@ -5,6 +5,7 @@ require "optimize/log"
 require "optimize/type_env"
 require "optimize/ir/slot_type_table"
 require "optimize/passes/inlining_pass"
+require "optimize/pipeline"
 
 class InliningPassTest < Minitest::Test
   def test_zero_arg_constant_fcall_inlined
@@ -759,6 +760,22 @@ class InliningPassTest < Minitest::Test
     # Semantic check: the VM must produce 20 (5*2 + 5*2).
     loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
     assert_equal 20, loaded.eval
+  end
+
+  def test_pipeline_passes_iseq_list_to_inlining
+    captured = nil
+    captor = Class.new(Optimize::Passes::InliningPass) do
+      define_method(:apply) do |function, **kwargs|
+        captured = kwargs[:iseq_list]
+        super(function, **kwargs)
+      end
+    end
+    src = "def magic; 42; end; def use_it; magic; end; use_it"
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    pipeline = Optimize::Pipeline.new([captor.new])
+    pipeline.run(ir, type_env: nil)
+    assert_same ir.misc[:iseq_list], captured,
+      "pipeline should pass iseq_list: into pass apply"
   end
 
   private
