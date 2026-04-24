@@ -60,18 +60,10 @@ layout: default
 
 # What we'll do
 
-<Toc maxDepth="1" mode="onlyCurrentTree" columns="2" />
-
-<div class="mt-8 italic text-base opacity-70">
-
-Here's the map. Feel free to leave after §3 if all you wanted was to read YARV.
-
-</div>
+<Toc maxDepth="1" columns="2" />
 
 <!--
 TOC slide. Auto-generated from H1 headings. Budget ~10s.
-
-Delivery: the "feel free to leave after §3" is a callback to §1's Matz-keynote joke. Don't over-sell it.
 -->
 
 ---
@@ -872,9 +864,19 @@ Optimize::Harness.install         # hook load_iseq process-wide
 fast = Optimize.optimize(src)     # one-shot: source -> new iseq
 ```
 
+<div class="mt-4" v-click>
+
+```ruby
+def RubyVM::InstructionSequence.load_iseq(path)
+  Optimize.optimize(File.read(path), path)
+end
+```
+
+</div>
+
 <v-clicks>
 
-- `.install` hooks the same `rb_iseq_load_iseq` path bootsnap's used for years — every subsequently-required file routes through the pipeline.
+- Hooks the same `rb_iseq_load_iseq` path bootsnap's used for years — every subsequently-required file routes through the pipeline.
 - Opt out per-file: `# rbs-optimize: false` in the first 5 lines.
 - Any codec or pipeline failure returns `nil`. MRI falls back to the normal compile path. *A slow method is acceptable; a miscompiled one is not.*
 
