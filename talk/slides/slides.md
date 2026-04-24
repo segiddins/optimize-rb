@@ -855,8 +855,643 @@ Delivery: the `.install` / `.optimize` split: process-wide hook vs. one-shot. Hi
 -->
 
 ---
+layout: cover
+class: text-center
+---
 
-<!-- §5 demos — TO BE DECOMPOSED -->
+# §5
+
+## Demos
+
+<div class="mt-12 italic opacity-80">
+
+What any of this actually *does* is a question of diffs.
+
+</div>
+
+<!--
+§5 divider + §4 ¶10 lift (post.md line 113, 115-117). Budget ~10s.
+
+Verbatim (lift from end of §4):
+"What any of this actually *does* to real code is a question you can only answer with a diff. Here are a few."
+
+¶1 of §5: "Three fixtures, each with a committed walkthrough that shows the before-and-after iseq for every pass that fires. Polynomial is the payoff — where every pass in the pipeline fires and the cascade collapses an arithmetic chain to almost nothing. Point is the inlining case — where the number gets small and I have to explain why that's fine. `sum_of_squares` is where every pass shrugs `(no change)`, and that's the most useful demo of the three."
+
+Delivery: set up all three fixtures in one breath, then dive into Polynomial.
+-->
+
+---
+layout: default
+---
+
+# Polynomial — the payoff
+
+```ruby
+SCALE = 6
+
+class Polynomial
+  # @rbs (Integer) -> Integer
+  def compute(n)
+    (n * 2 * SCALE / 12) + 0
+  end
+
+  # @rbs () -> Integer
+  def run
+    if SCALE == 6 then compute(42) else compute(0) end
+  end
+end
+```
+
+<!--
+§5 Polynomial setup (post.md lines 119–135). Budget ~20s.
+
+Delivery: read `compute` and `run` out loud once. Flag that RBS annotations tell us `compute` takes and returns Integer — that's what makes inlining safe later.
+-->
+
+---
+layout: default
+---
+
+# Starting iseq
+
+```text {all}{lines:false}
+== disasm: #<ISeq:compute@polynomial.rb:7>
+getlocal_WC_0        n@0
+putobject            2
+opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+opt_getconstant_path <ic:0 SCALE>
+opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+putobject            12
+opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+putobject_INT2FIX_0_
+opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+leave
+
+== disasm: #<ISeq:run@polynomial.rb:12>
+opt_getconstant_path <ic:0 SCALE>
+putobject            6
+opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
+branchunless         14
+putself
+putobject            42
+opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+leave
+putself
+putobject_INT2FIX_0_
+opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
+leave
+```
+
+<!--
+§5 Polynomial starting iseq (post.md lines 137–163). Budget ~30s.
+
+Verbatim (post line 165):
+"Ten instructions in `compute`, twelve in `run`, the usual bifurcated `if/else` in `run` where one arm leaves early and the other falls through. Nothing tricky. And now the pipeline runs."
+
+Delivery: say the instruction counts ("ten and twelve") out loud — audience needs an anchor number to compare against as passes fire.
+-->
+
+---
+layout: default
+---
+
+# Pass 1 — `inlining`
+
+```diff {all}{lines:false}
+ opt_getconstant_path <ic:0 SCALE>
+ putobject            6
+ opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
+-branchunless         14
+-putself
++branchunless         30
+ putobject            42
+-opt_send_without_block <calldata!mid:compute, argc:1, FCALL|ARGS_SIMPLE>
++setlocal_WC_0        n@0
++getlocal_WC_0        n@0
++putobject            2
++opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
++opt_getconstant_path <ic:1 SCALE>
++opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
++putobject            12
++opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
++putobject_INT2FIX_0_
++opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+ leave
+```
+
+<!--
+§5 Polynomial pass 1 (post.md lines 167–193). Budget ~50s.
+
+Verbatim:
+"The inliner sees two `opt_send_without_block :compute` call sites in `run`, resolves both to the visible `Polynomial#compute`, and splices the body at each site."
+
+After the diff:
+"Two things to notice. The new `setlocal_WC_0 n@0; getlocal_WC_0 n@0` pair at the top of the spliced body is the arg-stash — the inliner drops the argument `42` into the callee's local slot, then the very next instruction reads it back out. That's what 'call with one argument' *is*, at the bytecode level, once you've erased the call. The `putself` that used to receive the `send` is gone; so is the `send` itself. The `branchunless` target shifts from `14` to `30` because the body between it and the now-inlined code got longer. Same thing happens at the second call site (the `compute(0)` arm); I've only shown one."
+
+Delivery: call out the setlocal/getlocal pair ("arg-stash"). That's the shape dead-stash kills next.
+-->
+
+---
+layout: default
+---
+
+# Pass 2 — `dead_stash_elim`
+
+```diff {all}{lines:false}
+ putobject            42
+-setlocal_WC_0        n@0
+-getlocal_WC_0        n@0
+ putobject            2
+ opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+```
+
+<div class="mt-8 text-base" v-click>
+
+Matches <code>setlocal X; getlocal X</code> with no other references to X. Deletes both. Ninety lines of code. The whole pass.
+
+</div>
+
+<!--
+§5 Polynomial pass 2 (post.md lines 195–207). Budget ~30s.
+
+Verbatim:
+"The stash pairs the inliner just created are dead the instant they land. [...] This pass is ninety lines of code. It matches `setlocal X; getlocal X` where `X` has no other references, deletes both. That's the whole pass. It exists because the inliner creates exactly this shape, every time, and the pass that fires next needs the stream compacted before it can see the operand pairs it cares about."
+
+Delivery: the "ninety lines of code" line is the joke — this is the smallest imaginable pass, and it earns its seat in the pipeline by being exactly the shape the previous pass creates.
+-->
+
+---
+layout: default
+---
+
+# Pass 4 — `const_fold_tier2`
+
+```diff {all}{lines:false}
+ putobject            42
+ putobject            2
+ opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-opt_getconstant_path <ic:1 SCALE>
++putobject            6
+ opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+ putobject            12
+ opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+```
+
+<div class="mt-6 text-base" v-click>
+
+<code>SCALE = 6</code> at file top. Nothing reassigns it. Every <code>opt_getconstant_path &lt;ic:N SCALE&gt;</code> becomes <code>putobject 6</code> — cache lookup and invalidation machinery both gone.
+
+</div>
+
+<!--
+§5 Polynomial pass 4 (post.md lines 211–227). Budget ~45s.
+
+Verbatim:
+"The frozen-constant scanner sees `SCALE = 6` at the top of the file, confirms nothing reassigns it, and rewrites every `opt_getconstant_path <ic:N SCALE>` to `putobject 6`: [...] Both the `if SCALE == 6` condition at the top of `run` and the `SCALE` reference inside each inlined `compute` body get rewritten. The inline cache is gone; the path-lookup is gone; the instruction stream is now all-literal on both branches."
+
+Pass 3 (arith_reassoc) and pass 5 (const_fold_env) are "no change"; mention briefly but don't slow down. Saving those for P-8 summary.
+-->
+
+---
+layout: default
+---
+
+# Pass 6 — `const_fold` (the big one)
+
+```diff {all|1-4|5-16|17-22}{lines:false}
+-putobject            6
+-putobject            6
+-opt_eq               <calldata!mid:==, argc:1, ARGS_SIMPLE>
+-branchunless         26
+-putobject            42
+-putobject            2
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            6
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            12
+-opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+-putobject_INT2FIX_0_
+-opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+-leave
+-putobject_INT2FIX_0_
+-putobject            2
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            6
+-opt_mult             <calldata!mid:*, argc:1, ARGS_SIMPLE>
+-putobject            12
+-opt_div              <calldata!mid:/, argc:1, ARGS_SIMPLE>
+-putobject_INT2FIX_0_
+-opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
+-leave
++putobject            true
++branchunless         7
++putobject            42
++leave
++putobject_INT2FIX_0_
++leave
+```
+
+<!--
+§5 Polynomial pass 6 (post.md lines 230–267). Budget ~75s — the linger slide for §5.
+
+Verbatim:
+"Tier 1 const-fold walks the stream looking for operations whose operands are all literals. It has several of those: [...] Twenty-four instructions on the minus side, six on the plus side. `6 == 6` folds to `true`. `42 * 2 * 6 / 12 + 0` folds to `42`. `0 * 2 * 6 / 12 + 0` folds to `0`. Every operation in those chains has two literals on its operand stack; each one collapses; the results cascade up. This is the single most visible pass in the pipeline, and it runs in a couple hundred lines."
+
+Reveal steps: 1 = `6==6` → true, 2 = `42*2*6/12+0` → 42, 3 = `0*2*6/12+0` → 0.
+
+Delivery: read out "twenty-four on the minus side, six on the plus side" explicitly. That's the landing — single most visible pass.
+-->
+
+---
+layout: default
+---
+
+# Pass 8 — `dead_branch_fold`
+
+```diff {all}{lines:false}
+-putobject            true
+-branchunless         7
+-putobject            42
+-leave
+-putobject_INT2FIX_0_
+-leave
++putobject            42
++leave
++putobject_INT2FIX_0_
++leave
+```
+
+<div class="mt-6 text-base" v-click>
+
+<code>putobject true; branchunless 7</code> → gone. The branch can't be taken. The <code>putobject_INT2FIX_0_; leave</code> below is now unreachable (peephole optimizer; blocks aren't excised).
+
+</div>
+
+<!--
+§5 Polynomial pass 8 (post.md lines 271–288). Budget ~35s.
+
+Verbatim:
+"The `branchunless` from the const-fold output has a literal condition sitting immediately above it. That's exactly this pass's window: [...] `putobject true; branchunless 7` collapses to nothing — the branch can't be taken — and the `putobject 42; leave` that was right after it is now the entire taken arm. The `putobject_INT2FIX_0_; leave` that used to be the `else` arm is now unreachable from anywhere, and persists in the byte stream only because the pipeline is still a peephole optimizer and doesn't excise basic blocks."
+
+Delivery: call out "the pipeline is still a peephole optimizer" — that's the bridge to sum_of_squares later.
+-->
+
+---
+layout: default
+---
+
+# End state · Polynomial
+
+<div class="grid grid-cols-2 gap-6 mt-6">
+
+<div>
+
+**`compute` — 10 → 2**
+
+```text
+getlocal_WC_0 n@0
+leave
+```
+
+</div>
+
+<div>
+
+**`run` — 12 → 4**
+
+```text
+putobject     42
+leave
+putobject_INT2FIX_0_   # unreachable
+leave                  # unreachable
+```
+
+</div>
+
+</div>
+
+<div class="mt-8 text-base" v-click>
+
+Quiet passes: <code>arith_reassoc</code>, <code>const_fold_env</code>, <code>identity_elim</code> — <code>(no change)</code>. Converged in 3 iterations.
+
+</div>
+
+<div class="mt-6 text-3xl font-bold" v-click>
+
+Benchmark: **1.85×** vs. harness-off.
+
+</div>
+
+<!--
+§5 Polynomial end state (post.md lines 290–306). Budget ~45s.
+
+Verbatim:
+"End state. `Pipeline#run` converges in 3 iterations. `compute` has gone from ten instructions to two [...] `run` has gone from twelve to four (two live, two unreachable) [...] Benchmark: 1.85x vs. harness-off."
+
+Delivery: land the 1.85x as the Polynomial payoff. Explicitly. Then hold for a beat before pivoting to Point.
+-->
+
+---
+layout: default
+---
+
+# Point — the honest number
+
+```ruby
+class Point
+  attr_reader :x, :y
+
+  # @rbs (Integer, Integer) -> void
+  def initialize(x, y); @x = x; @y = y; end
+
+  # @rbs (Point) -> Integer
+  def distance_to(other)
+    (x - other.x) + (y - other.y)
+  end
+end
+
+p = Point.new(3, 5); q = Point.new(4, 6)
+1_000_000.times { p.distance_to(q) }
+```
+
+<!--
+§5 Point setup (post.md lines 308–325). Budget ~20s.
+
+Delivery: flag the RBS annotation on `distance_to` — types the receiver as Point, which is what lets the inliner statically resolve the call.
+-->
+
+---
+layout: default
+---
+
+# Starting iseq — and what RBS buys
+
+<div class="text-base mt-4">
+
+Inner loop is three instructions:
+
+</div>
+
+```text {all}{lines:false}
+getlocal_WC_0           p@0
+getlocal_WC_0           q@1
+opt_send_without_block  <calldata!mid:distance_to, argc:1, ARGS_SIMPLE>
+```
+
+<div class="mt-6 text-base" v-click>
+
+`# @rbs (Point) -> Integer` types `distance_to`'s receiver as `Point` — the inliner can resolve `p.distance_to(q)` statically and splice the body.
+
+</div>
+
+<!--
+§5 Point starting iseq + RBS hook (post.md line 327). Budget ~35s.
+
+Verbatim:
+"The benchmark's inner loop is three instructions in starting form — `getlocal p@0; getlocal q@1; opt_send_without_block :distance_to`. The RBS annotation on `distance_to` types its receiver as `Point`, which lets the inliner statically resolve `p.distance_to(q)` and splice the body."
+-->
+
+---
+layout: default
+---
+
+# Pass 1 — `inlining` (the only pass that fires)
+
+```diff {all}{lines:false}
+ getlocal_WC_0        p@0
+-getlocal_WC_0        q@1
+-opt_send_without_block <calldata!mid:distance_to, argc:1, ARGS_SIMPLE>
+-leave
++getlocal_WC_0        q@1
++setlocal_WC_0        other@3
++setlocal_WC_0        other@2
++getlocal_WC_0        other@2
++opt_send_without_block <calldata!mid:x, argc:0, FCALL|VCALL|ARGS_SIMPLE>
++getlocal_WC_0        other@3
++opt_send_without_block <calldata!mid:x, argc:0, ARGS_SIMPLE>
++opt_minus            <calldata!mid:-, argc:1, ARGS_SIMPLE>
++getlocal_WC_0        other@2
++opt_send_without_block <calldata!mid:y, argc:0, FCALL|VCALL|ARGS_SIMPLE>
++getlocal_WC_0        other@3
++opt_send_without_block <calldata!mid:y, argc:0, ARGS_SIMPLE>
++opt_minus            <calldata!mid:-, argc:1, ARGS_SIMPLE>
++opt_plus             <calldata!mid:+, argc:1, ARGS_SIMPLE>
++leave
+```
+
+<!--
+§5 Point inlining diff (post.md lines 329–353). Budget ~55s.
+
+Verbatim:
+"The two `setlocal other@3; setlocal other@2` at the top are the self-stash and the arg-stash together (the inliner grew two new slots in the local table to hold the receiver and the argument from the erased call). Then the body of `distance_to`: four attr-reader sends, two subtractions, an addition."
+
+Delivery: call out "four attr-reader sends, two subtractions, an addition." That count will matter for the "no savings" landing on the next slide.
+-->
+
+---
+layout: default
+---
+
+# Every other pass: `(no change)`
+
+<div class="text-lg mt-12 leading-relaxed max-w-4xl">
+
+No constants fold — there aren't any.
+No branches fold — there aren't any.
+No identities apply — no `+ 0`, no `* 1`.
+
+</div>
+
+<!--
+§5 Point quiet passes (post.md line 355). Budget ~20s.
+
+Verbatim:
+"After that, every subsequent pass reports `(no change)`. No constants fold because there aren't any. No branches fold because there aren't any. No identities apply because `- 0` and `+ 0` don't show up."
+-->
+
+---
+layout: default
+---
+
+# Benchmark: **1.00×**
+
+<div class="mt-4 text-base opacity-70">That is not a typo.</div>
+
+<div class="mt-8 text-base leading-relaxed max-w-4xl" v-click>
+
+Inlining shifted work from call-and-return into the caller's instruction stream — but it didn't *delete* any of it. Six attr-reader sends still run. Two `opt_minus` still run. One `opt_plus` still runs. Plus the two stash instructions the inliner just added.
+
+</div>
+
+<div class="mt-6 text-base italic leading-relaxed max-w-4xl" v-click>
+
+Inlining on its own rarely wins. It makes the *next* pass possible. On this fixture no next pass applies — no typed-arithmetic folder yet, no attr-reader-through-`getinstancevariable` folder yet.
+
+</div>
+
+<div class="mt-6 text-base" v-click>
+
+The diff is visible. The benchmark isn't. The inliner is waiting for its consumers to show up.
+
+</div>
+
+<!--
+§5 Point benchmark + explanation (post.md lines 355–357). Budget ~65s.
+
+Verbatim:
+"The benchmark: 1.00x. That is not a typo. Inlining shifted work from a call-and-return into the caller's instruction stream, but it didn't *delete* any of it — the six attr-reader sends still run, the two `opt_minus` still run, the `opt_plus` still runs. Plus the two stash-instructions the inliner just added. Inlining on its own rarely makes a microbenchmark faster; it makes the *next* pass possible. On this fixture no next pass applies, because there's no typed arithmetic folder yet and no `attr_reader`-through-`getinstancevariable` folder yet. The diff is visible, the benchmark isn't, and the right conclusion is that the inliner is waiting for its consumers to show up."
+
+Delivery: land "That is not a typo" as its own beat. Don't let it blend in. That 1.00× is the whole point of showing this demo — it's the *honest* number.
+-->
+
+---
+layout: default
+---
+
+# `sum_of_squares` — the peephole ceiling
+
+```ruby
+# @rbs (Integer) -> Integer
+def sum_of_squares(n)
+  s = 0
+  i = 1
+  while i <= n
+    s += i * i
+    i += 1
+  end
+  s
+end
+```
+
+<!--
+§5 sum_of_squares setup (post.md lines 361–371). Budget ~15s.
+
+Delivery: read the function out loud once. It's the simplest-looking of the three.
+-->
+
+---
+layout: default
+---
+
+# Starting iseq — 26 instructions
+
+<div class="text-sm mt-2 opacity-70">loop preamble · header · body · increment · backedge · leave</div>
+
+<div class="mt-6 text-base leading-relaxed max-w-4xl" v-click>
+
+`s` starts at `0` but is immediately clobbered inside the body.
+`i` starts at `1` but is incremented every iteration.
+`i <= n` has an unknown RHS.
+
+Everything interesting is loop-carried across the backedge.
+
+</div>
+
+<!--
+§5 sum_of_squares starting (post.md line 389). Budget ~25s.
+
+Verbatim:
+"The starting iseq is twenty-six instructions of loop preamble, header, body, increment, backedge, and `leave` — and none of it is literal-foldable, because everything interesting is loop-carried across the backedge. `s` starts at `0` but is immediately clobbered inside the body; `i` starts at `1` but is incremented every iteration; `i <= n` has an unknown RHS. And none of it is inlinable, because there's no `send` to inline."
+
+Showing the full 26-insn iseq would waste a slide; text describes it just as well. Delivery: emphasize "loop-carried across the backedge" — that phrase does the structural work.
+-->
+
+---
+layout: default
+---
+
+# The entire walkthrough
+
+```text
+### inlining           → (no change)
+### dead_stash_elim    → (no change)
+### arith_reassoc      → (no change)
+### const_fold_tier2   → (no change)
+### const_fold_env     → (no change)
+### const_fold         → (no change)
+### identity_elim      → (no change)
+### dead_branch_fold   → (no change)
+```
+
+<div class="mt-8 text-3xl font-bold" v-click>
+
+Benchmark: **1.00×**
+
+</div>
+
+<div class="mt-4 text-base italic" v-click>
+
+Converged in one iteration — a nicer way of saying nothing fired.
+
+</div>
+
+<!--
+§5 sum_of_squares walkthrough (post.md lines 373–387). Budget ~40s.
+
+Verbatim:
+"I am going to show you the entire walkthrough [...] Benchmark: 1.00x. Converged in one iteration, which is a nicer way of saying nothing fired. This is the most useful demo of the three."
+
+Delivery: read the eight (no change)s at a steady pace — same cadence each line. The silence builds the landing. Then 1.00× and the "nicer way of saying" line as the punchline.
+-->
+
+---
+layout: default
+---
+
+# The honest ceiling
+
+<v-clicks>
+
+- Every pass is a peephole — a short window walking forward through a basic block
+- `while` is **CFG-shaped**. The interesting transformations are the backedge, loop invariants, the relationship between `<=` and the increment.
+- No peephole window crosses a backedge. **None of them do.**
+
+</v-clicks>
+
+<div class="mt-8 text-base leading-relaxed max-w-4xl" v-click>
+
+Loop-invariant hoisting, zero-trip elim, bounds reasoning — all three want a CFG analysis this pipeline does not have. Roadmap.
+
+</div>
+
+<!--
+§5 sum_of_squares ceiling (post.md lines 391–393). Budget ~60s.
+
+Verbatim:
+"The passes don't fire for a structural reason. Every pass in the pipeline is a peephole: a short window walking forward through a straight-line basic block. `while` is CFG-shaped — the interesting transformations are the backedge itself, the loop invariants, the relationship between the `<=` guard and the increment — and no peephole window can see a backedge without crossing it, which none of them do. Loop-invariant hoisting wants to lift work above the loop header. Zero-trip elimination wants to notice `while false`. Bounds-reasoning wants to notice that `i` only increases. All three want a CFG analysis the pipeline does not have. This is the honest ceiling of a peephole optimizer. The roadmap has loop-aware passes on the 'exploratory, not yet on any roadmap' list for a reason — the *first* loop-aware pass is strictly more infrastructure than everything I've built so far combined. §6 will come back to this."
+
+Delivery: this is the structural pivot to §6. Don't rush "the first loop-aware pass is strictly more infrastructure than everything I've built so far combined" — that's the weight behind why the 1.00× is honest, not a bug.
+-->
+
+---
+layout: default
+---
+
+# A note on numbers
+
+<v-clicks>
+
+- `benchmark-ips`, 2s warmup, 5s measurement
+- Ruby 4.0 binary — no JIT, no YJIT, no ZJIT
+- Inside the ruby-bytecode MCP's Docker sandbox
+- Ratios: harness-off vs. `Pipeline.default` on the same binary
+
+</v-clicks>
+
+<div class="mt-8 italic text-base" v-click>
+
+These fixtures were chosen to make the optimizer look good. The `sum_of_squares` number keeps me honest about that.
+
+</div>
+
+<!--
+§5 methodology (post.md lines 395–397). Budget ~30s.
+
+Verbatim:
+"All three fixtures run under `benchmark-ips` with the standard 2s warmup and 5s measurement, on a single machine, inside the ruby-bytecode MCP's Docker sandbox so nothing external can interfere mid-run. Ratios are harness-off vs. `Pipeline.default` on the same Ruby 4.0 binary — no JIT, no YJIT, no ZJIT. These fixtures were chosen to make the optimizer look good; the `sum_of_squares` number is the counterweight that keeps me honest about that. None of these is a production number and nothing about the methodology pretends otherwise."
+
+Delivery: the last click is the self-disarm. Say it with a small grin.
+-->
 
 ---
 
