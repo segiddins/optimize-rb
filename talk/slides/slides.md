@@ -1494,8 +1494,150 @@ Delivery: the last click is the self-disarm. Say it with a small grin.
 -->
 
 ---
+layout: cover
+class: text-center
+---
 
-<!-- §6 tradeoffs — TO BE DECOMPOSED -->
+# §6
+
+## Tradeoffs (and when not to)
+
+<div class="mt-12 text-xl italic opacity-80">
+
+A violated contract clause is a miscompile.
+
+</div>
+
+<!--
+§6 divider + §6 ¶1 (post.md line 401). Budget ~10s.
+
+Verbatim: "A violated contract clause is a miscompile."
+
+Delivery: let that sentence sit.
+-->
+
+---
+layout: default
+---
+
+# When the contract breaks
+
+<v-clicks>
+
+- Reassign `SCALE = 12` mid-run → `Polynomial#run` returns **42 forever**. The whole chain folded to `putobject 42` at install time — the `42` has forgotten where it came from.
+- Late-`prepend` an override of `Integer#*` → the BOP flag fires, but the `opt_mult` it was guarding has been folded away. The override never runs.
+- Lie in an RBS signature → an inlined `+` crashes on a receiver the optimizer proved couldn't exist.
+
+</v-clicks>
+
+<div class="mt-8 italic text-base" v-click>
+
+Every one of those is a bug in the program, not the optimizer. None of them existed before the optimizer ran.
+
+</div>
+
+<!--
+§6 ¶2 (post.md line 403). Budget ~60s.
+
+Verbatim:
+"Reassign `SCALE = 12` halfway through a run and `Polynomial#run` returns `42` forever — §5 folded the whole `42 * 2 * SCALE / 12 + 0` chain down to `putobject 42` at install time, so there is no `opt_getconstant_path`, no `opt_mult`, no `opt_div` left in the iseq for the reassignment to invalidate. A JIT would deoptimize on a guard failure; the stamped iseq has no guards to deoptimize from. The `42` is a literal now; it has forgotten where it came from. Late-`prepend` an override of `Integer#*` and the BOP flag does invalidate on cue — but the `opt_mult` that flag was guarding has been folded away, and with it any chance of the override running. Lie in an RBS signature — claim an `Integer` return that's sometimes `nil` — and an inlined `+` crashes on a receiver the optimizer proved couldn't exist. Every one of those is a bug in the program, not in the optimizer, but none of them existed before the optimizer ran."
+
+Delivery: "has forgotten where it came from" is the sentence that lands this — it's the optimizer losing its guards. Final click is the landing: none existed before the optimizer ran.
+-->
+
+---
+layout: default
+---
+
+# What breaks even without a miscompile
+
+<v-clicks>
+
+- Inlining erases callee frames from the backtrace — `NoMethodError` inside a spliced method surfaces on a line the caller didn't write
+- `TracePoint` stops seeing `:call` / `:return`; `Coverage` stops marking inlined lines
+- Dead-branch drops arms → `Coverage.result` reports them unexecuted → a coverage-gated CI fails the build for a branch the source still contains
+
+</v-clicks>
+
+<div class="mt-8 italic text-base" v-click>
+
+Every tool that reaches for the iseq sees a program the `.rb` file doesn't match.
+
+</div>
+
+<!--
+§6 ¶3 (post.md line 405). Budget ~60s.
+
+Verbatim:
+"Inlining erases the callee's frame from the backtrace — splice `point.translate(dx, dy)` into its caller and a `NoMethodError` inside the body surfaces in the caller's line range, on an instruction the caller didn't write. `TracePoint` stops seeing the inlined `:call` and `:return` events. `Coverage` stops marking the inlined lines. Dead-branch elimination drops the eliminated arm entirely, so `Coverage.result` reports its lines unexecuted and a coverage-gated CI pipeline fails the build for a branch the source still contains. Nothing here is a miscompile — the rewritten program is exactly what the contract said was legal — but every tool that reaches for the iseq sees a program the `.rb` file doesn't match."
+
+Delivery: the "every tool that reaches for the iseq" line is the landing. These aren't bugs, they're drift — and the drift lives in whatever's watching.
+-->
+
+---
+layout: default
+---
+
+# Pinned to one Ruby minor
+
+<v-clicks>
+
+- A pass that pattern-matches on `opt_plus` and `setlocal_WC_0` is pinned to whatever 4.0 called those and whatever operands they took
+- 4.1 is free to rename, reshape, or retire any of them — loader rejects a stale binary rather than running it wrong
+
+</v-clicks>
+
+<div class="mt-8 text-base leading-relaxed max-w-4xl" v-click>
+
+YJIT and ZJIT pay this cost **at boot**, from source.
+A pipeline that stamps binaries pays it **by hand**, every minor.
+
+</div>
+
+<!--
+§6 ¶4 (post.md line 407). Budget ~40s.
+
+Verbatim:
+"The iseq binary format is pinned to one Ruby minor. A pass that matches on `opt_plus` and `setlocal_WC_0` is pinned to whatever 4.0 called those and whatever operands they took; 4.1 is free to rename, reshape, or retire any of them, and the loader rejects a stale binary immediately rather than running it wrong. YJIT and ZJIT pay this cost at boot, from source. A pipeline that stamps binaries pays it by hand, every minor."
+
+Delivery: land the at-boot / by-hand contrast.
+-->
+
+---
+layout: default
+---
+
+# When not to
+
+<v-clicks>
+
+- Reloading code in development → not for you
+- APM `prepend`ing into `ActiveRecord` for flamegraphs → not for you
+- Coverage gate is load-bearing and an inlined suite surprises it → not for you
+- Tracking Ruby `master` week by week → not for you
+
+</v-clicks>
+
+<div class="mt-8 text-base leading-relaxed max-w-4xl" v-click>
+
+What's left is non-trivial — background workers pinned to a Ruby version, long-running daemons, CLI tools, benchmark harnesses.
+
+</div>
+
+<div class="mt-4 italic text-base" v-click>
+
+For most of that slice, the honest recommendation is still YJIT. It has spent five years earning the guards I didn't write.
+
+</div>
+
+<!--
+§6 ¶5 (post.md line 411). Budget ~60s.
+
+Verbatim:
+"'When not to' falls out of the list. If the program reloads code in development, not for you. If an APM is `prepend`ing into `ActiveRecord` so every query ends up in a flamegraph, not for you. If the coverage gate is load-bearing and an inlined test suite surprises it, not for you. If you're on Ruby `master` tracking the VM week by week, not for you. What's left is a non-trivial slice — a background worker pinned to a Ruby version, a long-running daemon, a CLI tool, a benchmark harness — and for most of that slice the honest recommendation is still YJIT, which has spent five years earning the guards I didn't write."
+
+Delivery: read the four "not for you"s with the same cadence — almost a litany. The last click is the self-disarm: YJIT earned the guards you didn't write.
+-->
 
 ---
 
