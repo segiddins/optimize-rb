@@ -2,7 +2,8 @@
 source "https://rubygems.org"
 ruby "4.0.2"
 
-gem "prism", "~> 1.2"
+gemspec
+
 gem "benchmark-ips", "~> 2.14"
 gem "diff-lcs", "~> 1.5"
 
