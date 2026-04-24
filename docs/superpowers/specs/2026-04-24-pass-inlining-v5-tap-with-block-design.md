@@ -68,7 +68,7 @@ Given caller region `R; send mid argc:0, blk` where `R` is the single-instructio
 
    c. Build a per-splice remap for every level-0 local index in the block's local table. Parameter slots map to the matching `A_i`. Non-parameter slots (block-internal temps) map to freshly allocated slots in the enclosing scope via the same allocator v4 uses for callee temps. Splice the block body inline applying this remap to every `getlocal`/`setlocal` level-0 operand.
 
-   d. Rewrite every `leave` at block scope top to `jump L_block_end`, where `L_block_end` is the label placed at the first instruction after the spliced block body. The block's net stack effect (+1) is preserved; the callee continues executing from `L_block_end` with the block's return value on top of the stack.
+   d. The block is required to have exactly one `leave` at block scope top (guarded). Drop that trailing `leave` and splice `block.instructions[0..-2]`. Because the block has no branches (guarded via `BLOCK_FORBIDDEN`), no label or jump is needed — the block's return value naturally ends up on top of the stack at the splice point.
 
 3. **Callee trailing `leave`.** Handled identically to v4: converted to `jump L_call_end` (or dropped if already last) so the caller's original trailing `leave` executes next.
 
@@ -80,8 +80,7 @@ The splice is shaped so the fixed-point cleanup cascade closes the gap without a
 putobject 5
 setlocal_WC_0 R_slot          # (1) receiver stash
 setlocal_WC_0 A0              # (2b) stash invokeblock arg (self=5)
-putnil                        # (2c) block body
-                              # (2c) block leave → fallthrough to L_block_end
+putnil                        # (2c) block body (leave dropped by 2d)
 pop                           # callee's `pop` after invokeblock
 getlocal_WC_0 R_slot          # (1) callee's second putself
                               # (3) callee leave → fallthrough to L_call_end
@@ -104,8 +103,8 @@ Final: `putobject 5; leave`.
 | callee resolvable in `callee_map` and v4-inlineable | `:callee_not_inlineable` | reuse v4 preconditions |
 | block has empty catch table | `:block_has_catch_table` | no escape handling |
 | block has no level-1 local access | `:block_captures_level1` | no captures scope |
-| block uses no opcode in `BLOCK_FORBIDDEN` (`throw`, `break`, `next`, `redo`, `invokesuper*`, `send mid:lambda`, block/proc creation) | `:block_escapes` | no escapes scope |
-| every block `leave` is at block scope top | `:block_nested_leave` | straight-line splice |
+| block uses no opcode in `BLOCK_FORBIDDEN` (any `CONTROL_FLOW_OPCODES` entry, `throw`, `break`, `next`, `redo`, `invokesuper*`, `send` with block iseq, block/proc creation) | `:block_escapes` | no escapes / straight-line splice |
+| block has a single trailing `leave` and no other `leave` | `:block_nested_leave` | drop-and-splice with no label/jump |
 | every `invokeblock` site inside callee has `ARGS_SIMPLE`, known `argc`, no splat/kw | `:invokeblock_complex_call` | mirrors v4 calldata restrictions |
 
 Every skip path calls `log.skip(pass: :inlining, reason:, file:, line:)` so the §5 demo walkthrough renders the exact bailout reason.
