@@ -49,6 +49,26 @@ module Optimize
     # Raised when an object kind in the IBF object table is not yet implemented.
     class UnsupportedObjectKind < StandardError; end
 
+    # Raised when the IBF header's version stamp does not match the version this
+    # codec was written against. The CRuby loader makes the same check and raises
+    # "unmatched version file"; mirror that behavior here so a cross-version
+    # binary fails at decode with a clear error instead of producing nonsense.
+    class UnmatchedIBFVersion < StandardError
+      attr_reader :expected_major, :expected_minor, :actual_major, :actual_minor
+
+      def initialize(expected_major:, expected_minor:, actual_major:, actual_minor:)
+        @expected_major = expected_major
+        @expected_minor = expected_minor
+        @actual_major   = actual_major
+        @actual_minor   = actual_minor
+        super(
+          "IBF version mismatch: codec targets Ruby #{expected_major}.#{expected_minor}, " \
+          "binary has #{actual_major}.#{actual_minor}. Recompile the source with the " \
+          "targeted Ruby, or port the codec to this Ruby version."
+        )
+      end
+    end
+
     # Deprecated. The encoder now supports length-changing edits via IR-driven
     # re-serialization (see Task 5 of the codec length-changes plan). Kept for
     # backwards compatibility with callers that rescue it; no code in this repo

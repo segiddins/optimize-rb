@@ -108,6 +108,21 @@ class RoundTripTest < Minitest::Test
     assert_equal original.byteslice(0, header_len), writer.buffer
   end
 
+  def test_unmatched_ibf_version_raises
+    original = RubyVM::InstructionSequence.compile("1 + 2").to_binary
+    # Header layout: magic(4) major_version(4) minor_version(4) ...
+    # Rewrite the major version to a value the codec doesn't target.
+    bogus = original.dup
+    bogus[4, 4] = [99].pack("V")
+
+    err = assert_raises(Optimize::Codec::UnmatchedIBFVersion) do
+      Optimize::Codec.decode(bogus)
+    end
+    assert_equal 99, err.actual_major
+    assert_equal Optimize::Codec::Header::IBF_EXPECTED_MAJOR_VERSION, err.expected_major
+    assert_match(/IBF version mismatch/, err.message)
+  end
+
   def test_u64_to_i64_boundaries
     assert_equal 0,                 Optimize::Codec::InstructionStream.u64_to_i64(0)
     assert_equal 1,                 Optimize::Codec::InstructionStream.u64_to_i64(1)

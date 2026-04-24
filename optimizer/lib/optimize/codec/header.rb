@@ -33,7 +33,9 @@ module Optimize
       BYTE_SIZE = 40
 
       # Decode a Header from the current position of +reader+.
-      # Raises Optimize::Codec::MalformedBinary if the magic bytes are wrong.
+      # Raises Optimize::Codec::MalformedBinary if the magic bytes are wrong,
+      # or Optimize::Codec::UnmatchedIBFVersion if the version stamp doesn't
+      # match the version this codec targets.
       def self.decode(reader)
         magic                    = reader.read_bytes(4)
         unless magic == "YARB".b
@@ -41,6 +43,15 @@ module Optimize
         end
         major_version            = reader.read_u32
         minor_version            = reader.read_u32
+        if major_version != Header::IBF_EXPECTED_MAJOR_VERSION ||
+           minor_version != Header::IBF_EXPECTED_MINOR_VERSION
+          raise Codec::UnmatchedIBFVersion.new(
+            expected_major: Header::IBF_EXPECTED_MAJOR_VERSION,
+            expected_minor: Header::IBF_EXPECTED_MINOR_VERSION,
+            actual_major:   major_version,
+            actual_minor:   minor_version,
+          )
+        end
         size                     = reader.read_u32
         extra_size               = reader.read_u32
         iseq_list_size           = reader.read_u32
@@ -90,5 +101,15 @@ module Optimize
         writer.write_bytes(padding)
       end
     end
+
+    # The IBF version this codec was written against. CRuby defines
+    # IBF_MAJOR_VERSION / IBF_MINOR_VERSION as ruby_api_version[0] / [1];
+    # for Ruby 4.0.x that's (4, 0). The CRuby loader rejects any binary
+    # whose stamps don't match exactly — mirror that here so a
+    # cross-version blob fails at decode instead of producing nonsense.
+    # Defined outside the Struct.new block because constants declared
+    # inside it land on the enclosing module, not on the struct itself.
+    Header::IBF_EXPECTED_MAJOR_VERSION = 4
+    Header::IBF_EXPECTED_MINOR_VERSION = 0
   end
 end
