@@ -29,14 +29,49 @@ layout: default
 
 # About me
 
-<!--
-Cue: ~30s total. Three facts, don't dwell:
-- Samuel Giddins / @segiddins
-- Past life: bugs for RubyGems & Bundler
-- Now: Security Engineer at Persona, thinking about Ruby/Rails performance
-- Closing line: "This is not the talk about any of that professional work."
+<div class="mt-8 space-y-3 text-lg">
 
-Post.md lines 13–22.
+- **Samuel Giddins** · `@segiddins` everywhere
+- Past life: bugs for **RubyGems & Bundler**
+- Now: Security Engineer at **Persona** — Ruby / Rails performance at scale
+
+</div>
+
+<div class="mt-12 italic text-base opacity-75">
+
+This is not the talk about any of that professional work.
+
+</div>
+
+<!--
+§About (post.md lines 13–22). Budget ~30s.
+
+Three facts, don't dwell. Closing line is the pivot into §1. Post.md:
+
+"Hi, my name is Samuel Giddins, and you can find me as `@segiddins` almost everywhere on the internet."
+"In a past life, I wrote bugs for RubyGems & Bundler."
+"I'm currently a Security Engineer at Persona, where we're building the identity layer of the internet. I wear many many hats (even though my head really only fits one), but the tl;dr is I fix stuff that's broken, and I build systems to help keep the company & our customers' data safe."
+"Since I joined Persona, I've been fortunate to help the team prepare to scale for some really big customer launches, and as a result I've spent a lot of time thinking about ruby & rails performance. This is not the talk about any of that professional work."
+-->
+
+---
+layout: default
+---
+
+# What we'll do
+
+<Toc maxDepth="1" mode="onlyCurrentTree" columns="2" />
+
+<div class="mt-8 italic text-base opacity-70">
+
+Here's the map. Feel free to leave after §3 if all you wanted was to read YARV.
+
+</div>
+
+<!--
+TOC slide. Auto-generated from H1 headings. Budget ~10s.
+
+Delivery: the "feel free to leave after §3" is a callback to §1's Matz-keynote joke. Don't over-sell it.
 -->
 
 ---
@@ -1640,5 +1675,261 @@ Delivery: read the four "not for you"s with the same cadence — almost a litany
 -->
 
 ---
+layout: cover
+class: text-center
+---
 
-<!-- §7 close — TO BE DECOMPOSED -->
+# §7
+
+## Close
+
+<!--
+§7 section divider. Budget ~3s.
+-->
+
+---
+layout: default
+---
+
+# What you have now
+
+<v-clicks>
+
+- Every pass in this pipeline is the kind of code that fits in an afternoon — once you've stared at enough `disasm` to recognize the pattern
+- The hard day is the first one: convincing `to_binary` and `load_from_binary` to round-trip an iseq you've touched without segfaulting
+- After that it's a compounding effect — one pass feeds the next
+
+</v-clicks>
+
+<div class="mt-8 italic text-lg" v-click>
+
+You will learn more about YARV in a weekend of doing this than in any number of weekends of reading about it.
+
+</div>
+
+<div class="mt-4 text-lg font-semibold" v-click>
+
+Writing a bad optimizer is how you earn the right to read a good one.
+
+</div>
+
+<!--
+§7 ¶1 (post.md line 415). Budget ~75s.
+
+Verbatim:
+"The pitch at the top of this was that by the end, you'd be able to read a YARV listing, know why reasonable Ruby doesn't get optimized the obvious way, and have permission to go write your own terrible optimizer for a weekend. Anyways — every pass in this pipeline is the kind of code that fits in an afternoon once you've stared at enough disasm to recognize the pattern; the hard day is the first one, convincing `to_binary` and `load_from_binary` to round-trip an iseq you've touched without segfaulting. After that it's a compounding effect — one pass feeds the next. You will learn more about YARV in a weekend of doing this than in any number of weekends of reading about it. Writing a bad optimizer is how you earn the right to read a good one."
+
+Delivery: the last click is the landing sentence of the talk-so-far. Say it like you mean it.
+-->
+
+---
+layout: default
+---
+
+# Origin story
+
+<v-clicks>
+
+- The talk I originally pitched was about hand-editing a couple of iseqs. Reach into the binary with `to_binary`, swap an `opt_plus` for `putobject 5`, feed it back through `load_from_binary`, show a benchmark. **Three or four slides.**
+- Then somewhere around the second iseq: *vibe-coding an actual optimizer on top of the round-trip seemed like a more fun way to learn what goes into one than flipping bytes by hand.*
+- So I wrote a prompt or two, had Claude Code build the pipeline, and the talk grew to match.
+
+</v-clicks>
+
+<!--
+§7 ¶2 (post.md line 417). Budget ~50s.
+
+Verbatim:
+"The talk I originally pitched was about hand-editing a couple of iseqs. Reach into the binary with `to_binary`, swap an `opt_plus` for a `putobject 5`, feed it back through `load_from_binary`, show you the benchmark. Three or four slides, basically an excuse to learn what was in those bytes. Then somewhere around the second iseq it occurred to me that vibe-coding an actual optimizer on top of the round-trip seemed like a more fun way to learn what goes into one than flipping bytes by hand. So I wrote a prompt or two, had Claude Code build the pipeline, and the talk grew to match."
+
+Delivery: say "vibe-coding" without shame. This is the pivot that makes §7 E–G land.
+-->
+
+---
+layout: default
+---
+
+# sum_of_squares, again
+
+<v-clicks>
+
+- §5 showed every peephole pass shrug `(no change)` on this fixture
+- Handed the same iseq to Claude directly — **no IR framework, no pass infrastructure**. Just the JSON array of instructions and one rule: *return something semantically equivalent, validated on five inputs.*
+- First try: `[["getlocal_WC_0", 4], ["leave"]]`. **Two instructions, zero correct.**
+- I pasted the validator errors back.
+
+</v-clicks>
+
+<!--
+§7 ¶3 setup (post.md line 419 first half). Budget ~45s.
+
+Verbatim:
+"`sum_of_squares` in §5 was the demo where every peephole pass shrugged `(no change)`. The window can't see across a backedge; the pipeline has no notion of reachability. So I handed the same iseq to Claude directly — no IR framework, no pass infrastructure, just the JSON array of instructions and the rule 'return something semantically equivalent, validated on five inputs.' First try it returned `[['getlocal_WC_0', 4], ['leave']]`. Two instructions, zero of them correct. I pasted the validator errors back."
+
+Delivery: let "two instructions, zero of them correct" sit. Set up the reversal on the next slide.
+-->
+
+---
+layout: default
+---
+
+# Second try
+
+```diff {all}{lines:false}
+--- sum_of_squares, original (26 insns)
++++ sum_of_squares, after Claude (21 insns)
+ putobject_INT2FIX_0_
+ setlocal_WC_0        s@4
+ putobject_INT2FIX_1_
+ setlocal_WC_0        i@3
+-jump                 18
+-putnil
+-pop
+-jump                 18
++jump                 15
+ getlocal_WC_0        s@4
+ getlocal_WC_0        i@3
+ getlocal_WC_0        i@3
+ opt_mult
+ opt_plus
+ setlocal_WC_0        s@4
+ getlocal_WC_0        i@3
+ putobject_INT2FIX_1_
+ opt_plus
+ setlocal_WC_0        i@3
+ getlocal_WC_0        i@3
+ getlocal_WC_0        n@5
+ opt_le
+-branchif             8
+-putnil
+-pop
++branchif             5
+ getlocal_WC_0        s@4
+ leave
+```
+
+<!--
+§7 big diff (post.md lines 421–452). Budget ~60s — let the audience read the diff. Just gesture at the key moves; next slide does the explaining.
+
+Delivery: don't try to read it out loud. Let it sit. Say something like "that's five instructions gone and both branches renumbered" and advance.
+-->
+
+---
+layout: default
+---
+
+# What Claude did
+
+<v-clicks>
+
+- **A `putnil; pop; jump` in the prelude** that no live edge ever reached → gone
+- **A trailing `putnil; pop`** on a path already falling through to `leave` → gone
+- **Both surviving branches renumbered** to track the shift: `jump 18 → 15`, `branchif 8 → 5`
+
+</v-clicks>
+
+<div class="mt-8 text-base leading-relaxed max-w-4xl" v-click>
+
+That's **CFG-level dead-code elimination** — reachability analysis, basic-block excision, PC arithmetic on every branch that survives.
+
+</div>
+
+<div class="mt-4 italic text-base" v-click>
+
+It's the first item on §5's "exploratory, not yet on any roadmap" list — and it is exactly what my pipeline's six passes shrugged through to not do on this fixture.
+
+</div>
+
+<!--
+§7 ¶4 (post.md line 454). Budget ~65s.
+
+Verbatim:
+"Five instructions gone. A `putnil; pop; jump` in the prelude that no live edge ever reached, and a trailing `putnil; pop` on a path that was already going to fall through to `leave`. And — this is the part that matters — both surviving branches renumbered (`jump 18` to `jump 15`, `branchif 8` to `branchif 5`) to track the shift. That's CFG-level dead-code elimination: reachability analysis, basic-block excision, PC arithmetic on every branch that survives. It's the first item on §5's 'exploratory, not yet on any roadmap' list, and it is exactly what my pipeline's six passes shrugged through to not do on this fixture."
+
+Delivery: emphasize the renumbering — **that's** what makes this CFG-level, not peephole. Anyone can delete instructions; the renumbering is where it becomes a real compiler pass.
+-->
+
+---
+layout: default
+---
+
+# Of course
+
+<v-clicks>
+
+- My pipeline can't do that.
+- A real JIT absolutely can, with guards attached. Every effect-analysis and deoptimization slide at this conference this week is in service of doing it safely.
+- Claude, with no framework and two shots, did it because the weight of **every optimizing-compiler textbook ever written** is sitting in its context.
+
+</v-clicks>
+
+<div class="mt-8 italic text-base leading-relaxed max-w-4xl" v-click>
+
+It only had to land on the shape once — on a transformation the thing I built cannot express.
+
+</div>
+
+<!--
+§7 ¶5 (post.md line 456). Budget ~60s.
+
+Verbatim:
+"Of course — my pipeline can't do that. A real JIT absolutely can, with guards attached; every effect-analysis and deoptimization slide at this conference this week is in service of doing it safely. Claude, with no framework and two shots, did it because the weight of every optimizing-compiler textbook ever written is sitting in its context, and it only had to land on the shape once — on a transformation the thing I built cannot express."
+
+Delivery: the "only had to land on the shape once" line is the landing. Say it with weight — this is the Claude capstone. The model isn't magic; it's a compression of everything that's been written about compilers, and it found the shape my pipeline couldn't.
+-->
+
+---
+layout: default
+class: text-center
+---
+
+# <span class="font-mono">gem install optimize</span>
+
+<div class="mt-10 text-2xl">
+
+`github.com/segiddins/optimize-rb`
+
+</div>
+
+<div class="mt-12 text-lg italic opacity-80">
+
+If you're brave — go break some YARV for yourselves.
+
+</div>
+
+<!--
+§7 ¶6 (post.md line 458). Budget ~20s.
+
+Verbatim:
+"Anyways. The repo is at github.com/segiddins/optimize-rb; if you're brave, `gem install optimize` and go break some YARV for yourselves."
+
+Delivery: show the URL and the install line; grin. This is the invitation.
+-->
+
+---
+layout: cover
+class: text-center
+---
+
+# Thank you
+
+<div class="mt-12 text-xl italic opacity-80">
+
+This was a love letter to a bad idea.
+
+</div>
+
+<div class="mt-4 text-base opacity-60">
+
+@segiddins · RubyKaigi 2026
+
+</div>
+
+<!--
+§7 ¶7 (post.md line 460). Closing slide.
+
+Verbatim:
+"This was a love letter to a bad idea. Thanks for reading it."
+
+Delivery: the "love letter to a bad idea" is the callback to Slide A of §1. End on it. Thank the audience and hand off to Q&A / Matz keynote.
+-->
