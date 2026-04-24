@@ -6,7 +6,7 @@
 
 As many talks this week have focused on, MRI is a stack-based bytecode VM implementation of Ruby. That bytecode is what _actually_ runs when you feed ruby source into MRI.
 Dozens of people at this conference have put in real work to improve ruby performance for everyone, at every level of the stack. I am not one of them.
-After looking at a bunch of `ISEQ`s (bytecode instruction sequences), I had a terrible idea: what if I made my ruby faster by hand-optimizing the ISEQs that ruby itself compiles to? Of course, I went way overboard — instead of making some edits by hand, I hand-wrote a prompt or two and had Claude build an entire ISEQ-optimizing compiler.
+After looking at a bunch of iseqs (bytecode instruction sequences), I had a terrible idea: what if I made my ruby faster by hand-optimizing the iseqs that ruby itself compiles to? Of course, I went way overboard — instead of making some edits by hand, I hand-wrote a prompt or two and had Claude build an entire iseq-optimizing compiler.
 
 You should not do this in production. I'm not going to pretend otherwise. But if you want to know what YARV actually does, and why your perfectly reasonable Ruby doesn't get optimized the way you think it should — this is, to use an overloaded term, a love letter to a bad idea.
 
@@ -16,7 +16,7 @@ Hi, my name is Samuel Giddins, and you can find me as `@segiddins` almost everyw
 
 In a past life, I wrote bugs for RubyGems & Bundler.
 
-I'm currently a Security Engineer at Persona, wearing many many hats (even though my head really only fits one),
+I'm currently a Security Engineer at Persona, where we're building the identity layer of the internet. I wear many many hats (even though my head really only fits one),
 but the tl;dr is I fix stuff that's broken, and I build systems to help keep the company & our customers' data safe.
 
 Since I joined Persona, I've been fortunate to help the team prepare to scale for some really big customer launches, and as a result I've spent a lot of time thinking about ruby & rails performance. This is not the talk about any of that professional work.
@@ -27,11 +27,11 @@ I want to be honest with you up front about what this talk is, and — more impo
 
 It isn't a war story. I don't have a production hotspot that refused to yield to profiling, I don't have a 50%-improvement graph, and I am not about to convince you to put any of this into your codebase.
 
-This is RubyKaigi. You are about to watch, or you have already watched, some of the best people in the world doing serious work on Ruby performance. "The design and implementation of ZJIT & the next five years" is doing all of this properly, at runtime, with an actual IR. "Lightning-Fast Method Calls with Ruby 4.1 ZJIT" — earlier today — is the version of my inliner that comes with a deoptimization story and the last five years of engineering judgment attached. Those are the talks where "make Ruby faster" is a real statement. This is not one of those talks.
+This is RubyKaigi. You have already heard from some of the best people in the world doing serious work on Ruby performance. "The design and implementation of ZJIT & the next five years" is doing all of this properly, at runtime, with an actual IR. "Lightning-Fast Method Calls with Ruby 4.1 ZJIT" — earlier today — is the version of my inliner that comes with a deoptimization story and the last five years of engineering judgment attached. Those are the talks where "make Ruby faster" is a real statement. This is not one of those talks.
 
 What I did instead, in one sentence: I hand-wrote a prompt or two, and had Claude Code build me a compiler that rewrites YARV bytecode under a handful of rules Ruby-the-language can't assume but Ruby-the-programmer almost always can.
 
-(That sentence is also, roughly, the whole talk. If you're happy with just that, you're welcome to leave — but Matz's closing keynote is right after this, so you'd be coming back anyway. Save yourself the walk.)
+(That sentence is also, roughly, the whole talk. If you're happy with just that, you're welcome to leave and get a good seat for Matz's closing keynote.)
 
 Anyways. This was, more than anything, an excuse to learn more about YARV bytecode and what actually goes into building an optimizing compiler. I am very aware of how bad an idea it is. I'm going to show it to you anyway, because by the end of the next thirty minutes: you will be able to read a YARV instruction listing. You will understand why your perfectly reasonable Ruby doesn't get optimized the way you obviously think it should. And — this is the actual pitch — you will have permission to go write your own terrible optimizer for a weekend, just to see what happens.
 
@@ -206,7 +206,9 @@ Two things to notice. The new `setlocal_WC_0 n@0; getlocal_WC_0 n@0` pair at the
 
 This pass is ninety lines of code. It matches `setlocal X; getlocal X` where `X` has no other references, deletes both. That's the whole pass. It exists because the inliner creates exactly this shape, every time, and the pass that fires next needs the stream compacted before it can see the operand pairs it cares about.
 
-**Pass 3 — `const_fold_tier2`.** The frozen-constant scanner sees `SCALE = 6` at the top of the file, confirms nothing reassigns it, and rewrites every `opt_getconstant_path <ic:N SCALE>` to `putobject 6`:
+**Pass 3 — `arith_reassoc`.** Reports `(no change)`. The chain is `42 * 2 * SCALE / 12 + 0`; reassociation wants two literals flanking a symbolic operand, and `SCALE` is still an `opt_getconstant_path` here. Nothing to fold until tier 2 has run.
+
+**Pass 4 — `const_fold_tier2`.** The frozen-constant scanner sees `SCALE = 6` at the top of the file, confirms nothing reassigns it, and rewrites every `opt_getconstant_path <ic:N SCALE>` to `putobject 6`:
 
 ```diff
 --- before const_fold_tier2
@@ -223,7 +225,9 @@ This pass is ninety lines of code. It matches `setlocal X; getlocal X` where `X`
 
 Both the `if SCALE == 6` condition at the top of `run` and the `SCALE` reference inside each inlined `compute` body get rewritten. The inline cache is gone; the path-lookup is gone; the instruction stream is now all-literal on both branches.
 
-**Pass 4 — `const_fold`.** Tier 1 const-fold walks the stream looking for operations whose operands are all literals. It has several of those:
+**Pass 5 — `const_fold_env`.** Reports `(no change)`. No `ENV[]` access in the fixture.
+
+**Pass 6 — `const_fold`.** Tier 1 const-fold walks the stream looking for operations whose operands are all literals. It has several of those:
 
 ```diff
 --- before const_fold
@@ -262,9 +266,9 @@ Both the `if SCALE == 6` condition at the top of `run` and the `SCALE` reference
 
 Twenty-four instructions on the minus side, six on the plus side. `6 == 6` folds to `true`. `42 * 2 * 6 / 12 + 0` folds to `42`. `0 * 2 * 6 / 12 + 0` folds to `0`. Every operation in those chains has two literals on its operand stack; each one collapses; the results cascade up. This is the single most visible pass in the pipeline, and it runs in a couple hundred lines.
 
-**Pass 5 — `identity_elim`.** Reports `(no change)`. Identity-elim is looking for `x + 0`, `x * 1`, `x / 1` shapes where one operand is still non-literal; by this point const-fold has already eaten everything that had a literal operand, and the remaining runs of code have no identity shapes in them.
+**Pass 7 — `identity_elim`.** Reports `(no change)`. Identity-elim is looking for `x + 0`, `x * 1`, `x / 1` shapes where one operand is still non-literal; by this point const-fold has already eaten everything that had a literal operand, and the remaining runs of code have no identity shapes in them.
 
-**Pass 6 — `dead_branch_fold`.** The `branchunless` from the const-fold output has a literal condition sitting immediately above it. That's exactly this pass's window:
+**Pass 8 — `dead_branch_fold`.** The `branchunless` from the const-fold output has a literal condition sitting immediately above it. That's exactly this pass's window:
 
 ```diff
 --- before dead_branch_fold
@@ -371,10 +375,12 @@ I am going to show you the entire walkthrough:
 
 ```
 ### inlining           → (no change)
+### dead_stash_elim    → (no change)
+### arith_reassoc      → (no change)
 ### const_fold_tier2   → (no change)
+### const_fold_env     → (no change)
 ### const_fold         → (no change)
 ### identity_elim      → (no change)
-### arith_reassoc      → (no change)
 ### dead_branch_fold   → (no change)
 ```
 
@@ -449,10 +455,10 @@ Five instructions gone. A `putnil; pop; jump` in the prelude that no live edge e
 
 Of course — my pipeline can't do that. A real JIT absolutely can, with guards attached; every effect-analysis and deoptimization slide at this conference this week is in service of doing it safely. Claude, with no framework and two shots, did it because the weight of every optimizing-compiler textbook ever written is sitting in its context, and it only had to land on the shape once — on a transformation the thing I built cannot express.
 
-Anyways. The repo is at github.com/segiddins/optimize-rb; go break some YARV for yourselves.
+Anyways. The repo is at github.com/segiddins/optimize-rb; if you're brave, `gem install optimize` and go break some YARV for yourselves.
 
 This was a love letter to a bad idea. Thanks for reading it.
 
 ---
 
-*Source: [github.com/segiddins/ruby-the-hard-way-bytecode-talk]({TBD-repo-url})*
+*Source: [github.com/segiddins/optimize-rb](https://github.com/segiddins/optimize-rb)*
