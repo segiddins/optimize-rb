@@ -406,7 +406,52 @@ The loop that got nothing in §5 is the ceiling. The first pass that would chang
 
 ## §7 — Close
 
-{TBD-§7}
+The pitch at the top of this was that by the end, you'd be able to read a YARV listing, know why reasonable Ruby doesn't get optimized the obvious way, and have permission to go write your own terrible optimizer for a weekend. Anyways — every pass in this pipeline is the kind of code that fits in an afternoon once you've stared at enough disasm to recognize the pattern; the hard day is the first one, convincing `to_binary` and `load_from_binary` to round-trip an iseq you've touched without segfaulting. After that it's a compounding effect — one pass feeds the next. You will learn more about YARV in a weekend of doing this than in any number of weekends of reading about it. Writing a bad optimizer is how you earn the right to read a good one.
+
+The talk I originally pitched was about hand-editing a couple of iseqs. Reach into the binary with `to_binary`, swap an `opt_plus` for a `putobject 5`, feed it back through `load_from_binary`, show you the benchmark. Three or four slides, basically an excuse to learn what was in those bytes. Then somewhere around the second iseq it occurred to me that vibe-coding an actual optimizer on top of the round-trip seemed like a more fun way to learn what goes into one than flipping bytes by hand. So I wrote a prompt or two, had Claude Code build the pipeline, and the talk grew to match.
+
+`sum_of_squares` in §5 was the demo where every peephole pass shrugged `(no change)`. The window can't see across a backedge; the pipeline has no notion of reachability. So I handed the same iseq to Claude directly — no IR framework, no pass infrastructure, just the JSON array of instructions and the rule "return something semantically equivalent, validated on five inputs." First try it returned `[["getlocal_WC_0", 4], ["leave"]]`. Two instructions, zero of them correct. I pasted the validator errors back. Second try:
+
+```diff
+--- sum_of_squares, original (26 insns)
++++ sum_of_squares, after Claude (21 insns)
+ putobject_INT2FIX_0_
+ setlocal_WC_0        s@4
+ putobject_INT2FIX_1_
+ setlocal_WC_0        i@3
+-jump                 18
+-putnil
+-pop
+-jump                 18
++jump                 15
+ getlocal_WC_0        s@4
+ getlocal_WC_0        i@3
+ getlocal_WC_0        i@3
+ opt_mult
+ opt_plus
+ setlocal_WC_0        s@4
+ getlocal_WC_0        i@3
+ putobject_INT2FIX_1_
+ opt_plus
+ setlocal_WC_0        i@3
+ getlocal_WC_0        i@3
+ getlocal_WC_0        n@5
+ opt_le
+-branchif             8
+-putnil
+-pop
++branchif             5
+ getlocal_WC_0        s@4
+ leave
+```
+
+Five instructions gone. A `putnil; pop; jump` in the prelude that no live edge ever reached, and a trailing `putnil; pop` on a path that was already going to fall through to `leave`. And — this is the part that matters — both surviving branches renumbered (`jump 18` to `jump 15`, `branchif 8` to `branchif 5`) to track the shift. That's CFG-level dead-code elimination: reachability analysis, basic-block excision, PC arithmetic on every branch that survives. It's the first item on §5's "exploratory, not yet on any roadmap" list, and it is exactly what my pipeline's six passes shrugged through to not do on this fixture.
+
+Of course — my pipeline can't do that. A real JIT absolutely can, with guards attached; every effect-analysis and deoptimization slide at this conference this week is in service of doing it safely. Claude, with no framework and two shots, did it because the weight of every optimizing-compiler textbook ever written is sitting in its context, and it only had to land on the shape once — on a transformation the thing I built cannot express.
+
+Anyways. The repo is at github.com/segiddins/optimize-rb; go break some YARV for yourselves.
+
+This was a love letter to a bad idea. Thanks for reading it.
 
 ---
 

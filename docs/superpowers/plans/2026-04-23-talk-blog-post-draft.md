@@ -24,7 +24,7 @@ Update this block in every commit that changes plan state. Sections marked ✅ a
 - ⬜ Task 5: §4 Building a toy optimizer
 - ✅ Task 6: §5 Demos
 - ⬜ Task 7: §6 Tradeoffs
-- ⬜ Task 8: §7 Close
+- ✅ Task 8: §7 Close
 - ⬜ Task 9: Full read-through + consistency pass
 - ⬜ Task 10: Benchmark-number freshness check (when author signals)
 
