@@ -87,7 +87,30 @@ That's roughly the grammar. There are about a hundred and ten instructions in to
 
 ## §4 — Building a toy optimizer
 
-{TBD-§4}
+Ruby hands you two methods and looks the other way. `RubyVM::InstructionSequence#to_binary` serializes a compiled iseq to the YARV binary format — the undocumented-but-stable-ish blob MRI uses for on-disk iseq caches like bootsnap. `RubyVM::InstructionSequence.load_from_binary` takes those bytes and returns a live iseq the VM executes directly, no re-parse, no re-compile. Those two methods are the entire trick; everything else is what goes between them.
+
+One caveat before the trick works. YARV's instruction set is not an ABI. Every minor Ruby release is free to add, rename, reshape, or retire instructions, and recent releases have done all four. The loader checks an internal version stamp on the way in and rejects anything that doesn't match exactly — no backward-compatibility window, no graceful degradation. That's by design; the format is a cache, not a promise. The binary `to_binary` emits on one Ruby is not loadable on another, and any tool that pattern-matches on opcodes — mine, ZJIT, YJIT's IR — is pinned the same way. The optimizer in this repo targets Ruby 4.0; porting it to a different minor version is its own project.
+
+The shape is unsurprising. Decode the binary into an in-memory IR, run a pipeline of local rewrites over it, encode back to the same format, hand the modified bytes to `load_from_binary`. A naïve version could do all of this with a flat array of `[opcode, *operands]` tuples and some pattern matching. I did not want to do that — the interesting rewrites (inlining, constant folding across a branch) want a notion of basic blocks and a notion of where a value came from, and maintaining either one on a flat array once you have more than three passes is bookkeeping hell.
+
+So the IR is a function per iseq, each function holding a CFG of basic blocks — blocks end at branches, jumps, and `leave` — with an ordered list of instructions per block and a slot-type table threaded through so a pass can ask "what do I know about `a@0` right here." Children live on their parent function — nested `def`s, blocks passed to methods, `class Foo` bodies — because that's how YARV stores them, and flattening the tree would just mean reconstructing it on the way back out.
+
+The slot-type table is fed partly by literals and assignments visible in the instruction stream and partly by inline RBS comments — `# @rbs (Integer, Integer) -> Integer` on the line above a `def` — which a `TypeEnv` built at decode time parses out. The contract's "RBS signatures are truthful" clause is what lets the rewriter act on them: a call to `point.translate(dx, dy)` whose receiver the RBS types as `Point` binds statically to `Point#translate` at rewrite time, which is the hook the inliner actually uses to pick a callee.
+
+Each pass is a class with an `apply` method that takes the function plus some context kwargs, walks a single function, recognizes a local pattern, and rewrites in place — logging every rewrite and every skipped opportunity so failure modes are visible instead of silent. Most iterate to a fixed point; only `InliningPass` is marked one-shot, since re-inlining an already-inlined site buys nothing. The default pipeline opens with `InliningPass` (splice the body of a visible `ARGS_SIMPLE`-shaped callee at the call site, stash arguments into local slots, drop the call), then `DeadStashElimPass` (delete the `setlocal_WC_0 x; getlocal_WC_0 x` pair when `x` isn't read afterwards), then `ArithReassocPass` (fold `(a + 1) + 2` shapes into `a + 3`). The rest is a fold-then-sweep cascade: three constant-folders run together — `ConstFoldTier2Pass` rewrites references to frozen top-level constants to their literal, `ConstFoldEnvPass` rewrites `ENV["FLAG"]` to a `putstring` from a snapshot taken at install time, and `ConstFoldPass` collapses any all-literal arithmetic into its result — then `IdentityElimPass` catches `x && x`, `0 + n`, and `n * 1`, and `DeadBranchFoldPass` finishes with `putobject true; branchunless L` to nothing and `putobject false; branchunless L` to `jump L`.
+
+The passes feed each other: inlining exposes a stash round-trip for dead-stash, dead-stash exposes the producer to arith, arith exposes a constant-only expression to const-fold, const-fold exposes a literal condition to dead-branch-fold, dead-branch-fold exposes new unreachable blocks for the next sweep. None of the individual moves is novel; what matters is that each manufactures the precondition for the next. The pipeline caps at eight iterations; past that, a pass is either oscillating or reporting rewrites it didn't actually perform.
+
+None of this runs unless you ask for it. `Optimize::Harness.install` defines `RubyVM::InstructionSequence.load_iseq(path)` — the same process-wide hook MRI calls from `rb_iseq_load_iseq` whenever it's about to load a file, and the same hook bootsnap has been using for years — and routes every subsequently-required file through the pipeline. Source files can opt out by putting `# rbs-optimize: false` in the first five lines. On any pipeline or codec failure the harness warns and returns `nil`, which tells MRI to fall back to the normal compile path. A slow method is acceptable; a miscompiled one is not.
+
+```ruby
+require "optimize"
+
+Optimize::Harness.install         # hook load_iseq process-wide
+fast = Optimize.optimize(src)     # one-shot: source -> new iseq
+```
+
+What any of this actually *does* to real code is a question you can only answer with a diff. Here are a few.
 
 ## §5 — Demos
 
