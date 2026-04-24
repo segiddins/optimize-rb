@@ -642,8 +642,217 @@ Delivery: this is the cheat sheet for §5. Hit "the rest is picked up by context
 -->
 
 ---
+layout: cover
+class: text-center
+---
 
-<!-- §4 optimizer — TO BE DECOMPOSED -->
+# §4
+
+## Building a toy optimizer
+
+<!--
+§4 section divider (post.md line 88). Budget ~3s.
+-->
+
+---
+layout: default
+---
+
+# Ruby hands you two methods
+
+<v-clicks>
+
+- `RubyVM::InstructionSequence#to_binary` — serializes a compiled iseq to the YARV binary format (bootsnap territory)
+- `RubyVM::InstructionSequence.load_from_binary` — takes those bytes and returns a live iseq the VM runs *directly*: no re-parse, no re-compile
+
+</v-clicks>
+
+<div class="mt-12 text-lg italic" v-click>
+
+Those two methods are the entire trick. Everything else goes between them.
+
+</div>
+
+<!--
+§4 ¶1 (post.md line 90). Budget ~45s.
+
+Verbatim:
+"Ruby hands you two methods and looks the other way. `RubyVM::InstructionSequence#to_binary` serializes a compiled iseq to the YARV binary format — the undocumented-but-stable-ish blob MRI uses for on-disk iseq caches like bootsnap. `RubyVM::InstructionSequence.load_from_binary` takes those bytes and returns a live iseq the VM executes directly, no re-parse, no re-compile. Those two methods are the entire trick; everything else is what goes between them."
+
+Delivery: land on "looks the other way" with a little smile — this IS a little bit of a trick.
+-->
+
+---
+layout: default
+---
+
+# YARV is not an ABI
+
+<v-clicks>
+
+- Every minor Ruby adds, renames, reshapes, or retires instructions
+- The loader checks an internal version stamp and rejects mismatches — no backward-compatibility window
+- This optimizer targets Ruby 4.0. Porting to 4.1 is its own project.
+
+</v-clicks>
+
+<div class="mt-8 text-sm opacity-70" v-click>
+
+Same pin on YJIT, ZJIT, anything that pattern-matches on opcodes.
+
+</div>
+
+<!--
+§4 ¶2 (post.md line 92). Budget ~40s.
+
+Verbatim:
+"One caveat before the trick works. YARV's instruction set is not an ABI. Every minor Ruby release is free to add, rename, reshape, or retire instructions, and recent releases have done all four. The loader checks an internal version stamp on the way in and rejects anything that doesn't match exactly — no backward-compatibility window, no graceful degradation. That's by design; the format is a cache, not a promise. The binary `to_binary` emits on one Ruby is not loadable on another, and any tool that pattern-matches on opcodes — mine, ZJIT, YJIT's IR — is pinned the same way. The optimizer in this repo targets Ruby 4.0; porting it to a different minor version is its own project."
+
+Delivery: this is a warning, not an apology. The format-is-a-cache-not-a-promise line is the crisp one.
+-->
+
+---
+layout: default
+---
+
+# The shape
+
+<div class="text-2xl mt-8 text-center">
+
+decode &nbsp;→&nbsp; rewrite &nbsp;→&nbsp; encode
+
+</div>
+
+<div class="mt-12 text-base leading-relaxed max-w-4xl" v-click>
+
+A naïve version is a flat `[opcode, *operands]` array with pattern matching.
+
+Interesting rewrites — inlining, const-fold across a branch — want **basic blocks** and **where a value came from**. Maintaining either on a flat array after three passes is bookkeeping hell.
+
+</div>
+
+<!--
+§4 ¶3 (post.md line 94). Budget ~40s.
+
+Verbatim:
+"The shape is unsurprising. Decode the binary into an in-memory IR, run a pipeline of local rewrites over it, encode back to the same format, hand the modified bytes to `load_from_binary`. A naïve version could do all of this with a flat array of `[opcode, *operands]` tuples and some pattern matching. I did not want to do that — the interesting rewrites (inlining, constant folding across a branch) want a notion of basic blocks and a notion of where a value came from, and maintaining either one on a flat array once you have more than three passes is bookkeeping hell."
+
+Delivery: keep the three-word shape ("decode → rewrite → encode") on the first beat; the click adds the "why not flat" argument.
+-->
+
+---
+layout: default
+---
+
+# IR: function per iseq, CFG per function
+
+<v-clicks>
+
+- **Function** = CFG of basic blocks. A block ends at a branch, a `jump`, or `leave`.
+- **Children live on their parent function** — nested `def`, blocks passed to methods, `class Foo` bodies. That's how YARV stores them; flattening just means reconstructing the tree on the way out.
+
+</v-clicks>
+
+<!--
+§4 ¶4 (post.md line 96). Budget ~35s.
+
+Verbatim:
+"So the IR is a function per iseq, each function holding a CFG of basic blocks — blocks end at branches, jumps, and `leave` — with an ordered list of instructions per block and a slot-type table threaded through so a pass can ask 'what do I know about `a@0` right here.' Children live on their parent function — nested `def`s, blocks passed to methods, `class Foo` bodies — because that's how YARV stores them, and flattening the tree would just mean reconstructing it on the way back out."
+-->
+
+---
+layout: default
+---
+
+# Slot types come from RBS
+
+<div class="text-lg mt-6 leading-relaxed max-w-4xl">
+
+Inline `# @rbs (Integer, Integer) -> Integer` on the line above a `def`.
+
+`TypeEnv` parses these at decode time and threads them into the slot-type table.
+
+</div>
+
+<div class="mt-8 italic opacity-80" v-click>
+
+A call to `point.translate(dx, dy)` whose RBS types the receiver as `Point` binds statically to `Point#translate` at rewrite time. That's the hook the inliner uses to pick a callee.
+
+</div>
+
+<!--
+§4 ¶5 (post.md line 98). Budget ~40s.
+
+Verbatim:
+"The slot-type table is fed partly by literals and assignments visible in the instruction stream and partly by inline RBS comments — `# @rbs (Integer, Integer) -> Integer` on the line above a `def` — which a `TypeEnv` built at decode time parses out. The contract's 'RBS signatures are truthful' clause is what lets the rewriter act on them: a call to `point.translate(dx, dy)` whose receiver the RBS types as `Point` binds statically to `Point#translate` at rewrite time, which is the hook the inliner actually uses to pick a callee."
+
+Delivery: name-drop `TypeEnv` once, move on. The takeaway is the binding story, not the type table.
+-->
+
+---
+layout: default
+---
+
+# The pipeline cascades
+
+<v-clicks>
+
+- **Inlining** exposes stash round-trips →
+- **DeadStashElim** exposes producers →
+- **ArithReassoc** exposes constant-only expressions →
+- **ConstFold** exposes literal conditions →
+- **DeadBranchFold** exposes unreachable blocks →
+- ... feeding the next sweep.
+
+</v-clicks>
+
+<div class="mt-8 text-sm opacity-70" v-click>
+
+Each pass manufactures the precondition for the next. Caps at 8 iterations — past that, a pass is either oscillating or reporting rewrites it didn't actually perform.
+
+</div>
+
+<!--
+§4 ¶6 + ¶7 (post.md lines 100, 102). THE PAYOFF. Budget ~75s — don't rush.
+
+Verbatim ¶6 (the pass list in pipeline order):
+"Each pass is a class with an `apply` method that takes the function plus some context kwargs, walks a single function, recognizes a local pattern, and rewrites in place — logging every rewrite and every skipped opportunity so failure modes are visible instead of silent. Most iterate to a fixed point; only `InliningPass` is marked one-shot, since re-inlining an already-inlined site buys nothing. The default pipeline opens with `InliningPass` (splice the body of a visible `ARGS_SIMPLE`-shaped callee at the call site, stash arguments into local slots, drop the call), then `DeadStashElimPass` (delete the `setlocal_WC_0 x; getlocal_WC_0 x` pair when `x` isn't read afterwards), then `ArithReassocPass` (fold `(a + 1) + 2` shapes into `a + 3`). The rest is a fold-then-sweep cascade: three constant-folders run together — `ConstFoldTier2Pass` rewrites references to frozen top-level constants to their literal, `ConstFoldEnvPass` rewrites `ENV['FLAG']` to a `putstring` from a snapshot taken at install time, and `ConstFoldPass` collapses any all-literal arithmetic into its result — then `IdentityElimPass` catches `x && x`, `0 + n`, and `n * 1`, and `DeadBranchFoldPass` finishes with `putobject true; branchunless L` to nothing and `putobject false; branchunless L` to `jump L`."
+
+Verbatim ¶7 (the cascade itself):
+"The passes feed each other: inlining exposes a stash round-trip for dead-stash, dead-stash exposes the producer to arith, arith exposes a constant-only expression to const-fold, const-fold exposes a literal condition to dead-branch-fold, dead-branch-fold exposes new unreachable blocks for the next sweep. None of the individual moves is novel; what matters is that each manufactures the precondition for the next. The pipeline caps at eight iterations; past that, a pass is either oscillating or reporting rewrites it didn't actually perform."
+
+Delivery: pace the clicks. The "→" between each is load-bearing — each arrow is a different pass winning. The final click ("feeding the next sweep") is the one that lands "this is actually a compiler." Don't hurry.
+-->
+
+---
+layout: default
+---
+
+# The harness
+
+```ruby {all|1|3|4}
+require "optimize"
+
+Optimize::Harness.install         # hook load_iseq process-wide
+fast = Optimize.optimize(src)     # one-shot: source -> new iseq
+```
+
+<v-clicks>
+
+- `.install` hooks the same `rb_iseq_load_iseq` path bootsnap's used for years — every subsequently-required file routes through the pipeline.
+- Opt out per-file: `# rbs-optimize: false` in the first 5 lines.
+- Any codec or pipeline failure returns `nil`. MRI falls back to the normal compile path. *A slow method is acceptable; a miscompiled one is not.*
+
+</v-clicks>
+
+<!--
+§4 ¶8 + ¶9 (post.md lines 104, 106-111). Budget ~50s.
+
+Verbatim ¶8:
+"None of this runs unless you ask for it. `Optimize::Harness.install` defines `RubyVM::InstructionSequence.load_iseq(path)` — the same process-wide hook MRI calls from `rb_iseq_load_iseq` whenever it's about to load a file, and the same hook bootsnap has been using for years — and routes every subsequently-required file through the pipeline. Source files can opt out by putting `# rbs-optimize: false` in the first five lines. On any pipeline or codec failure the harness warns and returns `nil`, which tells MRI to fall back to the normal compile path. A slow method is acceptable; a miscompiled one is not."
+
+Delivery: the `.install` / `.optimize` split: process-wide hook vs. one-shot. Hit the last click ("a slow method is acceptable") as a landing — that's the reliability contract, and it's what makes this harness safe to try.
+-->
 
 ---
 
