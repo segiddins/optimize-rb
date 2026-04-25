@@ -124,8 +124,8 @@ module Optimize
         opt_send_without_block: ->(i) { [stack_max_argc_from_calldata(i, pop_recv: true), 1] },
         send:                    ->(i) { [stack_max_argc_from_calldata(i, pop_recv: true), 1] },
         invokesuper:             ->(i) { [stack_max_argc_from_calldata(i, pop_recv: false) + 1, 1] },
-        # invokeblock operands: [CALLDATA, NUM] — NUM (argc) is at index 1.
-        invokeblock:             ->(i) { [i.operands[1] || 0, 1] },
+        # invokeblock operand: [CALLDATA] — argc is on the CallData struct.
+        invokeblock:             ->(i) { [i.operands[0].argc || 0, 1] },
         invokebuiltin:           ->(i) { [i.operands[0] || 0, 1] },
         invokebuiltin_delegate:  ->(i) { [i.operands[0] || 0, 1] },
         invokebuiltin_delegate_leave: ->(i) { [i.operands[0] || 0, 0] },

@@ -121,7 +121,7 @@ module Optimize
         66  => [:opt_newarray_send,            [:NUM, :CALLDATA]],
         67  => [:invokesuper,                  [:CALLDATA, :ISEQ, :NUM]],
         68  => [:invokesuperforward,           [:CALLDATA, :ISEQ, :NUM]],
-        69  => [:invokeblock,                  [:CALLDATA, :NUM]],
+        69  => [:invokeblock,                  [:CALLDATA]],
         70  => [:leave,                        []],
         71  => [:throw,                        [:NUM]],
         72  => [:jump,                         [:OFFSET]],

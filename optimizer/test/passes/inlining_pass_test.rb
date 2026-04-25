@@ -705,19 +705,18 @@ class InliningPassTest < Minitest::Test
   end
 
   def test_opt_send_skips_when_callee_uses_block
-    # A callee that yields compiles with invokeblock in the IR body; the
-    # invokeblock instruction is terminal in the IR encoding so the iseq does
-    # not end with :leave — which means :callee_no_trailing_leave fires before
-    # the body-scan loop even checks for :invokeblock.  Both reasons correctly
-    # reject the callee, so we accept any of them.
+    # A callee that yields compiles with invokeblock in the IR body. With the
+    # codec fix (invokeblock has 1 operand, not 2), the trailing pop and leave
+    # are no longer swallowed, so the iseq ends with :leave. The body-scan loop
+    # sees :invokeblock and returns :callee_uses_block.
     caller, callee, slot_type_map, type_env, ot =
       build_guard_caller("def mid(other); yield other; end")
     log = apply_inliner(caller, { ["GuardClass", :mid] => callee }, slot_type_map, type_env, ot)
 
     assert caller.instructions.any? { |i| i.opcode == :opt_send_without_block }
     assert log.entries.any? { |e|
-      [:callee_uses_block, :callee_send_has_block, :callee_no_trailing_leave].include?(e.reason)
-    }, "expected block-related or no-trailing-leave rejection, got: #{log.entries.map(&:reason).inspect}"
+      [:callee_uses_block, :callee_send_has_block].include?(e.reason)
+    }, "expected block-related rejection, got: #{log.entries.map(&:reason).inspect}"
   end
 
   def test_inlining_same_method_twice_does_not_alias_callee_body
