@@ -1,0 +1,10 @@
+fixture: 5_tap_nil.rb
+entry_setup: ""
+entry_call: 5.my_tap { nil }
+walkthrough:
+  - inlining
+  - dead_stash_elim
+# After InliningPass v5 splices `my_tap`'s body and substitutes the block,
+# the caller carries a receiver-stash + invokeblock-arg-stash + putnil/pop
+# residue. DeadStashElim's literal-forwarding, dead-slot, and pure-push;pop
+# peepholes collapse the residue to `putobject 5; leave`.
