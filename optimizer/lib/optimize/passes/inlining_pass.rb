@@ -253,7 +253,10 @@ module Optimize
         # self_stash_lindex; pre-existing caller locals shift by total_stash.
 
         # Grow caller's local table and shift pre-existing level-0 LINDEXes.
-        name_idx = 0  # placeholder name; doesn't affect semantics
+        # Reuse the callee's mid (object-table index of the method name) as
+        # the slot name so disasm reads as e.g. `setlocal_WC_0 tap@N` instead
+        # of whatever symbol happens to live at object-table index 0.
+        name_idx = cd.mid_idx
         total_stash.times { Codec::LocalTable.grow!(function, name_idx) }
         Codec::LocalTable.shift_level0_lindex!(function, by: total_stash)
 
