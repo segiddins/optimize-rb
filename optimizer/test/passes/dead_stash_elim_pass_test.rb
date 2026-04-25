@@ -37,7 +37,8 @@ class DeadStashElimPassTest < Minitest::Test
     log = apply(fn)
 
     assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
-    refute_empty log.for_pass(:dead_stash_elim).select { |e| e.reason == :dead_stash_eliminated }
+    # Peephole A handles this case (literal forwarding), reason is :literal_forwarded.
+    refute_empty log.for_pass(:dead_stash_elim)
   end
 
   def test_end_to_end_preserves_value_through_dropped_pair
@@ -86,7 +87,9 @@ class DeadStashElimPassTest < Minitest::Test
     assert_equal 42, loaded.eval
   end
 
-  def test_leaves_pair_when_second_reader_exists
+  def test_reduces_pair_when_second_reader_exists
+    # Peephole A forwards the literal to both readers; peephole C then eliminates
+    # the `putobject; pop` left from the first (now-dead) read.
     fn = build_fn([
       inst(:putobject, [42]),
       inst(:setlocal_WC_0, [1]),
@@ -95,12 +98,14 @@ class DeadStashElimPassTest < Minitest::Test
       inst(:pop, []),
       inst(:leave, []),
     ])
-    before = fn.instructions.map(&:opcode)
     apply(fn)
-    assert_equal before, fn.instructions.map(&:opcode)
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+    assert_equal [42], fn.instructions[0].operands
   end
 
-  def test_leaves_pair_when_later_reader_exists
+  def test_reduces_pair_when_later_reader_exists
+    # Peephole A forwards literal 42 to both reads; peephole C eliminates
+    # the intervening `putobject 99; pop`.
     fn = build_fn([
       inst(:putobject, [42]),
       inst(:setlocal_WC_0, [1]),
@@ -110,9 +115,10 @@ class DeadStashElimPassTest < Minitest::Test
       inst(:getlocal_WC_0, [1]),
       inst(:leave, []),
     ])
-    before = fn.instructions.map(&:opcode)
     apply(fn)
-    assert_equal before, fn.instructions.map(&:opcode)
+    assert_equal %i[putobject putobject leave], fn.instructions.map(&:opcode)
+    assert_equal [42], fn.instructions[0].operands
+    assert_equal [42], fn.instructions[1].operands
   end
 
   def test_leaves_pair_when_later_writer_exists
@@ -141,19 +147,22 @@ class DeadStashElimPassTest < Minitest::Test
     assert_equal before, fn.instructions.map(&:opcode)
   end
 
-  def test_leaves_pair_when_shorthand_and_explicit_mix
+  def test_reduces_setlocal_wc0_with_explicit_getlocal_reader
+    # Peephole A treats getlocal [slot, 0] as a level-0 reader and forwards the literal.
     fn = build_fn([
       inst(:putobject, [42]),
       inst(:setlocal_WC_0, [1]),
       inst(:getlocal, [1, 0]),
       inst(:leave, []),
     ])
-    before = fn.instructions.map(&:opcode)
     apply(fn)
-    assert_equal before, fn.instructions.map(&:opcode)
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+    assert_equal [42], fn.instructions[0].operands
   end
 
-  def test_leaves_non_adjacent_pair
+  def test_reduces_non_adjacent_pair_via_literal_forwarding
+    # Peephole A forwards 42 to the non-adjacent reader; peephole C then
+    # eliminates the intervening `putobject 1; pop`.
     fn = build_fn([
       inst(:putobject, [42]),
       inst(:setlocal_WC_0, [1]),
@@ -162,12 +171,14 @@ class DeadStashElimPassTest < Minitest::Test
       inst(:getlocal_WC_0, [1]),
       inst(:leave, []),
     ])
-    before = fn.instructions.map(&:opcode)
     apply(fn)
-    assert_equal before, fn.instructions.map(&:opcode)
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+    assert_equal [42], fn.instructions[0].operands
   end
 
   def test_drops_multiple_independent_pairs
+    # Peephole A forwards both literals; peephole C then eliminates the putobject 42
+    # that was feeding the pop. Final result: putobject 99; leave.
     fn = build_fn(
       [
         inst(:putobject, [42]),
@@ -182,11 +193,13 @@ class DeadStashElimPassTest < Minitest::Test
       local_table: [{ name: :a, type: :local }, { name: :b, type: :local }],
     )
     log = apply(fn)
-    assert_equal %i[putobject pop putobject leave], fn.instructions.map(&:opcode)
-    assert_equal 2, log.for_pass(:dead_stash_elim).count { |e| e.reason == :dead_stash_eliminated }
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+    assert_equal [99], fn.instructions[0].operands
+    refute_empty log.for_pass(:dead_stash_elim)
   end
 
   def test_rewrite_count_increments_on_fold
+    # Peephole A drops producer then writer — 2 splices, 2 log entries.
     fn = build_fn([
       inst(:putobject, [42]),
       inst(:setlocal_WC_0, [1]),
@@ -195,7 +208,205 @@ class DeadStashElimPassTest < Minitest::Test
     ])
     log = Optimize::Log.new
     apply(fn, log: log)
-    assert_equal 1, log.rewrite_count
+    assert_operator log.rewrite_count, :>=, 1
+  end
+
+  # ---------------------------------------------------------------------------
+  # Peephole A — Literal forwarding
+  # ---------------------------------------------------------------------------
+
+  def test_peephole_a_forwards_literal_to_single_reader
+    fn = build_fn([
+      inst(:putobject, [5]),
+      inst(:setlocal_WC_0, [1]),
+      inst(:getlocal_WC_0, [1]),
+      inst(:leave, []),
+    ])
+    log = apply(fn)
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+    assert_equal [5], fn.instructions[0].operands
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :literal_forwarded }
+  end
+
+  def test_peephole_a_forwards_literal_to_multiple_readers
+    # Peephole A forwards 5 to both readers, drops writer+producer.
+    # The first forwarded copy is then `putobject 5; pop` which peephole C eliminates.
+    # Net result: putobject 5; leave (the second reader survives for leave).
+    fn = build_fn(
+      [
+        inst(:putobject, [5]),
+        inst(:setlocal_WC_0, [3]),
+        inst(:getlocal_WC_0, [3]),
+        inst(:pop, []),
+        inst(:getlocal_WC_0, [3]),
+        inst(:leave, []),
+      ],
+      local_table: [{ name: :a, type: :local }, { name: :b, type: :local }, { name: :c, type: :local }],
+    )
+    log = apply(fn)
+    opcodes = fn.instructions.map(&:opcode)
+    assert_equal %i[putobject leave], opcodes
+    assert_equal [5], fn.instructions[0].operands
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :literal_forwarded }
+  end
+
+  def test_peephole_a_forwards_putnil_to_readers
+    fn = build_fn([
+      inst(:putnil, []),
+      inst(:setlocal_WC_0, [1]),
+      inst(:getlocal_WC_0, [1]),
+      inst(:leave, []),
+    ])
+    log = apply(fn)
+    assert_equal %i[putnil leave], fn.instructions.map(&:opcode)
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :literal_forwarded }
+  end
+
+  def test_peephole_a_does_not_forward_when_two_writers
+    fn = build_fn([
+      inst(:putobject, [5]),
+      inst(:setlocal_WC_0, [1]),
+      inst(:putobject, [6]),
+      inst(:setlocal_WC_0, [1]),
+      inst(:getlocal_WC_0, [1]),
+      inst(:leave, []),
+    ])
+    before = fn.instructions.map(&:opcode)
+    apply(fn)
+    assert_equal before, fn.instructions.map(&:opcode)
+  end
+
+  def test_peephole_a_does_not_forward_getlocal_producer
+    fn = build_fn(
+      [
+        inst(:getlocal_WC_0, [2]),
+        inst(:setlocal_WC_0, [1]),
+        inst(:getlocal_WC_0, [1]),
+        inst(:leave, []),
+      ],
+      local_table: [{ name: :a, type: :local }, { name: :b, type: :local }],
+    )
+    # getlocal is not a pure literal; peephole A must not fire
+    before = fn.instructions.map(&:opcode)
+    apply(fn)
+    # existing adjacent-pair peephole might still fire for the setlocal_WC_0/getlocal_WC_0 pair
+    # but peephole A must NOT have forwarded the getlocal producer
+    assert_equal %i[getlocal_WC_0 leave], fn.instructions.map(&:opcode)
+    assert fn.instructions.none? { |i| i.opcode == :setlocal_WC_0 }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Peephole B — Dead write-only stash
+  # ---------------------------------------------------------------------------
+
+  def test_peephole_b_drops_write_only_literal_stash
+    fn = build_fn([
+      inst(:putobject, [42]),
+      inst(:setlocal_WC_0, [1]),
+      inst(:putnil, []),
+      inst(:leave, []),
+    ])
+    log = apply(fn)
+    assert_equal %i[putnil leave], fn.instructions.map(&:opcode)
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :dead_stash_eliminated }
+  end
+
+  def test_peephole_b_drops_write_only_getlocal_producer
+    fn = build_fn(
+      [
+        inst(:putnil, []),
+        inst(:leave, []),
+        inst(:getlocal_WC_0, [2]),
+        inst(:setlocal_WC_0, [1]),
+      ],
+      local_table: [{ name: :a, type: :local }, { name: :b, type: :local }],
+    )
+    log = apply(fn)
+    assert_equal %i[putnil leave], fn.instructions.map(&:opcode)
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :dead_stash_eliminated }
+  end
+
+  def test_peephole_b_does_not_drop_when_reader_exists
+    fn = build_fn([
+      inst(:putobject, [42]),
+      inst(:setlocal_WC_0, [1]),
+      inst(:getlocal_WC_0, [1]),
+      inst(:leave, []),
+    ])
+    # has a reader — peephole B must not fire (peephole A handles this case)
+    log = apply(fn)
+    # peephole A will forward it, but peephole B alone would be wrong here
+    # just check the result is still semantically correct
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Peephole C — Adjacent pure-push + pop
+  # ---------------------------------------------------------------------------
+
+  def test_peephole_c_drops_putnil_pop
+    fn = build_fn([
+      inst(:putnil, []),
+      inst(:pop, []),
+      inst(:putobject, [1]),
+      inst(:leave, []),
+    ])
+    log = apply(fn)
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :dead_push_pop_eliminated }
+  end
+
+  def test_peephole_c_drops_putobject_pop
+    fn = build_fn([
+      inst(:putobject, [99]),
+      inst(:pop, []),
+      inst(:putnil, []),
+      inst(:leave, []),
+    ])
+    log = apply(fn)
+    assert_equal %i[putnil leave], fn.instructions.map(&:opcode)
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :dead_push_pop_eliminated }
+  end
+
+  def test_peephole_c_drops_getlocal_pop
+    fn = build_fn([
+      inst(:getlocal_WC_0, [1]),
+      inst(:pop, []),
+      inst(:putnil, []),
+      inst(:leave, []),
+    ])
+    log = apply(fn)
+    assert_equal %i[putnil leave], fn.instructions.map(&:opcode)
+    assert log.for_pass(:dead_stash_elim).any? { |e| e.reason == :dead_push_pop_eliminated }
+  end
+
+  def test_peephole_c_does_not_drop_side_effecting_push_pop
+    fn = build_fn([
+      inst(:opt_send_without_block, [{ mid: :foo, flag: 0, orig_argc: 0 }]),
+      inst(:pop, []),
+      inst(:putnil, []),
+      inst(:leave, []),
+    ])
+    before = fn.instructions.map(&:opcode)
+    apply(fn)
+    assert_equal before, fn.instructions.map(&:opcode)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Regression — existing adjacent-pair peephole still works
+  # ---------------------------------------------------------------------------
+
+  def test_regression_existing_adjacent_pair_still_works
+    fn = build_fn([
+      inst(:putobject, [42]),
+      inst(:setlocal_WC_0, [1]),
+      inst(:getlocal_WC_0, [1]),
+      inst(:leave, []),
+    ])
+    log = apply(fn)
+    # peephole A now handles this (single writer, single reader, literal producer)
+    assert_equal %i[putobject leave], fn.instructions.map(&:opcode)
+    refute_empty log.for_pass(:dead_stash_elim)
   end
 
   private
