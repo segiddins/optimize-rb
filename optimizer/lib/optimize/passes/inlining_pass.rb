@@ -21,6 +21,18 @@ module Optimize
 
       CONTROL_FLOW_OPCODES = (IR::CFG::BRANCH_OPCODES + IR::CFG::JUMP_OPCODES + %i[opt_case_dispatch]).freeze
 
+      # Opcodes that prevent block inlining. Branches are forbidden for the
+      # same reason callee branches are: a straight-line splice can't preserve
+      # branch targets across index shifts. Escape-like opcodes (throw, break,
+      # next, redo) would change meaning after splicing out of the block frame.
+      BLOCK_FORBIDDEN = (CONTROL_FLOW_OPCODES + %i[
+        throw break next redo
+        invokesuper invokesuperforward
+        getblockparam getblockparamproxy
+        definemethod definesmethod defineclass
+        once
+      ]).freeze
+
       # Single-instruction arg-push opcodes v2 accepts for the one-arg shape.
       ARG_PUSH_OPCODES = %i[
         putobject putnil putstring
@@ -408,6 +420,30 @@ module Optimize
             #   LINDEX = VM_ENV_DATA_SIZE (3) + (local_table_size - 1 - table_index)
             # For lt_size == 1, the sole local (arg at table idx 0) has LINDEX 3.
             return :callee_reads_unknown_slot unless idx == 3
+          end
+        end
+        nil
+      end
+
+      def disqualify_block(block)
+        return :block_has_catch_table if block.catch_entries && !block.catch_entries.empty?
+        insts = block.instructions || []
+        return :block_empty if insts.empty?
+        return :block_no_trailing_leave unless insts.last.opcode == :leave
+        body = insts[0..-2]
+        body.each do |inst|
+          return :block_nested_leave if inst.opcode == :leave
+          return :block_escapes if BLOCK_FORBIDDEN.include?(inst.opcode)
+          case inst.opcode
+          when :getlocal_WC_1
+            return :block_captures_level1
+          when :getlocal, :setlocal
+            return :block_captures_level1 if inst.operands[1] && inst.operands[1] != 0
+          when :send, :opt_send_without_block
+            cd = inst.operands[0]
+            if cd.respond_to?(:flag) && (cd.flag & 0x20) != 0
+              return :block_escapes
+            end
           end
         end
         nil
