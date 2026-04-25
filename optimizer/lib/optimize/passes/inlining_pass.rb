@@ -379,6 +379,50 @@ module Optimize
         nil
       end
 
+      def disqualify_callee_for_send_with_block(callee)
+        return :callee_has_catch if callee.catch_entries && !callee.catch_entries.empty?
+        insts = callee.instructions || []
+        return :callee_empty if insts.empty?
+        return :callee_over_budget if insts.size > INLINE_BUDGET
+
+        # Check super/block-param across all instructions first (the codec
+        # may omit a trailing :leave for methods ending in invokesuper).
+        insts.each do |inst|
+          case inst.opcode
+          when :invokesuper, :invokesuperforward
+            return :callee_uses_super
+          when :getblockparam, :getblockparamproxy
+            return :callee_uses_block_param
+          end
+        end
+
+        return :callee_no_trailing_leave unless insts.last.opcode == :leave
+
+        body = insts[0..-2]
+        body.each do |inst|
+          return :callee_has_branches     if CONTROL_FLOW_OPCODES.include?(inst.opcode)
+          return :callee_has_leave_midway if inst.opcode == :leave
+          return :callee_has_throw        if inst.opcode == :throw
+          return :callee_uses_ivar        if inst.opcode == :getinstancevariable
+          return :callee_uses_ivar        if inst.opcode == :setinstancevariable
+          case inst.opcode
+          when :opt_send_without_block
+            # A nested plain FCALL is allowed; v5 doesn't recurse into it.
+            nil
+          when :send
+            cd = inst.operands[0]
+            blk_idx = inst.operands[1]
+            if blk_idx.is_a?(Integer) && blk_idx >= 0
+              return :callee_send_has_block
+            end
+            if cd.respond_to?(:blockarg?) && cd.blockarg?
+              return :callee_send_has_block
+            end
+          end
+        end
+        nil
+      end
+
       def disqualify_callee(callee)
         as = callee.arg_spec || {}
         # v2: lead_num may be 0 or 1. Anything else (2+) still rejects as args.

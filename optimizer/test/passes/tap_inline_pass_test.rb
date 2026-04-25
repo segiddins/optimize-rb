@@ -49,6 +49,39 @@ class TapInlinePassTest < Minitest::Test
     assert_includes [:block_escapes, :block_captures_level1], reason
   end
 
+  def test_disqualify_callee_for_send_with_block_accepts_tap_body
+    src = <<~RUBY
+      def tap; yield self; self; end
+      5.tap { nil }
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    callee = find_iseq(ir, "tap")
+    refute_nil callee
+    assert_nil pass.send(:disqualify_callee_for_send_with_block, callee)
+  end
+
+  def test_disqualify_callee_for_send_with_block_rejects_invokesuper
+    src = <<~RUBY
+      class A; def tap; super; end; end
+      A.new.tap { nil }
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    callee = find_iseq(ir, "tap")
+    refute_nil callee
+    assert_equal :callee_uses_super, pass.send(:disqualify_callee_for_send_with_block, callee)
+  end
+
+  def test_disqualify_callee_for_send_with_block_rejects_nested_block_send
+    src = <<~RUBY
+      def tap; yield self; [1].each { |x| x }; end
+      5.tap { nil }
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    callee = find_iseq(ir, "tap")
+    refute_nil callee
+    assert_equal :callee_send_has_block, pass.send(:disqualify_callee_for_send_with_block, callee)
+  end
+
   private
 
   def pass
@@ -59,6 +92,15 @@ class TapInlinePassTest < Minitest::Test
     return fn if fn.type == :block
     (fn.children || []).each do |c|
       found = find_block(c)
+      return found if found
+    end
+    nil
+  end
+
+  def find_iseq(fn, name)
+    return fn if fn.name == name
+    (fn.children || []).each do |c|
+      found = find_iseq(c, name)
       return found if found
     end
     nil
