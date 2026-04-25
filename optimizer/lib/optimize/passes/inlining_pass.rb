@@ -479,7 +479,7 @@ module Optimize
           return :block_nested_leave if inst.opcode == :leave
           return :block_escapes if BLOCK_FORBIDDEN.include?(inst.opcode)
           case inst.opcode
-          when :getlocal_WC_1
+          when :getlocal_WC_1, :setlocal_WC_1
             return :block_captures_level1
           when :getlocal, :setlocal
             return :block_captures_level1 if inst.operands[1] && inst.operands[1] != 0
@@ -501,6 +501,75 @@ module Optimize
       def dup_body(source_insts, range)
         source_insts[range].map do |i|
           IR::Instruction.new(opcode: i.opcode, operands: i.operands.dup, line: i.line)
+        end
+      end
+
+      # Replace every :invokeblock site in `callee_body` with:
+      #   <setlocal_WC_0 stash_base+k for k in argc-1..0>
+      #   <block body minus trailing leave, with level-0 getlocal/setlocal
+      #    remapped: param slots → stash_base..stash_base+argc-1>
+      #
+      # Does NOT mutate callee_body. Returns a freshly allocated list of
+      # freshly allocated IR::Instruction values. Caller is responsible for
+      # growing the enclosing function's local table by the total slots used
+      # across all invokeblock sites.
+      def substitute_invokeblocks(callee_body, block, stash_base_lindex:)
+        block_body = block.instructions[0..-2] # drop trailing leave
+        block_lt_size = (block.misc && block.misc[:local_table_size]) || 0
+
+        result = []
+        callee_body.each do |inst|
+          if inst.opcode == :invokeblock
+            cd = inst.operands[0]
+            argc = cd.argc
+
+            # Stash pushed args: last-pushed lands at stash_base + argc - 1.
+            (argc - 1).downto(0) do |k|
+              result << IR::Instruction.new(
+                opcode: :setlocal_WC_0,
+                operands: [stash_base_lindex + k],
+                line: inst.line,
+              )
+            end
+
+            # Param slots occupy the first `argc` table indices; in YARV LINDEX
+            # terms those are 3 + (lt_size - 1 - k) for k in 0..argc-1.
+            param_to_stash = {}
+            (0...argc).each do |k|
+              param_lindex = NEW_SLOT_LINDEX + (block_lt_size - 1 - k)
+              param_to_stash[param_lindex] = stash_base_lindex + k
+            end
+
+            block_body.each do |binst|
+              result << remap_block_inst(binst, param_to_stash)
+            end
+          else
+            result << IR::Instruction.new(
+              opcode: inst.opcode,
+              operands: inst.operands.dup,
+              line: inst.line,
+            )
+          end
+        end
+        result
+      end
+
+      def remap_block_inst(binst, param_to_stash)
+        case binst.opcode
+        when :getlocal_WC_0, :setlocal_WC_0
+          lidx = binst.operands[0]
+          new_lidx = param_to_stash[lidx] || lidx
+          IR::Instruction.new(opcode: binst.opcode, operands: [new_lidx], line: binst.line)
+        when :getlocal, :setlocal
+          lidx, level = binst.operands
+          if level == 0
+            new_lidx = param_to_stash[lidx] || lidx
+            IR::Instruction.new(opcode: binst.opcode, operands: [new_lidx, 0], line: binst.line)
+          else
+            IR::Instruction.new(opcode: binst.opcode, operands: binst.operands.dup, line: binst.line)
+          end
+        else
+          IR::Instruction.new(opcode: binst.opcode, operands: binst.operands.dup, line: binst.line)
         end
       end
     end

@@ -82,6 +82,51 @@ class TapInlinePassTest < Minitest::Test
     assert_equal :callee_send_has_block, pass.send(:disqualify_callee_for_send_with_block, callee)
   end
 
+  def test_substitute_invokeblocks_replaces_invokeblock_with_block_body
+    src = <<~RUBY
+      def tap; yield self; self; end
+      5.tap { nil }
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    callee = find_iseq(ir, "tap")
+    block  = find_block(ir)
+    body   = callee.instructions[0..-2]  # drop trailing leave
+
+    rewritten = pass.send(
+      :substitute_invokeblocks,
+      body, block, stash_base_lindex: 4,
+    )
+
+    # Before: putself; invokeblock argc:1; pop; putself
+    # After : putself; setlocal_WC_0 <A0>; putnil; pop; putself
+    opcodes = rewritten.map(&:opcode)
+    assert_equal [:putself, :setlocal_WC_0, :putnil, :pop, :putself], opcodes
+    assert_equal 4, rewritten[1].operands[0], "arg stash must target stash_base_lindex"
+  end
+
+  def test_substitute_invokeblocks_remaps_block_param_getlocal
+    src = <<~RUBY
+      def tap; yield self; self; end
+      5.tap { |y| y }
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    callee = find_iseq(ir, "tap")
+    block  = find_block(ir)
+    body   = callee.instructions[0..-2]
+
+    rewritten = pass.send(
+      :substitute_invokeblocks,
+      body, block, stash_base_lindex: 4,
+    )
+
+    # The block body is `getlocal_WC_0 <y_lindex=3>; leave`. After substitution
+    # the leave is dropped and the getlocal is remapped to lindex 4 (the stash).
+    opcodes = rewritten.map(&:opcode)
+    assert_equal [:putself, :setlocal_WC_0, :getlocal_WC_0, :pop, :putself], opcodes
+    assert_equal 4, rewritten[1].operands[0]
+    assert_equal 4, rewritten[2].operands[0]
+  end
+
   private
 
   def pass
