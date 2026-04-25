@@ -320,6 +320,50 @@ class PipelineTest < Minitest::Test
     end
   end
 
+  def test_5_tap_nil_collapses_to_putobject_leave
+    require "optimize/passes/literal_value"
+    src = <<~RUBY
+      def tap; yield self; self; end
+      5.tap { nil }
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    Optimize::Pipeline.default.run(ir, type_env: nil)
+
+    top = ir.misc[:iseq_list].root
+    ot  = ir.misc[:object_table]
+
+    # The top-level iseq begins with definemethod boilerplate for `tap`. The
+    # tail (after the leading definemethod and any its push/pop) must reduce to
+    # the canonical `putobject 5; leave`.
+    idx = top.instructions.index { |i| i.opcode == :definemethod }
+    refute_nil idx
+    tail = top.instructions[(idx + 1)..]
+
+    # The inliner's residue must contain putobject 5 and end with leave.
+    assert tail.any? { |i|
+      i.opcode == :putobject &&
+        Optimize::Passes::LiteralValue.read(i, object_table: ot) == 5
+    }, "expected putobject 5 to survive; got: #{tail.map { |i| [i.opcode, i.operands, Optimize::Passes::LiteralValue.read(i, object_table: ot)] }.inspect}"
+    assert_equal :leave, tail.last.opcode
+
+    # The send and the receiver-stash both gone.
+    refute top.instructions.any? { |i| i.opcode == :send },
+      "send should be gone post-pipeline"
+
+    # The whole optimizer should round-trip back to a working iseq.
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
+    assert_equal 5, loaded.eval
+
+    # STRICT canonical-shape assertion: after the definemethod boilerplate
+    # (definemethod + putobject(:tap) + pop), the tail should be exactly
+    # `putobject 5; leave` — nothing else. The boilerplate count is fixed
+    # in Ruby 4: definemethod, putobject(:tap), pop.
+    caller_region = top.instructions.last(2).map(&:opcode)
+    assert_equal [:putobject, :leave], caller_region,
+      "post-pipeline tail must reduce to putobject; leave; full instructions: " \
+      "#{top.instructions.map(&:opcode).inspect}"
+  end
+
   def test_one_shot_pass_runs_exactly_once_even_if_iterative_passes_loop
     one_shot_class = Class.new(Optimize::Pass) do
       attr_reader :call_count
