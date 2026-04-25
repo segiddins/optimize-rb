@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 require "test_helper"
 require "optimize/codec"
+require "optimize/log"
 require "optimize/passes/inlining_pass"
 
 class TapInlinePassTest < Minitest::Test
@@ -125,6 +126,67 @@ class TapInlinePassTest < Minitest::Test
     assert_equal [:putself, :setlocal_WC_0, :getlocal_WC_0, :pop, :putself], opcodes
     assert_equal 4, rewritten[1].operands[0]
     assert_equal 4, rewritten[2].operands[0]
+  end
+
+  def test_5_tap_nil_inlines_and_substitutes_block
+    src = <<~RUBY
+      def tap; yield self; self; end
+      5.tap { nil }
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    top = ir.misc[:iseq_list].root  # top-level iseq containing the 5.tap { nil } call
+    tap_fn = find_iseq(ir, "tap")
+    refute_nil tap_fn
+
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
+      top, type_env: nil, log: log,
+      object_table: ot, callee_map: { tap: tap_fn },
+      iseq_list: ir.misc[:iseq_list],
+    )
+
+    # The caller's :send is gone.
+    refute top.instructions.any? { |i| i.opcode == :send },
+      "send should have been replaced: #{top.instructions.map(&:opcode).inspect}"
+
+    # Round-trip executes correctly.
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
+    assert_equal 5, loaded.eval
+  end
+
+  def test_putself_inside_block_is_not_rewritten_to_receiver
+    # The callee's `putself` means "tap's receiver" → must rewrite to the
+    # self-stash. The block's `putself` means "caller's self" → must stay
+    # as :putself. Easiest way to assert this is via execution: at top-level,
+    # caller's self is `main`; tap's receiver is 5. If the block's putself
+    # were wrongly rewritten, the block would return 5 instead of main, and
+    # then the surrounding tap returns 5 anyway — semantics happen to coincide.
+    # Force the distinction by having the block's result observed via a side
+    # effect: store self in an array.
+    src = <<~RUBY
+      def tap; yield self; self; end
+      $observed = nil
+      5.tap { $observed = self }
+      $observed
+    RUBY
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    ot = ir.misc[:object_table]
+    top = ir.misc[:iseq_list].root
+    tap_fn = find_iseq(ir, "tap")
+    refute_nil tap_fn
+
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
+      top, type_env: nil, log: log,
+      object_table: ot, callee_map: { tap: tap_fn },
+      iseq_list: ir.misc[:iseq_list],
+    )
+
+    loaded = RubyVM::InstructionSequence.load_from_binary(Optimize::Codec.encode(ir))
+    result = loaded.eval
+    # Caller's self at top-level is the "main" object, NOT the literal 5.
+    refute_equal 5, result, "block's putself was wrongly rewritten to tap's receiver"
   end
 
   private

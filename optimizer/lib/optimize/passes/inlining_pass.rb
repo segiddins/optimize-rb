@@ -49,7 +49,8 @@ module Optimize
         true
       end
 
-      def apply(function, type_env:, log:, object_table: nil, callee_map: {}, slot_type_map: {}, **_extras)
+      def apply(function, type_env:, log:, object_table: nil, callee_map: {},
+                slot_type_map: {}, iseq_list: nil, **_extras)
         _ = type_env
         return unless object_table
         slot_table = slot_type_map[function]
@@ -61,20 +62,23 @@ module Optimize
           i = 0
           while i < insts.size
             b = insts[i]
-            if b.opcode == :opt_send_without_block
+            case b.opcode
+            when :opt_send_without_block
               cd = b.operands[0]
               if cd.is_a?(IR::CallData) && cd.fcall?
                 if try_inline(function, i, callee_map, object_table, log)
-                  changed = true
-                  insts = function.instructions
-                  next
+                  changed = true; insts = function.instructions; next
                 end
               elsif slot_table
                 if try_inline_opt_send(function, i, callee_map, object_table, log, slot_table)
-                  changed = true
-                  insts = function.instructions
-                  next
+                  changed = true; insts = function.instructions; next
                 end
+              end
+            when :send
+              if iseq_list && try_inline_send_with_block(
+                function, i, callee_map, object_table, log, iseq_list
+              )
+                changed = true; insts = function.instructions; next
               end
             end
             i += 1
@@ -191,6 +195,111 @@ module Optimize
 
         log.rewrite(pass: :inlining, reason: :inlined,
                     file: function.path, line: line)
+        true
+      end
+
+      def try_inline_send_with_block(function, send_idx, callee_map, object_table, log, iseq_list)
+        insts = function.instructions
+        send_inst = insts[send_idx]
+        cd = send_inst.operands[0]
+        blk_idx = send_inst.operands[1]
+        line = send_inst.line || function.first_lineno
+
+        return false unless cd.is_a?(IR::CallData)
+        return false unless cd.argc == 0
+        return false unless cd.kwlen.zero? && !cd.blockarg? && !cd.has_splat?
+        return false unless blk_idx.is_a?(Integer) && blk_idx >= 0
+
+        iseqs = iseq_list&.functions
+        block = iseqs && iseqs[blk_idx]
+        unless block && block.type == :block
+          log.skip(pass: :inlining, reason: :send_shape_unsupported,
+                   file: function.path, line: line)
+          return false
+        end
+
+        # Receiver producer must be a single-instruction push (same as v4 zero-arg).
+        return false unless send_idx >= 1 && ARG_PUSH_OPCODES.include?(insts[send_idx - 1].opcode)
+        recv_inst = insts[send_idx - 1]
+
+        mid = cd.mid_symbol(object_table)
+        callee = callee_map[mid]
+        unless callee
+          log.skip(pass: :inlining, reason: :callee_unresolved,
+                   file: function.path, line: line)
+          return false
+        end
+
+        reason = disqualify_callee_for_send_with_block(callee)
+        if reason
+          log.skip(pass: :inlining, reason: reason, file: function.path, line: line)
+          return false
+        end
+
+        reason = disqualify_block(block)
+        if reason
+          log.skip(pass: :inlining, reason: reason, file: function.path, line: line)
+          return false
+        end
+
+        # Sum the stash slots needed across all invokeblock sites in the callee.
+        callee_body = callee.instructions[0..-2]
+        invokeblock_argcs = callee_body.select { |i| i.opcode == :invokeblock }
+                                        .map { |i| i.operands[0].argc }
+        total_stash = 1 + invokeblock_argcs.sum  # +1 for the receiver self-stash
+        self_stash_lindex = NEW_SLOT_LINDEX + invokeblock_argcs.sum
+        # Layout in fresh slots: invokeblock arg-stashes occupy LINDEXes
+        # NEW_SLOT_LINDEX..(self_stash_lindex - 1); the self-stash sits at
+        # self_stash_lindex; pre-existing caller locals shift by total_stash.
+
+        # Grow caller's local table and shift pre-existing level-0 LINDEXes.
+        name_idx = 0  # placeholder name; doesn't affect semantics
+        total_stash.times { Codec::LocalTable.grow!(function, name_idx) }
+        Codec::LocalTable.shift_level0_lindex!(function, by: total_stash)
+
+        # Build the substituted body. Each invokeblock site gets its own stash
+        # base (cumulative argc). Rewrite the callee's `putself` to a getlocal
+        # of the self-stash here — BEFORE the block body is spliced in — so a
+        # `putself` inside the block body (which refers to the caller's self,
+        # not tap's receiver) is preserved.
+        stash_cursor = NEW_SLOT_LINDEX
+        substituted = []
+        callee_body.each do |inst|
+          case inst.opcode
+          when :invokeblock
+            argc = inst.operands[0].argc
+            sub  = substitute_invokeblocks([inst], block, stash_base_lindex: stash_cursor)
+            substituted.concat(sub)
+            stash_cursor += argc
+          when :putself
+            substituted << IR::Instruction.new(
+              opcode: :getlocal_WC_0,
+              operands: [self_stash_lindex],
+              line: inst.line,
+            )
+          else
+            substituted << IR::Instruction.new(
+              opcode: inst.opcode,
+              operands: inst.operands.dup,
+              line: inst.line,
+            )
+          end
+        end
+
+        # Re-read the receiver inst from the (post-shift) instructions array, in
+        # case it was a getlocal_WC_0 whose LINDEX shifted.
+        insts_now = function.instructions
+        recv_in_now = insts_now[send_idx - 1]
+
+        receiver_stash = IR::Instruction.new(
+          opcode: :setlocal_WC_0,
+          operands: [self_stash_lindex],
+          line: recv_in_now.line || line,
+        )
+        replacement = [recv_in_now, receiver_stash, *substituted]
+        function.splice_instructions!((send_idx - 1)..send_idx, replacement)
+
+        log.rewrite(pass: :inlining, reason: :inlined, file: function.path, line: line)
         true
       end
 
