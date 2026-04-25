@@ -189,6 +189,48 @@ class TapInlinePassTest < Minitest::Test
     refute_equal 5, result, "block's putself was wrongly rewritten to tap's receiver"
   end
 
+  def test_bailout_block_has_catch_table
+    log = run_inliner_on(<<~RUBY)
+      def tap; yield self; self; end
+      5.tap { begin; 1; rescue; 2; end }
+    RUBY
+    assert log.entries.any? { |e| e.reason == :block_has_catch_table },
+      "reasons: #{log.entries.map(&:reason).inspect}"
+  end
+
+  def test_bailout_block_captures_level1
+    log = run_inliner_on(<<~RUBY)
+      def tap; yield self; self; end
+      x = 1
+      5.tap { x }
+    RUBY
+    assert log.entries.any? { |e| e.reason == :block_captures_level1 },
+      "reasons: #{log.entries.map(&:reason).inspect}"
+  end
+
+  def test_bailout_block_escapes_on_branch
+    log = run_inliner_on(<<~RUBY)
+      def tap; yield self; self; end
+      5.tap { 1 > 0 ? 1 : 2 }
+    RUBY
+    assert log.entries.any? { |e| e.reason == :block_escapes },
+      "reasons: #{log.entries.map(&:reason).inspect}"
+  end
+
+  def test_bailout_callee_unresolved
+    # No tap in callee_map — should log :callee_unresolved.
+    src = "5.tap { nil }"
+    ir  = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    log = Optimize::Log.new
+    Optimize::Passes::InliningPass.new.apply(
+      ir.misc[:iseq_list].root, type_env: nil, log: log,
+      object_table: ir.misc[:object_table], callee_map: {},
+      iseq_list: ir.misc[:iseq_list],
+    )
+    assert log.entries.any? { |e| e.reason == :callee_unresolved },
+      "reasons: #{log.entries.map(&:reason).inspect}"
+  end
+
   private
 
   def pass
@@ -211,5 +253,18 @@ class TapInlinePassTest < Minitest::Test
       return found if found
     end
     nil
+  end
+
+  def run_inliner_on(src)
+    ir = Optimize::Codec.decode(RubyVM::InstructionSequence.compile(src).to_binary)
+    tap_fn = find_iseq(ir, "tap")
+    log = Optimize::Log.new
+    cm = tap_fn ? { tap: tap_fn } : {}
+    Optimize::Passes::InliningPass.new.apply(
+      ir.misc[:iseq_list].root, type_env: nil, log: log,
+      object_table: ir.misc[:object_table], callee_map: cm,
+      iseq_list: ir.misc[:iseq_list],
+    )
+    log
   end
 end
